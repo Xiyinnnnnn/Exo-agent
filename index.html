@@ -742,7 +742,7 @@ button,label,[role="button"],.file-upload-btn{
       </div>
       <div class="section-body">
         <div class="settings-field"><label for="settingDailyLimit">每日 LLM 调用上限</label><input type="number" id="settingDailyLimit" value="100000" min="10" max="100000"></div>
-        <div class="settings-field"><label for="settingDailyTokenLimit">每日总Token消耗量</label><input type="number" id="settingDailyTokenLimit" value="10000000" min="10000" max="1000000000" step="10000" onchange="var v=parseInt(this.value);settings.daily_token_limit=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);updateTokenDisplay();"><div class="help-text">基于字符粗略估算(≈4字符=1token)。设为任意值控制每日消耗上限。</div></div>
+        <div class="settings-field"><label for="settingDailyTokenLimit">每日总Token消耗量</label><input type="number" id="settingDailyTokenLimit" value="10000000" min="10000" max="1000000000" step="10000" onchange="var v=parseInt(this.value);settings.daily_token_limit=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);updateTokenDisplay();"><div class="help-text">基于API返回的usage信息精确计费。当API未返回usage时自动回退为字符估算。设为任意值控制每日消耗上限。</div></div>
         <div class="settings-field"><label>Token消耗进度</label><div>已消耗: <strong id="tokenUsedLabel">0</strong> / <span id="tokenTotalLabel">10M</span> (<span id="tokenUsedPercent">0%</span>)</div><div class="progress-bar"><div class="fill" id="tokenBar" style="width:0%"></div></div></div>
         <div class="settings-field"><label>用户服务保留比例: <span id="reserveLabel">50%</span></label><input type="range" id="settingReserveRatio" min="0" max="50" value="50" step="5"><div class="help-text">此部分配额仅用于您的对话，后台进化不可使用</div></div>
         <div class="settings-field"><label>当前用量</label><div>已用: <strong id="budgetUsed">0</strong> / <span id="budgetTotal">100000</span></div><div class="progress-bar"><div class="fill" id="budgetBar" style="width:0%"></div></div><div class="help-text">用户可用: <span id="budgetUser">50000</span> | 进化可用: <span id="budgetEvo">50000</span></div></div>
@@ -1151,7 +1151,7 @@ async function _mctsLLM(systemPrompt,userPrompt,temperature,maxTokens,useThinkin
   if(!apiKey)throw new Error('API Key未配置');
   if(budgetUsed>=settings.daily_limit)throw new Error('DAILY_LIMIT_REACHED');
   var effectiveMax=maxTokens||4096;
-  // ★ token 预算检查：防止单次搜索烧掉过多配额
+  // ★ token 预算检查：防止单次搜索烧掉过多配额（用max_tokens预估预留）
   if(_mctsTokenBudget&&_mctsTokenBudget.limit>0){
     if(_mctsTokenBudget.total+effectiveMax>_mctsTokenBudget.limit)throw new Error('MCTS_TOKEN_BUDGET_EXCEEDED');
     _mctsTokenBudget.total+=effectiveMax;
@@ -1166,8 +1166,12 @@ async function _mctsLLM(systemPrompt,userPrompt,temperature,maxTokens,useThinkin
     if(!resp.ok)throw new Error('MCTS API '+resp.status);
     var data=await resp.json();
     var content=data.choices[0].message.content;
-    // ★ 记录每日Token消耗（简单字符统计）
-    recordDailyTokenUsage([{role:'system',content:systemPrompt},{role:'user',content:userPrompt}], content||'');
+    // ★ 用API实际usage校正MCTS token预算
+    if(_mctsTokenBudget&&_mctsTokenBudget.limit>0&&data.usage&&typeof data.usage.total_tokens==='number'){
+      _mctsTokenBudget.total=_mctsTokenBudget.total-effectiveMax+data.usage.total_tokens;
+    }
+    // ★ 记录每日Token消耗（优先使用API精确usage）
+    recordDailyTokenUsage([{role:'system',content:systemPrompt},{role:'user',content:userPrompt}], content||'', data.usage||null);
     try{return JSON.parse(content);}catch(e){var m=content.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('MCTS JSON解析失败');}
   }catch(e){clearTimeout(tid);if(e.name==='AbortError')throw new Error('MCTS超时');throw e;}
 }
@@ -1725,6 +1729,8 @@ async function _compressOldMessages(messages,modelMaxTokens){
     if(!fetchResp.ok)return null;
     var data=await fetchResp.json();
     var summary=(data.choices&&data.choices[0]&&data.choices[0].message.content)||'';
+    // ★ 记录压缩API的token消耗
+    recordDailyTokenUsage([{role:'system',content:'[压缩]'},{role:'user',content:rawText.substring(0,200)}], summary||'', data.usage||null);
     if(!summary.trim())return null;
     var compressed=[{role:'system',content:'[对话历史摘要] '+summary.trim()}];
     for(var k=0;k<toKeep.length;k++){compressed.push(toKeep[k]);}
@@ -3191,20 +3197,34 @@ function updateBudgetDisplay(){
 
 // ===== 每日Token消耗统计 =====
 function _estimateTokensFromChars(chars){
-  // 简单估算：~4字符 ≈ 1 token（中英文混合经验值）
+  // 简单估算：~4字符 ≈ 1 token（中英文混合经验值）——仅作为API未返回usage时的回退方案
   return Math.max(1, Math.ceil(chars / 4));
 }
 
-function recordDailyTokenUsage(messages, responseContent){
-  var totalChars = 0;
-  if (Array.isArray(messages)) {
-    for (var i = 0; i < messages.length; i++) {
-      totalChars += (messages[i].content || '').length;
+function recordDailyTokenUsage(messages, responseContent, apiUsage){
+  // ★ 优先使用API返回的精确usage信息（OpenAI兼容格式）
+  var tokensToAdd = 0;
+  var sourceLabel = '';
+  if (apiUsage && typeof apiUsage.total_tokens === 'number' && apiUsage.total_tokens > 0) {
+    tokensToAdd = apiUsage.total_tokens;
+    sourceLabel = ' (API精确)';
+  } else if (apiUsage && typeof apiUsage.prompt_tokens === 'number' && typeof apiUsage.completion_tokens === 'number') {
+    // 兼容仅有prompt+completion的情况
+    tokensToAdd = apiUsage.prompt_tokens + apiUsage.completion_tokens;
+    sourceLabel = ' (API精确)';
+  } else {
+    // 回退：基于字符粗略估算
+    var totalChars = 0;
+    if (Array.isArray(messages)) {
+      for (var i = 0; i < messages.length; i++) {
+        totalChars += (messages[i].content || '').length;
+      }
     }
+    totalChars += (responseContent || '').length;
+    tokensToAdd = _estimateTokensFromChars(totalChars);
+    sourceLabel = ' (估算)';
   }
-  totalChars += (responseContent || '').length;
-  var estimatedTokens = _estimateTokensFromChars(totalChars);
-  dailyTokenUsed += estimatedTokens;
+  dailyTokenUsed += tokensToAdd;
   saveDailyUsage();
   updateTokenDisplay();
   // ★ Token消耗日志
@@ -3213,7 +3233,7 @@ function recordDailyTokenUsage(messages, responseContent){
   if (tokenPct % 10 === 0 || tokenPct >= 90) {
     var usedStr = dailyTokenUsed >= 1000000 ? (dailyTokenUsed / 1000000).toFixed(1) + 'M' : dailyTokenUsed.toLocaleString();
     var limitStr = tokenLimit >= 1000000 ? (tokenLimit / 1000000).toFixed(0) + 'M' : tokenLimit.toLocaleString();
-    debugLogger.info('🪙 Token: '+usedStr+'/'+limitStr+' ('+tokenPct+'%) | 本次+' + estimatedTokens.toLocaleString());
+    debugLogger.info('🪙 Token: '+usedStr+'/'+limitStr+' ('+tokenPct+'%) | 本次+' + tokensToAdd.toLocaleString() + sourceLabel);
   }
   // 90% Token警告
   if (dailyTokenUsed >= tokenLimit * 0.9 && Date.now() - _lastTokenWarning > 60000) {
@@ -4989,12 +5009,12 @@ async function handleProxyLLMCall(msg){
   // 成功后递增预算
   await budgetManager.recordCall('evo');
   var data=await response.json();
-  // ★ 记录每日Token消耗
+  // ★ 记录每日Token消耗（使用API精确usage）
   var _rspContent = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
   if (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.reasoning_content) {
     _rspContent += data.choices[0].message.reasoning_content;
   }
-  recordDailyTokenUsage(payload.messages || [], _rspContent);
+  recordDailyTokenUsage(payload.messages || [], _rspContent, data.usage||null);
   // 【修复】返回完整message对象，保留reasoning_content
 var msg=data.choices&&data.choices[0]?data.choices[0].message:null;
 if(!msg)return {content:''};
@@ -5487,12 +5507,12 @@ async function callLLM(messages,tools,stream,source){
   await budgetManager.recordCall(source);
   if(stream)return response;
   var data=await response.json();
-  // ★ 记录每日Token消耗
+  // ★ 记录每日Token消耗（使用API精确usage）
   var _llmRsp = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
   if(data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.reasoning_content){
     _llmRsp += data.choices[0].message.reasoning_content;
   }
-  recordDailyTokenUsage(messages || [], _llmRsp);
+  recordDailyTokenUsage(messages || [], _llmRsp, data.usage||null);
   return data;
 }
 
@@ -5548,9 +5568,10 @@ async function streamChatCompletion(messages,tools,onChunk,source){
   var streamTimeoutId;
   var finishReason=null; // 【新增】追踪 API 的 finish_reason，用于检测截断
   var totalStreamContent=''; // ★ 累积流式内容用于Token统计
+  var streamUsage=null; // ★ 从流中捕获的API usage信息
   try{
     while(true){
-      streamTimeoutId=setTimeout(function(){reader.cancel();},1800000); // 30分钟，thinking模式chunk间隔可能很长
+      streamTimeoutId=setTimeout(function(){reader.cancel();},1800000);
       var readResult=await reader.read();
       clearTimeout(streamTimeoutId);
       if(readResult.done)break;
@@ -5563,13 +5584,17 @@ async function streamChatCompletion(messages,tools,onChunk,source){
         var data=trimmed.slice(5).trim();
         if(data==='[DONE]'){
           activeStreamReader=null;
-          // ★ 统计流式Token消耗
-          recordDailyTokenUsage(messages, totalStreamContent);
+          // ★ 统计流式Token消耗（优先使用API usage）
+          recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
           return finishReason;
         }
         try{
           var parsed=JSON.parse(data);
-          // 【新增】捕获 finish_reason（"length"=token耗尽截断, "stop"=正常结束, "tool_calls"=工具调用）
+          // ★ 捕获流中的usage信息（DeepSeek在最后一个chunk中返回usage）
+          if(parsed.usage&&typeof parsed.usage.total_tokens==='number'){
+            streamUsage=parsed.usage;
+          }
+          // 【新增】捕获 finish_reason
           if(parsed.choices&&parsed.choices[0]&&parsed.choices[0].finish_reason){
             finishReason=parsed.choices[0].finish_reason;
           }
@@ -5584,10 +5609,10 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       }
     }
     activeStreamReader=null;
-    // ★ 正常结束时统计Token消耗
-    recordDailyTokenUsage(messages, totalStreamContent);
-    debugLogger.info('📡 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length);
-    return finishReason; // 正常结束也返回
+    // ★ 正常结束时统计Token消耗（优先使用API usage）
+    recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
+    debugLogger.info('📡 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length+(streamUsage?' | usage:精确':' | usage:估算'));
+    return finishReason;
   }finally{
     if(streamTimeoutId)clearTimeout(streamTimeoutId);
     activeStreamReader=null;
@@ -8786,8 +8811,8 @@ async function _subAgentLLM(systemPrompt,userPrompt,toolsWhitelist,temperature,t
     var data=await resp.json();
     var choice=data.choices[0];if(!choice)break;
     var msg=choice.message;
-    // ★ 记录流水线子Agent Token消耗
-    recordDailyTokenUsage(msgs, msg.content||'');
+    // ★ 记录流水线子Agent Token消耗（使用API精确usage）
+    recordDailyTokenUsage(msgs, msg.content||'', data.usage||null);
 
     if(msg.content){output+=msg.content;}
     msgs.push({role:'assistant',content:msg.content||'',tool_calls:msg.tool_calls||undefined});
