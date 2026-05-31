@@ -742,6 +742,8 @@ button,label,[role="button"],.file-upload-btn{
       </div>
       <div class="section-body">
         <div class="settings-field"><label for="settingDailyLimit">每日 LLM 调用上限</label><input type="number" id="settingDailyLimit" value="100000" min="10" max="100000"></div>
+        <div class="settings-field"><label for="settingDailyTokenLimit">每日总Token消耗量</label><input type="number" id="settingDailyTokenLimit" value="10000000" min="10000" max="1000000000" step="10000" onchange="var v=parseInt(this.value);settings.daily_token_limit=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);updateTokenDisplay();"><div class="help-text">基于字符粗略估算(≈4字符=1token)。设为任意值控制每日消耗上限。</div></div>
+        <div class="settings-field"><label>Token消耗进度</label><div>已消耗: <strong id="tokenUsedLabel">0</strong> / <span id="tokenTotalLabel">10M</span> (<span id="tokenUsedPercent">0%</span>)</div><div class="progress-bar"><div class="fill" id="tokenBar" style="width:0%"></div></div></div>
         <div class="settings-field"><label>用户服务保留比例: <span id="reserveLabel">50%</span></label><input type="range" id="settingReserveRatio" min="0" max="50" value="50" step="5"><div class="help-text">此部分配额仅用于您的对话，后台进化不可使用</div></div>
         <div class="settings-field"><label>当前用量</label><div>已用: <strong id="budgetUsed">0</strong> / <span id="budgetTotal">100000</span></div><div class="progress-bar"><div class="fill" id="budgetBar" style="width:0%"></div></div><div class="help-text">用户可用: <span id="budgetUser">50000</span> | 进化可用: <span id="budgetEvo">50000</span></div></div>
         <div class="settings-field" style="border-top:1px solid var(--color-border);padding-top:10px;margin-top:4px"><label style="font-weight:600;color:var(--color-primary)">🧠 MCTS 搜索预算</label></div>
@@ -1035,6 +1037,10 @@ button,label,[role="button"],.file-upload-btn{
         <div class="settings-field"><label for="settingSttEndpoint">STT API 端点(可选)</label><input type="text" id="settingSttEndpoint" placeholder="留空=使用浏览器内置识别"></div>
         <!-- 日历开关 -->
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span>📆 启用日历工具</span><label class="toggle-switch"><input type="checkbox" id="settingCalendarEnabled" checked><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 agent 无法使用 calendar 工具管理事件</div></div>
+        <!-- 日历定时唤醒 -->
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span>⏰ 定时唤醒Agent</span><label class="toggle-switch"><input type="checkbox" id="settingCalendarAutoWake"><span class="toggle-slider"></span></label></label><div class="help-text">日历事件到期时自动唤醒agent（需同时开启🔔通知权限，否则仅对话内唤醒）</div></div>
+        <div class="settings-field"><label for="settingCalendarWakePrompt">唤醒提示词</label><input type="text" id="settingCalendarWakePrompt" placeholder="留空=使用默认提示"><div class="help-text">占位符: {title} {description} {location} {start} {end}</div></div>
+        <div class="settings-field"><label>唤醒检查间隔: <span id="calendarWakeIntervalLabel">30秒</span></label><input type="range" id="settingCalendarWakeInterval" min="10" max="300" value="30" step="10" oninput="var v=parseInt(this.value);document.getElementById('calendarWakeIntervalLabel').textContent=v+'秒';"><div class="range-labels"><span>10秒</span><span>30秒</span><span>5分钟</span></div></div>
       </div>
     </div>
 
@@ -1160,6 +1166,8 @@ async function _mctsLLM(systemPrompt,userPrompt,temperature,maxTokens,useThinkin
     if(!resp.ok)throw new Error('MCTS API '+resp.status);
     var data=await resp.json();
     var content=data.choices[0].message.content;
+    // ★ 记录每日Token消耗（简单字符统计）
+    recordDailyTokenUsage([{role:'system',content:systemPrompt},{role:'user',content:userPrompt}], content||'');
     try{return JSON.parse(content);}catch(e){var m=content.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('MCTS JSON解析失败');}
   }catch(e){clearTimeout(tid);if(e.name==='AbortError')throw new Error('MCTS超时');throw e;}
 }
@@ -1269,8 +1277,8 @@ parameters:{type:'object',properties:{expression:{type:'string',description:'数
     parameters:{type:'object',properties:{action:{type:'string',enum:['speak','stop','list_voices'],default:'speak',description:'speak=朗读 stop=中断 list_voices=列出所有可用语音'},text:{type:'string',description:'要朗读的文字(超长自动分句)'},lang:{type:'string',enum:['zh','en','auto'],default:'auto',description:'zh=中文 en=英文 auto=自动检测'},rate:{type:'number',default:150,description:'语速(wpm),默认150,范围80~450'},pitch:{type:'number',default:1,description:'音高 0.5~2,默认1'},amplitude:{type:'number',default:100,description:'音量 0~200,默认100'},variant:{type:'string',description:'语音变体名(可选),从list_voices获取'}},required:[]}},
   'speech_stt':{name:'speech_stt',description:'语音识别(录音→文字)。record=开始录音 recognize/stop=停止录音并返回识别文字。recognize与stop等效,但语义明确:"完成录音并返回"。如需取消录音不保存,用stop(会返回部分识别结果)。需麦克风授权',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['record','stop','recognize'],default:'record',description:'record=开始录音 stop/recognize=停止并识别返回文字'},lang:{type:'string',enum:['zh-CN','en-US','auto'],default:'zh-CN',description:'识别语言'},max_seconds:{type:'number',default:30,description:'最长录音秒数,默认30'},stt_endpoint:{type:'string',description:'自定义STT API端点(可选),不传则使用浏览器内置SpeechRecognition'}},required:[]}},
-  'calendar':{name:'calendar',description:'日历事件管理。list=列出事件 schedule=创建事件 delete=删除 search=搜索 export=导出iCalendar(.ics)文件。事件持久化存储在虚拟文件系统',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['list','schedule','delete','search','export'],description:'list=列出(支持日期范围) schedule=创建/更新 delete=按ID删除 search=全文搜索 export=导出ics'},title:{type:'string',description:'事件标题(action=schedule)'},start:{type:'string',description:'开始时间 ISO8601 如"2026-06-01T14:00" 或 "2026-06-01"(action=schedule/list)'},end:{type:'string',description:'结束时间 ISO8601(action=schedule/list)'},description:{type:'string',description:'事件描述(action=schedule)'},location:{type:'string',description:'地点(action=schedule)'},reminder_minutes:{type:'number',description:'提前多少分钟提醒,默认0=不提醒(action=schedule)'},id:{type:'string',description:'事件ID(action=delete时)，从list结果获取'},query:{type:'string',description:'搜索关键词(action=search)'},all_day:{type:'boolean',default:false,description:'是否全天事件(action=schedule)'},recurrence:{type:'string',enum:['none','daily','weekly','biweekly','monthly','yearly'],default:'none',description:'重复规则(action=schedule)'}},required:['action']}},
+  'calendar':{name:'calendar',description:'日历事件管理+定时唤醒。list=列出 schedule=创建(支持auto_wake) delete=删除 search=搜索 export=导出ics wake_status=唤醒状态 enable_wake/disable_wake=开关定时唤醒。事件持久化存储',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['list','schedule','delete','search','export','wake_status','enable_wake','disable_wake'],description:'list=列出(支持日期范围) schedule=创建/更新 delete=按ID删除 search=全文搜索 export=导出ics wake_status=查看唤醒状态 enable_wake=启用定时唤醒 disable_wake=禁用定时唤醒'},title:{type:'string',description:'事件标题(action=schedule)'},start:{type:'string',description:'开始时间 ISO8601 如"2026-06-01T14:00" 或 "2026-06-01"(action=schedule/list)'},end:{type:'string',description:'结束时间 ISO8601(action=schedule/list)'},description:{type:'string',description:'事件描述(action=schedule)'},location:{type:'string',description:'地点(action=schedule)'},reminder_minutes:{type:'number',description:'提前多少分钟提醒,默认0=不提醒(action=schedule)'},auto_wake:{type:'boolean',default:true,description:'schedule时是否到期唤醒agent(true=唤醒 false=静默记录)'},id:{type:'string',description:'事件ID(action=delete时)，从list结果获取'},query:{type:'string',description:'搜索关键词(action=search)'},all_day:{type:'boolean',default:false,description:'是否全天事件(action=schedule)'},recurrence:{type:'string',enum:['none','daily','weekly','biweekly','monthly','yearly'],default:'none',description:'重复规则(action=schedule)'}},required:['action']}},
   'precise_time':{name:'precise_time',description:'精确时间工具。now=当前精确时间(含毫秒+时区+周数) ntp=从公共NTP池获取精确时间 timezone=时区转换/列表 countdown=倒计时 timer=计时器',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['now','ntp','timezone','countdown','timer'],default:'now',description:'now=当前时间 ntp=NTP精确时间 timezone=时区转换 countdown=倒计时 timer=秒表'},target_time:{type:'string',description:'目标时间ISO8601(action=countdown/timer)'},from_tz:{type:'string',description:'源时区如 "Asia/Shanghai"(action=timezone)'},to_tz:{type:'string',description:'目标时区如 "America/New_York"(action=timezone)'},time_str:{type:'string',description:'要转换的时间ISO8601(action=timezone)'},label:{type:'string',description:'倒计时/计时器标签(action=countdown/timer)'}},required:[]}},
   'pipeline':{name:'pipeline',description:`🏭 流水线引擎V5。
@@ -1591,6 +1599,7 @@ var settings={
   base_url:'https://api.deepseek.com',
   model:'deepseek-v4-flash',
   daily_limit:100000,
+  daily_token_limit:10000000,
   reserve_ratio:0.5,
   environment_variables:{},
   evolution_enabled:true,
@@ -1620,11 +1629,15 @@ var settings={
   user_func_enabled:true,
   speech_enabled:true,
   calendar_enabled:true,
+  calendar_auto_wake:false,
+  calendar_wake_prompt:'',
+  calendar_wake_interval:30,
   stt_endpoint:'',
   pipeline_enabled:true
 };
 var budgetUsed=0;
 var evoUsed=0;
+var dailyTokenUsed=0;
 // 【多对话并行】每个对话独立管理自己的处理状态
 var convStates={};
 function _ensureConvState(convId){
@@ -1913,6 +1926,7 @@ var heartbeatIntervalId=null;
 var healthCheckIntervalId=null;
 var storageInfoIntervalId=null;
 var _lastBudgetWarning=0;
+var _lastTokenWarning=0;
 var MODEL_CONFIG={name:'local-ngram-hash',type:'local',dim:384,maxTokens:500,engine:'local-ngram-hash'};
 
 // ================================================================
@@ -2465,6 +2479,7 @@ async function loadSettings(){
   }catch(e){debugLogger.warn('加载工具配置失败，使用全部工具');}
   applySettingsToUI();
   updateBudgetDisplay();
+  updateTokenDisplay();
 }
 
 async function saveSettings(){
@@ -2487,6 +2502,7 @@ async function saveSettings(){
     base_url:          _read('base_url','settingBaseUrl','value',_str,'https://api.deepseek.com'),
     model:             _read('model','settingModel','value',_str,'deepseek-v4-flash'),
     daily_limit:       _read('daily_limit','settingDailyLimit','value',_int,100000),
+    daily_token_limit: _read('daily_token_limit','settingDailyTokenLimit','value',_int,10000000),
     reserve_ratio:     _read('reserve_ratio','settingReserveRatio','value',_ratio,0.5),
     environment_variables: settings.environment_variables||{},
     evolution_enabled: _read('evolution_enabled','settingEvoEnabled','checked',_bool,true),
@@ -2517,6 +2533,9 @@ async function saveSettings(){
     speech_enabled:    _read('speech_enabled','settingSpeechEnabled','checked',_bool,true),
     stt_endpoint:      _read('stt_endpoint','settingSttEndpoint','value',_str,''),
     calendar_enabled:  _read('calendar_enabled','settingCalendarEnabled','checked',_bool,true),
+    calendar_auto_wake:     _read('calendar_auto_wake','settingCalendarAutoWake','checked',_bool,false),
+    calendar_wake_prompt:   _read('calendar_wake_prompt','settingCalendarWakePrompt','value',_str,''),
+    calendar_wake_interval: _read('calendar_wake_interval','settingCalendarWakeInterval','value',_int,30),
     pipeline_enabled:  _read('pipeline_enabled','settingPipelineEnabled','checked',_bool,true),
     mcts_fast_token_budget:     _read('mcts_fast_token_budget','settingMctsFastBudget','value',_int,10000000),
     mcts_standard_token_budget: _read('mcts_standard_token_budget','settingMctsStandardBudget','value',_int,30000000),
@@ -2542,7 +2561,14 @@ async function saveSettings(){
   }
   updateSendButton();
   updateBudgetDisplay();
+  updateTokenDisplay();
   debugLogger.info('设置已保存');
+  // 重启日历调度器
+  if(settings.calendar_auto_wake){
+    _startCalendarWakeScheduler();
+  }else{
+    _stopCalendarWakeScheduler();
+  }
   showToast('设置已保存 ✓','success');
 }
 
@@ -2554,6 +2580,7 @@ function applySettingsToUI(){
     {el:'settingBaseUrl',           key:'base_url',               type:'value',   def:'https://api.deepseek.com'},
     {el:'settingModel',             key:'model',                  type:'value',   def:'deepseek-v4-flash'},
     {el:'settingDailyLimit',        key:'daily_limit',            type:'value',   def:100000},
+    {el:'settingDailyTokenLimit',   key:'daily_token_limit',      type:'value',   def:10000000},
     {el:'settingReserveRatio',      key:'reserve_ratio',          type:'value',   def:0.5,   tf:function(v){return Math.round((v||0.5)*100);}},
     {el:'settingEvoEnabled',        key:'evolution_enabled',      type:'checked', def:true},
     {el:'settingReasoningEffort',   key:'reasoning_effort',       type:'value',   def:'max'},
@@ -2577,6 +2604,9 @@ function applySettingsToUI(){
     {el:'settingUserFuncEnabled',   key:'user_func_enabled',      type:'checked', def:true},
     {el:'settingSpeechEnabled',     key:'speech_enabled',         type:'checked', def:true},
     {el:'settingCalendarEnabled',   key:'calendar_enabled',       type:'checked', def:true},
+    {el:'settingCalendarAutoWake',     key:'calendar_auto_wake',     type:'checked', def:false},
+    {el:'settingCalendarWakePrompt',   key:'calendar_wake_prompt',   type:'value',   def:''},
+    {el:'settingCalendarWakeInterval', key:'calendar_wake_interval', type:'value',   def:30},
     {el:'settingPipelineEnabled',   key:'pipeline_enabled',       type:'checked', def:true},
     {el:'settingSttEndpoint',       key:'stt_endpoint',           type:'value',   def:''},
     {el:'settingSelfCritiqueRounds',key:'self_critique_rounds',   type:'value',   def:1},
@@ -3067,6 +3097,7 @@ var budgetManager={
     if(Date.now()>=this.resetTime){
       this.usedToday=0;
       this.evoUsedToday=0;
+      dailyTokenUsed=0;
       this.resetTime=this.getNextResetTime();
       debugLogger.info('🔄 预算已重置 | 新限额:'+this.dailyLimit);
     }
@@ -3082,6 +3113,7 @@ var budgetManager={
     await saveDailyUsage();
     // 更新UI
     updateBudgetDisplay();
+    updateTokenDisplay();
     // ★ 日志
     var _pct=Math.round(this.usedToday/this.dailyLimit*100);
     if(_pct%10===0||_pct>=90)debugLogger.info('💰 预算: '+this.usedToday+'/'+this.dailyLimit+' ('+_pct+'%) | '+source);
@@ -3103,10 +3135,13 @@ async function loadDailyUsage(){
     if(content){
       var usage=JSON.parse(content);
       var today=new Date().toDateString();
-      if(usage.date===today){budgetUsed=usage.count||0;evoUsed=usage.evoCount||0;}
-      else{budgetUsed=0;evoUsed=0;}
+      if(usage.date===today){
+        budgetUsed=usage.count||0;
+        evoUsed=usage.evoCount||0;
+        dailyTokenUsed=usage.tokenCount||0;
+      }else{budgetUsed=0;evoUsed=0;dailyTokenUsed=0;}
     }
-  }catch(e){budgetUsed=0;evoUsed=0;}
+  }catch(e){budgetUsed=0;evoUsed=0;dailyTokenUsed=0;}
   budgetManager.usedToday=budgetUsed;
   budgetManager.evoUsedToday=evoUsed;
   budgetManager.resetTime=budgetManager.getNextResetTime();
@@ -3114,7 +3149,7 @@ async function loadDailyUsage(){
 
 async function saveDailyUsage(){
   var today=new Date().toDateString();
-  var usageJson=JSON.stringify({date:today,count:budgetUsed,evoCount:evoUsed});
+  var usageJson=JSON.stringify({date:today,count:budgetUsed,evoCount:evoUsed,tokenCount:dailyTokenUsed||0});
   try{
     var existing=await readFile('/config/daily_usage.json');
     if(existing!==null){
@@ -3123,7 +3158,7 @@ async function saveDailyUsage(){
       await createFile('/config/daily_usage.json',usageJson);
     }
   }catch(e){
-    await createFile('/config/daily_usage.json',JSON.stringify({date:today,count:budgetUsed,evoCount:evoUsed}));
+    await createFile('/config/daily_usage.json',JSON.stringify({date:today,count:budgetUsed,evoCount:evoUsed,tokenCount:dailyTokenUsed||0}));
   }
 }
 
@@ -3152,6 +3187,58 @@ function updateBudgetDisplay(){
   if(bbEl)bbEl.style.width=stats.usedPercent+'%';
   if(bueEl)bueEl.textContent=stats.userAvailable;
   if(beeEl)beeEl.textContent=stats.evoAvailable;
+}
+
+// ===== 每日Token消耗统计 =====
+function _estimateTokensFromChars(chars){
+  // 简单估算：~4字符 ≈ 1 token（中英文混合经验值）
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
+function recordDailyTokenUsage(messages, responseContent){
+  var totalChars = 0;
+  if (Array.isArray(messages)) {
+    for (var i = 0; i < messages.length; i++) {
+      totalChars += (messages[i].content || '').length;
+    }
+  }
+  totalChars += (responseContent || '').length;
+  var estimatedTokens = _estimateTokensFromChars(totalChars);
+  dailyTokenUsed += estimatedTokens;
+  saveDailyUsage();
+  updateTokenDisplay();
+  // ★ Token消耗日志
+  var tokenLimit = settings.daily_token_limit || 10000000;
+  var tokenPct = Math.round(dailyTokenUsed / tokenLimit * 100);
+  if (tokenPct % 10 === 0 || tokenPct >= 90) {
+    var usedStr = dailyTokenUsed >= 1000000 ? (dailyTokenUsed / 1000000).toFixed(1) + 'M' : dailyTokenUsed.toLocaleString();
+    var limitStr = tokenLimit >= 1000000 ? (tokenLimit / 1000000).toFixed(0) + 'M' : tokenLimit.toLocaleString();
+    debugLogger.info('🪙 Token: '+usedStr+'/'+limitStr+' ('+tokenPct+'%) | 本次+' + estimatedTokens.toLocaleString());
+  }
+  // 90% Token警告
+  if (dailyTokenUsed >= tokenLimit * 0.9 && Date.now() - _lastTokenWarning > 60000) {
+    _lastTokenWarning = Date.now();
+    showToast('⚠️ 每日Token消耗已达 ' + tokenPct + '%', 'warning', 5000);
+  }
+}
+
+function updateTokenDisplay(){
+  var limit = settings.daily_token_limit || 10000000;
+  var used = dailyTokenUsed || 0;
+  var pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  var tuEl = document.getElementById('tokenUsedLabel');
+  var ttEl = document.getElementById('tokenTotalLabel');
+  var tpEl = document.getElementById('tokenUsedPercent');
+  var tbEl = document.getElementById('tokenBar');
+  if (tuEl) tuEl.textContent = used >= 1000000 ? (used / 1000000).toFixed(1) + 'M' : used.toLocaleString();
+  if (ttEl) ttEl.textContent = limit >= 1000000 ? (limit / 1000000).toFixed(0) + 'M' : limit.toLocaleString();
+  if (tpEl) tpEl.textContent = pct + '%';
+  if (tbEl) tbEl.style.width = pct + '%';
+  if (tbEl) {
+    if (pct >= 90) tbEl.style.background = '#e74c3c';
+    else if (pct >= 70) tbEl.style.background = '#f39c12';
+    else tbEl.style.background = 'var(--color-primary)';
+  }
 }
 
 // ================================================================
@@ -4902,6 +4989,12 @@ async function handleProxyLLMCall(msg){
   // 成功后递增预算
   await budgetManager.recordCall('evo');
   var data=await response.json();
+  // ★ 记录每日Token消耗
+  var _rspContent = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+  if (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.reasoning_content) {
+    _rspContent += data.choices[0].message.reasoning_content;
+  }
+  recordDailyTokenUsage(payload.messages || [], _rspContent);
   // 【修复】返回完整message对象，保留reasoning_content
 var msg=data.choices&&data.choices[0]?data.choices[0].message:null;
 if(!msg)return {content:''};
@@ -5394,6 +5487,12 @@ async function callLLM(messages,tools,stream,source){
   await budgetManager.recordCall(source);
   if(stream)return response;
   var data=await response.json();
+  // ★ 记录每日Token消耗
+  var _llmRsp = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+  if(data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.reasoning_content){
+    _llmRsp += data.choices[0].message.reasoning_content;
+  }
+  recordDailyTokenUsage(messages || [], _llmRsp);
   return data;
 }
 
@@ -5448,6 +5547,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
   var buffer='';
   var streamTimeoutId;
   var finishReason=null; // 【新增】追踪 API 的 finish_reason，用于检测截断
+  var totalStreamContent=''; // ★ 累积流式内容用于Token统计
   try{
     while(true){
       streamTimeoutId=setTimeout(function(){reader.cancel();},1800000); // 30分钟，thinking模式chunk间隔可能很长
@@ -5461,18 +5561,31 @@ async function streamChatCompletion(messages,tools,onChunk,source){
         var trimmed=lines[i].trim();
         if(!trimmed||!trimmed.startsWith('data:'))continue;
         var data=trimmed.slice(5).trim();
-        if(data==='[DONE]'){activeStreamReader=null;return finishReason;} // 返回最终finish_reason
+        if(data==='[DONE]'){
+          activeStreamReader=null;
+          // ★ 统计流式Token消耗
+          recordDailyTokenUsage(messages, totalStreamContent);
+          return finishReason;
+        }
         try{
           var parsed=JSON.parse(data);
           // 【新增】捕获 finish_reason（"length"=token耗尽截断, "stop"=正常结束, "tool_calls"=工具调用）
           if(parsed.choices&&parsed.choices[0]&&parsed.choices[0].finish_reason){
             finishReason=parsed.choices[0].finish_reason;
           }
+          // ★ 累积流式内容（含thinking）
+          var delta2=parsed.choices&&parsed.choices[0]?parsed.choices[0].delta:null;
+          if(delta2){
+            if(delta2.content)totalStreamContent+=delta2.content;
+            if(delta2.reasoning_content)totalStreamContent+=delta2.reasoning_content;
+          }
           await onChunk(parsed);
         }catch(e){}
       }
     }
     activeStreamReader=null;
+    // ★ 正常结束时统计Token消耗
+    recordDailyTokenUsage(messages, totalStreamContent);
     debugLogger.info('📡 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length);
     return finishReason; // 正常结束也返回
   }finally{
@@ -8198,7 +8311,7 @@ async function toolCalendar(args){
   
   if(action==='schedule'){
     if(!args.title||!args.start)return '请指定 title 和 start';
-    var evt={id:args.id||_eventId(),title:args.title,start:args.start,end:args.end||args.start,description:args.description||'',location:args.location||'',all_day:args.all_day===true,recurrence:args.recurrence||'none',reminder_minutes:args.reminder_minutes||0,createdAt:new Date().toISOString()};
+    var evt={id:args.id||_eventId(),title:args.title,start:args.start,end:args.end||args.start,description:args.description||'',location:args.location||'',all_day:args.all_day===true,recurrence:args.recurrence||'none',reminder_minutes:args.reminder_minutes||0,auto_wake:args.auto_wake!==false,createdAt:new Date().toISOString()};
     // upsert
     var found=false;
     for(var ei=0;ei<cal.events.length;ei++){if(cal.events[ei].id===evt.id){cal.events[ei]=evt;found=true;break;}}
@@ -8251,7 +8364,130 @@ async function toolCalendar(args){
     return '✅ 已导出 '+cal.events.length+' 个事件为 iCalendar 文件:\n'+outPath+'\n💡 可将此.ics文件导入 Google Calendar / Outlook / Apple Calendar。';
   }
   
-  return '未知action: '+action+'。支持: list/schedule/delete/search/export';
+  
+  if(action==='wake_status'){
+    var wsRunning=!!_calendarWakeTimer;
+    return JSON.stringify({
+      auto_wake_enabled:settings.calendar_auto_wake===true,
+      scheduler_running:wsRunning,
+      wake_interval_seconds:settings.calendar_wake_interval||30,
+      wake_prompt:settings.calendar_wake_prompt||'(默认:自动生成提醒消息)',
+      total_events:cal.events.length,
+      events_with_reminder:cal.events.filter(function(ev){return (ev.reminder_minutes||0)>0;}).length,
+      events_with_auto_wake:cal.events.filter(function(ev){return ev.auto_wake!==false;}).length
+    },null,2);
+  }
+  
+  if(action==='enable_wake'){
+    settings.calendar_auto_wake=true;
+    var cb=document.getElementById('settingCalendarAutoWake');if(cb)cb.checked=true;
+    _startCalendarWakeScheduler();
+    return '✅ 日历定时唤醒已启用。检查间隔: '+(settings.calendar_wake_interval||30)+'秒。';
+  }
+  
+  if(action==='disable_wake'){
+    settings.calendar_auto_wake=false;
+    var cb2=document.getElementById('settingCalendarAutoWake');if(cb2)cb2.checked=false;
+    _stopCalendarWakeScheduler();
+    return '⏸️ 日历定时唤醒已禁用。';
+  }
+  
+  return '未知action: '+action+'。支持: list/schedule/delete/search/export/wake_status/enable_wake/disable_wake';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// V5 新增: calendar_wake_scheduler — 日历定时唤醒引擎
+// ═══════════════════════════════════════════════════════════════
+
+var _calendarWakeTimer=null;
+var _eventLastNotified={};
+var _calendarWakeLock=false;
+
+function _startCalendarWakeScheduler(){
+  _stopCalendarWakeScheduler();
+  if(!settings.calendar_auto_wake){
+    debugLogger.info('⏰ 日历唤醒跳过（auto_wake未开启）');
+    return;
+  }
+  var intervalSec=settings.calendar_wake_interval||30;
+  _calendarWakeTimer=setInterval(_calendarWakeCheck,intervalSec*1000);
+  debugLogger.info('⏰ 日历唤醒调度器启动，间隔'+intervalSec+'秒');
+  setTimeout(function(){_calendarWakeCheck();},3000);
+}
+
+function _stopCalendarWakeScheduler(){
+  if(_calendarWakeTimer){clearInterval(_calendarWakeTimer);_calendarWakeTimer=null;}
+}
+
+async function _calendarWakeCheck(){
+  if(!settings.calendar_auto_wake||_calendarWakeLock)return;
+  _calendarWakeLock=true;
+  try{
+    var cal=await _loadCalendar();
+    if(!cal||!cal.events){_calendarWakeLock=false;return;}
+    var totalEvents=cal.events.length;
+    
+    var now=Date.now();
+    var triggered=[];
+    for(var ei=0;ei<totalEvents;ei++){
+      var ev=cal.events[ei];
+      if(!ev||!ev.start||ev.auto_wake===false)continue;
+      var startMs=new Date(ev.start).getTime();
+      if(isNaN(startMs))continue;
+      var reminderMs=(ev.reminder_minutes||0)*60*1000;
+      var triggerTime=startMs-reminderMs;
+      var lastNotified=_eventLastNotified[ev.id]||0;
+      var inWindow=now>=triggerTime&&(now-triggerTime)<300000;
+      var cooldownPassed=(now-lastNotified)>Math.max((ev.reminder_minutes||1)*60000,60000);
+      if(!inWindow||!cooldownPassed)continue;
+      
+      _eventLastNotified[ev.id]=now;
+      triggered.push(ev);
+    }
+    
+    // 心跳：每轮都报，不管有没有触发
+    if(triggered.length){
+      debugLogger.info('⏰ 日历扫描 '+totalEvents+'事件 → 触发 '+triggered.length+'个');
+    } else if(totalEvents>0){
+      debugLogger.info('⏰ 日历心跳 · 扫描 '+totalEvents+'事件 · 无触发',{level:'debug'});
+    }
+    
+    for(var ti=0;ti<triggered.length;ti++){
+      var tev=triggered[ti];
+      debugLogger.info('⏰ 事件: '+tev.title);
+      
+      // 1. 桌面通知
+      if(settings.notify_enabled&&'Notification' in window&&Notification.permission==='granted'){
+        try{
+          var nBody='';
+          if(tev.reminder_minutes)nBody='提前'+tev.reminder_minutes+'分钟';
+          if(tev.start)nBody+=(nBody?' | ':'')+new Date(tev.start).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+          if(tev.location)nBody+=' | 📍'+tev.location;
+          var n=new Notification('📅 '+tev.title,{body:nBody,tag:'cal_'+tev.id,requireInteraction:true});
+          n.onclick=function(){window.focus();this.close();};
+          setTimeout(function(){try{n.close();}catch(e){}},20000);
+        }catch(e){}
+      }
+      
+      // 2. 系统消息唤醒Agent（跳过用户气泡）
+      if(currentConversationId){
+        var cs=_ensureConvState(currentConversationId);
+        if(cs&&!cs.isProcessing){
+          var wp=settings.calendar_wake_prompt||'';
+          if(!wp.trim())wp='⏰ **日程提醒！** 现在时间: '+new Date().toLocaleString('zh-CN')+'。\n\n以下日程已到提醒时间，请主动告知用户:';
+          wp=wp.replace(/\{title\}/g,tev.title||'').replace(/\{description\}/g,tev.description||'').replace(/\{location\}/g,tev.location||'').replace(/\{start\}/g,tev.start||'').replace(/\{end\}/g,tev.end||'');
+          wp+='\n\n📌 **'+tev.title+'** | 🕐 '+new Date(tev.start).toLocaleString('zh-CN');
+          if(tev.location)wp+=' | 📍 '+tev.location;
+          if(tev.description)wp+='\n📝 '+tev.description.substring(0,200);
+          window._skipAddUser=true;
+          processUserMessage(wp,'calendar_wake_'+tev.id).catch(function(e){debugLogger.warn('日历唤醒处理失败: '+e.message);});
+        }else{
+          debugLogger.info('⏰ 跳过唤醒（Agent正忙或无对话）');
+        }
+      }
+    }
+  }catch(e){debugLogger.warn('日历唤醒检查异常: '+(e&&e.message?e.message:e));}
+  _calendarWakeLock=false;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -8550,6 +8786,8 @@ async function _subAgentLLM(systemPrompt,userPrompt,toolsWhitelist,temperature,t
     var data=await resp.json();
     var choice=data.choices[0];if(!choice)break;
     var msg=choice.message;
+    // ★ 记录流水线子Agent Token消耗
+    recordDailyTokenUsage(msgs, msg.content||'');
 
     if(msg.content){output+=msg.content;}
     msgs.push({role:'assistant',content:msg.content||'',tool_calls:msg.tool_calls||undefined});
@@ -11495,6 +11733,7 @@ async function importAllData(jsonData){
       await refreshSkillCache();
       await loadDailyUsage();
       updateBudgetDisplay();
+      updateTokenDisplay();
       renderEnvVars();
       renderUploadedFilesList();
       updateStorageInfo();
@@ -11570,6 +11809,7 @@ async function resetSystem(){
     await refreshSkillCache();
     await loadDailyUsage();
     updateBudgetDisplay();
+    updateTokenDisplay();
     renderEnvVars();
     renderUploadedFilesList();
     updateStorageInfo();
@@ -11756,6 +11996,7 @@ window.addEventListener('beforeunload',function(){
   if(heartbeatIntervalId)clearInterval(heartbeatIntervalId);
   if(healthCheckIntervalId)clearInterval(healthCheckIntervalId);
   if(storageInfoIntervalId)clearInterval(storageInfoIntervalId);
+  if(_calendarWakeTimer){clearInterval(_calendarWakeTimer);_calendarWakeTimer=null;}
   // 释放文件锁
   if(fileLock.owner==='main_thread'){releaseFileLock('main_thread');}
   isProcessing=false;
@@ -11772,6 +12013,7 @@ document.addEventListener('visibilitychange',function(){
   }else{
     if(evoWorker){try{evoWorker.postMessage({type:'resume_evo',payload:{}});}catch(e){}}
     updateBudgetDisplay();
+    updateTokenDisplay();
     updateStorageInfo();
     debugLogger.debug('页面可见，进化已恢复');
   }
@@ -12947,6 +13189,7 @@ async function initApp(){
 
     // 9. 更新UI
     updateBudgetDisplay();
+    updateTokenDisplay();
     updateSendButton();
     renderEnvVars();
     renderUploadedFilesList();
@@ -12976,6 +13219,9 @@ async function initApp(){
       }catch(e){}
     })();
   }
+
+    // 启动日历定时唤醒
+    if(settings.calendar_auto_wake){_startCalendarWakeScheduler();}
 
     debugLogger.info('Exo 初始化完成 ✓');
 
