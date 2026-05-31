@@ -1212,10 +1212,9 @@ var TOOL_REGISTRY={
   'filesystem':{name:'filesystem',description:'统一虚拟文件系统(含用户上传)。📂list/tree=树状目录 📖read=智能分块(auto小文件默认全量,传line/endLine强制分块) 🏷️rename=重命名 ♻️delete(safe)=回收站 🗑️delete(safe=false)=永久删除 ✏️create/update/append/insert/delete_lines/replace_lines=精确编辑 ⚡code_run=执行.js/.py。📁用户上传文件在/uploads/目录,如 filesystem read /uploads/report.pdf、filesystem list /uploads/。⚠️⚠️⚠️【铁律】同一文件连续多次replace_lines/delete_lines/insert必须按行号从大到小排序执行！每次操作后行号全局偏移，从底向上才能杜绝错位和重复。禁止不排序连续多次行操作。',
 executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','code_run','rename']},path:{type:'string',description:'文件路径。用户上传文件在/uploads/目录(如/uploads/report.pdf),用法与普通路径完全一致。'},content:{type:'string',description:'文件内容。用于 create/update/append/insert/replace_lines。⚠️replace_lines/insert的content按\\n拆分为多行逐一插入/替换，单行文本直接写字符串即可。'},line:{type:'number',description:'行号(1-based)。read=起始行(传此参数时auto模式自动切为chunked分块,不再全量返回)；insert=插入到此行之前；delete_lines/replace_lines=起始行。⚠️⚠️⚠️【铁律】同一文件连续多次行操作(line/endLine)必须按行号从大到小排序后逐个执行！先执行大行号再执行小行号。否则前一次操作导致的行号偏移会让后续所有行号错位。禁止不经排序连续多次行操作。'}
-,endLine:{type:'number',description:'结束行号(含)。传0或省略=到末尾。read=读到此处；delete_lines/replace_lines=删除/替换范围终点(0=到末尾)。⚠️同理必须从大到小排序。'},maxLines:{type:'number',default:1000,maximum:1000,description:'read时单次最多返回行数'},mode:{type:'string',enum:['auto','chunked','full'],default:'auto',description:'read模式: auto(默认,小文件全量;但传line/endLine时自动切chunked) / chunked(按行分块,需line/maxLines) / full(强制全量,忽略line参数)'}
-,full_max_bytes:{type:'number',default:65536,description:'auto/full模式安全阈值(字节)，默认2MB'},new_name:{type:'string',description:'rename的新文件名(不含路径)'},overwrite:{type:'boolean',default:false,description:'rename遇到同名是否覆盖'},safe:{type:'boolean',default:true,description:'delete时true=回收站 false=永久删除'},depth:{type:'number',description:'list/tree递归深度，0=不限制'},timeout:{type:'number',description:'code_run超时毫秒，默认10000'}},required:['action','path']}},
+,endLine:{type:'number',description:'结束行号(含)。传0或省略=到末尾。read=读到此处；delete_lines/replace_lines=删除/替换范围终点(0=到末尾)。⚠️同理必须从大到小排序。'},maxLines:{type:'number',default:1000,maximum:1000,description:'read时单次最多返回行数'},mode:{type:'string',enum:['auto','chunked','full'],default:'auto',description:'read模式: auto(默认,小文件全量;但传line/endLine时自动切chunked) / chunked(按行分块,需line/maxLines) / full(强制全量,忽略line参数)'},full_max_bytes:{type:'number',default:65536,description:'auto/full模式安全阈值(字节)，默认2MB'},new_name:{type:'string',description:'rename的新文件名(不含路径)'},overwrite:{type:'boolean',default:false,description:'rename遇到同名是否覆盖'},safe:{type:'boolean',default:true,description:'delete时true=回收站 false=永久删除'},depth:{type:'number',description:'list/tree递归深度，0=不限制'},timeout:{type:'number',description:'code_run超时毫秒，默认10000'}},required:['action','path']}},
   'calculator':{name:'calculator',description:'计算数学表达式。支持四则运算、三角函数、对数、幂运算等',executor:'main_thread',
-    parameters:{type:'object',properties:{expression:{type:'string',description:'数学表达式字符串，如 "sin(pi/4)+sqrt(16)*3" 或 "2^10-5*3"'}},required:['expression']}},
+parameters:{type:'object',properties:{expression:{type:'string',description:'数学表达式字符串，如 "sin(pi/4)+sqrt(16)*3" 或 "2^10-5*3"'}},required:['expression']}},
   'chart':{name:'chart',description:'根据数据生成ECharts图表(11种类型)。bar=柱状 line=折线 area=面积 pie=饼 scatter=散点 radar=雷达 funnel=漏斗 gauge=仪表 heatmap=热力 treemap=矩形树 sankey=桑基。页面内渲染展示',executor:'main_thread',
     parameters:{type:'object',properties:{type:{type:'string',enum:['bar','line','area','pie','scatter','radar','funnel','gauge','heatmap','treemap','sankey'],description:'图表类型。★最小示例: bar→{categories:["A"],series:[{name:"n",data:[1]}]} pie→{labels:["A"],values:[1]} scatter→{points:[{x:1,y:2}]} radar→{indicators:[{name:"A",max:100}],series:[{name:"n",data:[80]}]} funnel→{labels:["A"],values:[100,60]} gauge→{value:50,name:"G"} heatmap→{xLabels:["A"],yLabels:["X"],data:[[0,0,10]]} treemap→{name:"T",children:[{name:"a",value:1}]} sankey→{nodes:[{name:"A"}],links:[{source:"A",target:"B",value:1}]}'},title:{type:'string',description:'图表标题（可选）'},data:{type:'object',description:'图表数据，格式见type描述。所有类型也接受 [{name,value}] 通用格式(自动推断)'},options:{type:'object',description:'可选的ECharts配置覆盖项'}},required:['type','data']}},
   'diagram':{name:'diagram',description:'用Mermaid语法生成流程图/时序图/状态图/类图/甘特图/饼图，页面内渲染展示',executor:'main_thread',
@@ -1226,8 +1225,8 @@ executor:'main_thread',
     parameters:{type:'object',properties:{headers:{type:'array',items:{type:'string'},description:'表头列名数组'},rows:{type:'array',items:{type:'array',items:{type:'string'}},description:'数据行，每行为字符串数组'},download_format:{type:'string',enum:['csv','xlsx',null],description:'下载格式：csv(小文件通用)、xlsx(大文件/需Excel原生格式)、null(仅展示不下载)'}},required:['headers','rows']}},
   'word_generator':{name:'word_generator',description:'生成Word文档(.docx)并自动触发下载。content使用Markdown格式：##标题、###副标题、正文段落用空行分隔',executor:'main_thread',
     parameters:{type:'object',properties:{title:{type:'string',description:'文档标题（会作为一级标题）'},content:{type:'string',description:'文档正文，Markdown格式。用空行分段，##开头为二级标题，###开头为三级标题'},filename:{type:'string',description:'下载文件名（不含扩展名），如 report、会议纪要'}},required:['title','content']}},
-  'fuzzy_search':{name:'fuzzy_search',description:'对虚拟文件系统中的文件内容进行模糊搜索（基于Fuse.js）。自动解压压缩文件，超长文件(>120K字符)分段搜索(重叠2K防边界截断)，返回文件名、路径、相关性分数、匹配片段',executor:'task_worker',
-    parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词（支持模糊匹配）'},path:{type:'string',default:'/',description:'限定搜索目录路径(前缀匹配)，默认根目录/。注意：压缩文件也会被自动解压后搜索'},limit:{type:'number',default:10,description:'返回结果数上限，默认10'}},required:['query']}},
+  'fuzzy_search':{name:'fuzzy_search',description:'对虚拟文件系统中的文件内容进行模糊搜索（基于Fuse.js）。自动解压压缩文件，超长文件(>120K字符)分段搜索(重叠2K防边界截断)。支持限定单个文件(file参数)或目录(path参数)。⭐默认仅搜索文件内容，不搜文件名',executor:'task_worker',
+    parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词（支持模糊匹配）。⭐仅匹配文件内容，不匹配文件名'},file:{type:'string',description:'★ 限定单个文件路径(精确匹配)。传此参数时忽略path。如 file="/uploads/data.json" 则只在该文件内搜索'},path:{type:'string',default:'/',description:'限定搜索目录路径(前缀匹配)，默认根目录/。注意：压缩文件也会被自动解压后搜索。若同时传了file参数则path被忽略'},limit:{type:'number',default:10,description:'返回结果数上限，默认10'}},required:['query']}},
   'mcts_plan':{name:'mcts_plan',description:'多步推理规划。复杂问题时调用。fast=快速，standard=深度。',executor:'main_thread',
     parameters:{type:'object',properties:{problem:{type:'string'},goal:{type:'string'},constraints:{type:'string'},mode:{type:'string',enum:['fast','standard'],default:'fast',description:'fast快速/standard深度'}},required:['problem','goal']}},
   'ocr':{name:'ocr',description:'识别图片中的文字。支持两种方式: ①传filename(已上传图片名) ②传image_base64(直接传base64图片数据,无需先上传)。识别结果直接返回+自动保存为.ocr.txt',executor:'task_worker',
@@ -1678,6 +1677,7 @@ function getConvMessagesList(convId){
 var currentConversationId=null;
 var recentDownloads=[];
 var _recentFileBlobs={};
+var _artifactRegistry={}; // ★ 产物注册表：filename→{blob,filename,mimeType,size,time}，始终为最新版本
 var _longTermMemory={facts:[],updatedAt:0};
 var _memoryIndexPath='/memory/memory-index.json';
 
@@ -1823,6 +1823,20 @@ function _extractKeyFacts(userText,agentContent){
 window._downloadRecentFile=function(btn){
   var fn=btn.getAttribute('data-filename');
   if(!fn)return;
+  // ★ 优先从产物注册表获取最新版本（修正阶段可能已覆盖）
+  if(_artifactRegistry&&_artifactRegistry[fn]){
+    var art=_artifactRegistry[fn];
+    var artBlob=art.blob;
+    var artFile=artBlob instanceof File?artBlob:new File([artBlob],fn,{type:artBlob.type||'application/octet-stream'});
+    var artUrl=URL.createObjectURL(artFile);
+    var artA=document.createElement('a');artA.href=artUrl;artA.download=fn;
+    document.body.appendChild(artA);
+    artA.click();
+    setTimeout(function(){if(artA.parentNode)artA.parentNode.removeChild(artA);},200);
+    setTimeout(function(){URL.revokeObjectURL(artUrl);},60000);
+    return;
+  }
+  // ★ 次选 _recentFileBlobs（兼容旧码路径）
   if(_recentFileBlobs&&_recentFileBlobs[fn]){
     var blob=_recentFileBlobs[fn];
     var file=blob instanceof File?blob:new File([blob],fn,{type:blob.type||'application/octet-stream'});
@@ -1854,6 +1868,8 @@ window._downloadRecentFile=function(btn){
         a.click();
         setTimeout(function(){if(a.parentNode)a.parentNode.removeChild(a);},200);
         setTimeout(function(){URL.revokeObjectURL(u);},60000);
+        // ★ 回写注册表，后续点击直接用内存版本
+        _artifactRegistry[fn]={blob:_fb,filename:fn,mimeType:_fb.type,size:_fb.size,time:Date.now()};
         return;
       }
       var raw=f.content;
@@ -1869,6 +1885,8 @@ window._downloadRecentFile=function(btn){
         var u2=URL.createObjectURL(blob);
         var a2=document.createElement('a');a2.href=u2;a2.download=fn;
         a2.click();setTimeout(function(){URL.revokeObjectURL(u2);},1000);
+        // ★ 回写注册表
+        _artifactRegistry[fn]={blob:blob,filename:fn,mimeType:mime,size:blob.size,time:Date.now()};
         return;
       }
       triggerDownload(raw,fn,'application/octet-stream');
@@ -2042,6 +2060,8 @@ function triggerDownload(data,filename,mimeType){
   a.style.display='none';
   document.body.appendChild(a);
   recentDownloads.push({filename:filename,size:file.size,type:file.type,blob:file,url:url,time:Date.now()});
+  // ★ 产物注册表：覆盖写入，保证始终为最新版本
+  _artifactRegistry[filename]={blob:file,filename:filename,mimeType:file.type,size:file.size,time:Date.now()};
   setTimeout(function(){
     a.click();
     setTimeout(function(){
@@ -2055,6 +2075,8 @@ function triggerDownload(data,filename,mimeType){
 function registerGeneratedFile(data,filename,mimeType){
   var blob=data instanceof Blob?data:new Blob([data],{type:mimeType||'application/octet-stream'});
   recentDownloads.push({filename:filename,size:blob.size,type:blob.type,blob:blob,time:Date.now()});
+  // ★ 产物注册表：覆盖写入，保证始终为最新版本
+  _artifactRegistry[filename]={blob:blob,filename:filename,mimeType:blob.type,size:blob.size,time:Date.now()};
   try{
     createFile('/downloads/'+filename,blob).catch(function(){});
   }catch(e){debugLogger.warn('文件注册持久化失败: '+e.message);}
@@ -4535,7 +4557,8 @@ src+='  }\n';
   src+='  try{\n';
   src+='    await loadScript("fuse",["https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js","https://unpkg.com/fuse.js@7.0.0/dist/fuse.min.js"],"Fuse");\n';
   src+='    if(typeof Fuse==="undefined")return [];\n';
-  src+='    var fuse=new Fuse(files,{keys:["content","name"],threshold:0.4,includeScore:true,minMatchCharLength:2});\n';
+  src+='    // ★ 只搜内容不搜文件名，避免文件名干扰代码/字段搜索\n';
+  src+='    var fuse=new Fuse(files,{keys:["content"],threshold:0.4,includeScore:true,minMatchCharLength:2});\n';
   src+='    var results=fuse.search(query).slice(0,limit);\n';
   src+='    return results.map(function(r){return {file:r.item.name,path:r.item.path,score:Math.round(r.score*100)/100,snippet:(r.item.content||"").substring(0,200)+"..."}});\n';
   src+='  }catch(e){self.postMessage({type:"log",payload:{level:"warn",message:"[任务Worker] fuzzy_search 执行失败: "+e.message}});return [{file:"(搜索错误)",path:"",score:0,snippet:"fuzzy_search 内部错误: "+e.message}]}\n';
@@ -5566,10 +5589,18 @@ async function toolFilesystem(args){
     case 'create':
       var existed=await readFile(path);
       await createFile(path,content||'');
-var totalLen=(content||'').length;
-var preview=totalLen>5000?(content||'').substring(0,5000)+'\n...(以上为前5000字摘要，文件共'+totalLen+'字符。使用 filesystem read '+path+' 读取完整内容)':(content||'');
-var prefix=existed!==null?'✅ 文件已覆盖: ':'✅ 文件已创建: ';
-return prefix+path+' ('+totalLen+'字符)\n---内容预览---\n'+preview;
+	// ★ 如果写入 /downloads/ 目录，同步更新产物注册表，防止下载链接过期
+	if(path.indexOf('/downloads/')===0){
+	  var _dfn=path.split('/').pop();
+	  var _dblob=new Blob([content||''],{type:'application/octet-stream'});
+	  _artifactRegistry[_dfn]={blob:_dblob,filename:_dfn,mimeType:'application/octet-stream',size:_dblob.size,time:Date.now()};
+	  if(_recentFileBlobs)_recentFileBlobs[_dfn]=_dblob;
+	}
+	var totalLen=(content||'').length;
+	var preview=totalLen>5000?(content||'').substring(0,5000)+'\n...(以上为前5000字摘要，文件共'+totalLen+'字符。使用 filesystem read '+path+' 读取完整内容)':(content||'');
+	var prefix=existed!==null?'✅ 文件已覆盖: ':'✅ 文件已创建: ';
+	return prefix+path+' ('+totalLen+'字符)\n---内容预览---\n'+preview;
+
     case 'read':
       var fc=await readFile(path);
       if(fc===null)return '❌ 文件不存在: '+path;
@@ -5616,7 +5647,15 @@ return prefix+path+' ('+totalLen+'字符)\n---内容预览---\n'+preview;
       if(endLine<totalLines)info+=(' | 剩余 '+(totalLines-endLine)+' 行未读，用 line='+(endLine+1)+' 继续。或用 mode="full" 全量加载');
       else info+=' | ✅ 已读完]';
       return info+']\n---\n'+numbered;
-    case 'update':await updateFile(path,content);return '✅ 文件已更新: '+path;
+    case 'update':await updateFile(path,content);
+	// ★ 如果更新 /downloads/ 目录文件，同步更新产物注册表
+	if(path.indexOf('/downloads/')===0){
+	  var _ufn=path.split('/').pop();
+	  var _ublob=new Blob([content],{type:'application/octet-stream'});
+	  _artifactRegistry[_ufn]={blob:_ublob,filename:_ufn,mimeType:'application/octet-stream',size:_ublob.size,time:Date.now()};
+	  if(_recentFileBlobs)_recentFileBlobs[_ufn]=_ublob;
+	}
+	return '✅ 文件已更新: '+path;
     case 'delete':
       if(args.safe!==false){
         // 安全删除：移到回收站
@@ -7055,14 +7094,19 @@ async function toolWordGenerator(args){
 }
 
 async function toolFuzzySearch(args){
-  var query=args.query,path=args.path||'/',limit=args.limit||10;
+  var query=args.query,path=args.path||'/',limit=args.limit||10,targetFile=args.file||null;
   if(!query||!query.trim())throw new Error('搜索关键词不能为空');
   var files=await idbTransaction('files','readonly',function(store){return store.getAll();});
   var fileContents=[];
   for(var i=0;i<files.length;i++){
     var f=files[i];
     if(!f.content||f.content==='__DIR__')continue;
-    if(!f.path||f.path.indexOf(path)===-1)continue;
+    // ★ 优先 file 精确匹配，其次 path 前缀匹配
+    if(targetFile){
+      if(f.path!==targetFile)continue;
+    }else{
+      if(!f.path||f.path.indexOf(path)===-1)continue;
+    }
     var content=f.content;
     if(f.compressed){
       try{content=await decompressText(content);}catch(e){continue;} // 解压失败则跳过
@@ -7096,7 +7140,8 @@ async function toolFuzzySearch(args){
   if(!resp||!resp.success||!resp.data)return '搜索未返回结果。';
   var results=resp.data;
   if(results.length===0)return '未找到匹配 "'+query+'" 的文件。';
-  return '搜索结果 ('+results.length+' 条):\n'+results.map(function(r,i){return (i+1)+'. **'+r.file+'** ('+r.path+') — 相关性: '+r.score+'\n   > '+r.snippet;}).join('\n')+'\n\n💡 使用 filesystem read <文件路径> 读取匹配文件的完整内容';
+  var header=(targetFile?'在文件 '+targetFile+' 中':'')+'搜索结果 ('+results.length+' 条):\n';
+  return header+results.map(function(r,i){return (i+1)+'. **'+r.path+'** — 相关性: '+r.score+'\n   > '+r.snippet;}).join('\n')+'\n\n💡 使用 filesystem read <路径> line=<行号> 定位精确位置。若需限定单文件搜索，传 file 参数。';
 }
 
 // ================================================================
@@ -10781,6 +10826,9 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
         // 存储引用到全局映射以便恢复时查找
         if(!window._recentFileBlobs)window._recentFileBlobs={};
         window._recentFileBlobs[rd.filename]=rd.blob;
+        // ★ 产物注册表：保证与 recentFileBlobs 同步
+        if(!window._artifactRegistry)window._artifactRegistry={};
+        window._artifactRegistry[rd.filename]={blob:rd.blob,filename:rd.filename,mimeType:rd.type,size:rd.size,time:rd.time||Date.now()};
 
         fileCard.appendChild(row);
       }
