@@ -10203,7 +10203,6 @@ async function processUserMessage(userText,taskId){
 	var role=item.role||((item.role==='agent'||item.role==='assistant')?'assistant':(item.role==='user'?'user':'assistant'));
 	// 只保留纯文本，不注入HTML产物噪声；保留 tool_call_id 确保 LLM 能关联工具结果
 	var content=item.cleanContent||item.content||'';
-	if(content.length>50000)content=content.substring(0,50000)+'\n...(以上为前50000字摘要，超出历史回放上限)';
 	var msg={role:role,content:content};
 	if(item.tool_call_id)msg.tool_call_id=item.tool_call_id;
 	if(item.name)msg.name=item.name;
