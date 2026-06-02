@@ -1348,10 +1348,16 @@ deliver run_id 收集全部产出 → /pipelines/{run_id}/delivery/
 ## reroute decision_detail
 {
   add_nodes:{nid:{name,type,...}},          // 新增节点到DAG
-  modify_nodes:{nid:{agent_config:{...}}},  // 修改已有节点参数
-  reroute_edges:[{from,to,condition}],      // 追加新边
-  remove_edges:[{from,to}]                  // 删除边(连带移除to节点和其出边)
+  modify_nodes:{nid:{agent_config:{...},input_bindings:{...}}}, // 修改已有节点参数
+  reroute_edges:[{from,to,condition,route_id,default}], // 追加新边
+  remove_edges:[{from,to}]                  // 删除边(只删边,不动节点)
 }
+
+### ★ input_bindings 必须配置！
+- 新增边后，目标节点需要通过 input_bindings 接收上游产出
+- 例：加边 improve→final，须在 modify_nodes 中为 final 配：
+  modify_nodes:{final:{input_bindings:{"content":"$node.improve.output"}}}
+- 不加 input_bindings → 目标节点拿不到新上游数据，输出为空
 
 ## revise decision_detail
 {revise_nodes:["nid"],revision_instructions:"修正指令"}
@@ -1363,7 +1369,7 @@ deliver run_id 收集全部产出 → /pipelines/{run_id}/delivery/
 
 ## 持久化
 /pipelines/{run_id}/state.json traces/{nid}/round_N_*.json outputs/{nid}.json reports/{gate_id}.json checkpoints/{ckpt_id}.json`,executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['create','run','status','get_report','decide','pause','resume','stop','checkpoint','restore','list','deliver']},name:{type:'string',description:'流水线名称(create)'},description:{type:'string'},project_id:{type:'string'},dag:{type:'object',description:'{nodes:{nid:{name,type,agent_config:{temperature,top_p,system_prompt,tools,max_turns},input_bindings,output_schema,critique_loop:{enabled,max_rounds,critique_prompt,revision_prompt,pass_threshold},children,strategy,concurrency,evaluate_node,evaluation_rules,max_retries,report_scope,report_to_main,sources,verify_cross,merge_strategy,min_weight}},edges:[{from,to,condition}]}'},acceptance_metrics:{type:'array',items:{type:'string'}},pipeline_id:{type:'string'},run_id:{type:'string'},context:{type:'object',description:'初始上下文(含开发文档全文)'},report_node_id:{type:'string'},decision:{type:'string',enum:['approve','revise','reroute','abort','retry']},decision_detail:{type:'object',description:'reroute:{add_nodes,modify_nodes,reroute_edges,remove_edges}|revise:{revise_nodes,revision_instructions}'},checkpoint_id:{type:'string'}},required:['action']}},
+    parameters:{type:'object',properties:{action:{type:'string',enum:['create','run','status','get_report','decide','pause','resume','stop','checkpoint','restore','list','deliver']},name:{type:'string',description:'流水线名称(create)'},description:{type:'string'},project_id:{type:'string'},dag:{type:'object',description:'{nodes:{nid:{name,type,agent_config:{temperature,top_p,system_prompt,tools,max_turns},input_bindings,output_schema,critique_loop:{enabled,max_rounds,critique_prompt,revision_prompt,pass_threshold},children,strategy,concurrency,evaluate_node,evaluation_rules,max_retries,report_scope,report_to_main,sources,verify_cross,merge_strategy,min_weight}},edges:[{from,to,condition,route_id,default}]}'},acceptance_metrics:{type:'array',items:{type:'string'}},pipeline_id:{type:'string'},run_id:{type:'string'},context:{type:'object',description:'初始上下文(含开发文档全文)'},report_node_id:{type:'string'},decision:{type:'string',enum:['approve','revise','reroute','abort','retry']},decision_detail:{type:'object',description:'reroute:{add_nodes,modify_nodes(含input_bindings),reroute_edges,remove_edges}|revise:{revise_nodes,revision_instructions}'},checkpoint_id:{type:'string'}},required:['action']}},
 
   'reqalign':{name:'reqalign',description:'需求对齐工具。action=analyze(LLM分析需求模糊维度) submit_questions(提交问卷) check_convergence(LLM评估6维度收敛度:受众/格式/边界/验收/约束/矛盾) generate_confirmation(生成确认书) lock(锁定需求) status。持久化到/projects/{id}/requirements/',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['analyze','submit_questions','check_convergence','generate_confirmation','lock','status']},project_id:{type:'string',description:'项目ID'},user_request:{type:'string',description:'用户原始需求(analyze用)'},questions:{type:'array',items:{type:'object',properties:{id:{type:'string'},question:{type:'string'},type:{type:'string',enum:['choice','text','confirm']},options:{type:'array',items:{type:'string'}}}},description:'澄清问卷数组(submit_questions用)'},user_answers:{type:'object',description:'用户对问题的回答(check_convergence用)'},confirmation_text:{type:'string',description:'需求确认书Markdown全文(generate_confirmation用)'}},required:['action']}},
@@ -8668,12 +8674,12 @@ function _findReady(dag,state,topo){
   var ready=[],edges=dag.edges||[];
   for(var i=0;i<topo.length;i++){
     var nid=topo[i],ns=state.node_states[nid];
-    if(!ns||ns._removedBy||ns.status==='removed'||(ns.status!=='pending'&&ns.status!=='needs_revision'))continue;
+    if(!ns||ns._removedBy||ns.status==='removed'||ns.status==='routed_out'||(ns.status!=='pending'&&ns.status!=='needs_revision'))continue;
     var allDepDone=true,condResults=[];
     for(var j=0;j<edges.length;j++){
       if(edges[j].to===nid){
         var fs=state.node_states[edges[j].from];
-        if(!fs||(fs.status!=='completed'&&fs.status!=='skipped')){allDepDone=false;break;}
+        if(!fs||(fs.status!=='completed'&&fs.status!=='skipped'&&fs.status!=='routed_out')){allDepDone=false;break;}
         if(edges[j].condition){
           var _evalR=_evalEdge(edges[j].condition,fs,true);
           condResults.push({from:edges[j].from,condition:edges[j].condition,result:_evalR.passed,detail:_evalR.detail});
@@ -8752,6 +8758,72 @@ function _evalEdge(cond,ns,_trace){
   if(_asBool)return _numResult;
   return {passed:_numResult,detail:'(λ) '+field+'='+v+' '+op+' '+rhs+'→'+_numResult};
 }
+
+
+// ===== V6 出边路由解析 =====
+function _resolveRoutes(def,state,nodeId){
+  var edges=def.dag.edges||[];
+  var routeGroups={};
+  for(var i=0;i<edges.length;i++){
+    if(edges[i].from===nodeId&&edges[i].route_id){
+      var gid=edges[i].route_id;
+      if(!routeGroups[gid])routeGroups[gid]=[];
+      routeGroups[gid].push(edges[i]);
+    }
+  }
+  for(var gid in routeGroups){
+    var group=routeGroups[gid],chosen=null,defaultEdge=null;
+    for(var j=0;j<group.length;j++){
+      if(group[j].default){defaultEdge=group[j];continue;}
+      if(!group[j].condition){chosen=group[j];break;}
+      var fs=state.node_states[group[j].from];
+      var evalR=_evalEdge(group[j].condition,fs,true);
+      if(evalR.passed){chosen=group[j];break;}
+    }
+    if(!chosen)chosen=defaultEdge;
+    for(var k=0;k<group.length;k++){
+      if(group[k]!==chosen){
+        var tns=state.node_states[group[k].to];
+        if(tns&&tns.status==='pending'){
+          tns.status='routed_out';tns.completed_at=Date.now();
+          tns._routedBy=nodeId+'/'+gid;
+          debugLogger.info('🔀 路由跳过: '+group[k].to+' | route:'+gid+' | 选中:'+(chosen?chosen.to:'none'));
+          _propagateRouted(def,state,group[k].to);
+        }
+      }
+    }
+    if(chosen)debugLogger.info('🔀 路由选中: '+chosen.to+' | route:'+gid+' | condition:'+(chosen.condition||'无条件'));
+  }
+}
+function _propagateRouted(def,state,nodeId){
+  var edges=def.dag.edges||[];
+  var queue=[nodeId];
+  while(queue.length){
+    var cur=queue.shift();
+    for(var i=0;i<edges.length;i++){
+      if(edges[i].from===cur){
+        var tns=state.node_states[edges[i].to];
+        if(!tns||tns.status!=='pending')continue;
+        var hasActivePath=false;
+        for(var j=0;j<edges.length;j++){
+          if(edges[j].to===edges[i].to&&edges[j].from!==cur){
+            var srcNs=state.node_states[edges[j].from];
+            if(srcNs&&(srcNs.status==='completed'||srcNs.status==='pending'||srcNs.status==='running'||srcNs.status==='needs_revision')){
+              hasActivePath=true;break;
+            }
+          }
+        }
+        if(!hasActivePath){
+          tns.status='routed_out';tns.completed_at=Date.now();
+          tns._routedBy='propagated_from:'+cur;
+          debugLogger.info('🔀 级联路由跳过: '+edges[i].to+' (源于: '+nodeId+')');
+          queue.push(edges[i].to);
+        }
+      }
+    }
+  }
+}
+
 
 var _pipeStore='/config/pipelines_v5.json';
 async function _loadPipes(){try{var r=await readFile(_pipeStore);if(r)return JSON.parse(r);}catch(e){}return {definitions:{},projects:{}};}
@@ -9233,6 +9305,12 @@ async function _runPipelineAsync(runId,def,state){
     var activeSims=0;
     var _lastLogState='';
     while(state.status==='running'||state.status==='waiting_report'){
+      if(state._dagUpdated){
+        topo=_topoSort(def.dag.edges,Object.keys(def.dag.nodes));
+        remaining=topo.filter(function(n){var s=state.node_states[n];return s&&(s.status==='pending'||s.status==='needs_revision')&&!s._removedBy&&s.status!=='removed';});
+        state._dagUpdated=false;
+        debugLogger.info('🔄 拓扑已刷新: '+topo.join('→'));
+      }
       if(state.status==='paused'||state.status==='stopped'){debugLogger.info('⏸️ 引擎退出: '+runId+' | '+state.status);break;}
       if(state.status==='waiting_report'){
         if(_lastLogState!=='waiting_report'){debugLogger.info('📡 流水线暂停等待决策: '+runId);_lastLogState='waiting_report';}
@@ -9248,6 +9326,7 @@ async function _runPipelineAsync(runId,def,state){
         inProgress.add(_nid);activeSims++;
         debugLogger.info('🚀 启动节点: '+_nid+' | 并发: '+activeSims+'/'+_pipeMaxConcurrent);
         _execNode(def,state,runId,_nid).then(function(r){
+          _resolveRoutes(def,state,_nid);
           inProgress.delete(_nid);activeSims--;
           debugLogger.info('✅ 节点完成: '+_nid+' | 并发: '+activeSims+'/'+_pipeMaxConcurrent);
         }).catch(function(e){
@@ -9267,7 +9346,7 @@ async function _runPipelineAsync(runId,def,state){
     }
     debugLogger.info('🏁 流水线循环退出: '+runId+' | 最终状态: '+state.status);
     if(state.status!=='waiting_report'&&state.status!=='failed'){
-      var allDone=Object.keys(state.node_states).every(function(n){var s=state.node_states[n];return s.status==='completed'||s.status==='failed'||s.status==='skipped'||s.status==='skipped_by_cond'||s.status==='removed';});
+var allDone=Object.keys(state.node_states).every(function(n){var s=state.node_states[n];return s.status==='completed'||s.status==='failed'||s.status==='skipped'||s.status==='skipped_by_cond'||s.status==='routed_out'||s.status==='removed';});
       state.status=allDone?'completed':'failed';
     }
     state.updated_at=Date.now();await _saveRun(runId,state);
@@ -9417,7 +9496,8 @@ async function toolPipeline(args){
       var reviseNodes=dDetail.revise_nodes||[s3._reportNodeId];
       for(var i=0;i<reviseNodes.length;i++){var rn=reviseNodes[i];if(s3.node_states[rn]){s3.node_states[rn].status='pending';s3.node_states[rn].revision_context=dDetail.revision_instructions||'';}}
       // ★ 级联：递归重置下游所有 completed 节点为 pending
-      var _allEdges=def?def.dag.edges||[]:[];
+      var _defRev=_pipelines[s3.pipeline_id]||store.definitions[s3.pipeline_id];
+      var _allEdges=_defRev&&_defRev.dag?_defRev.dag.edges||[]:[];
       var _cascadeQueue=reviseNodes.slice(),_cascadeSeen={};
       while(_cascadeQueue.length){
         var _src=_cascadeQueue.shift();
@@ -9432,7 +9512,8 @@ async function toolPipeline(args){
       if(s3.node_states[s3._reportNodeId])s3.node_states[s3._reportNodeId].status='completed';
       s3.status='running';s3._reportNodeId=null;s3._reportData=null;
     }else if(dec==='reroute'){
-      if(def&&def.dag){
+      var _defRe=_pipelines[s3.pipeline_id]||store.definitions[s3.pipeline_id];
+      if(_defRe&&_defRe.dag){
         var newNodes=dDetail.add_nodes||{};
         var modNodes=dDetail.modify_nodes||{};
         var newEdges=dDetail.reroute_edges||[];
@@ -9440,25 +9521,24 @@ async function toolPipeline(args){
         if(rmEdges.length){
           for(var ri=0;ri<rmEdges.length;ri++){
             var _rmFrom=rmEdges[ri].from,_rmTo=rmEdges[ri].to;
-            // ★ 删除目标节点状态和定义，使其从拓扑中彻底消失
-            if(s3.node_states[_rmTo]){
-              s3.node_states[_rmTo].status='removed';s3.node_states[_rmTo]._removedBy='reroute';
-              // 不delete（保留痕迹），但标记不可调度
+            // 只移除这条边，不动节点
+            _defRe.dag.edges=_defRe.dag.edges.filter(function(e){return!(e.from===_rmFrom&&e.to===_rmTo);});
+            // 目标节点复位为 pending，等新边激活后自然调度
+            if(s3.node_states[_rmTo]&&s3.node_states[_rmTo].status!=='pending'){
+              s3.node_states[_rmTo].status='pending';
             }
-            if(def.dag.nodes[_rmTo]){def.dag.nodes[_rmTo]._removed=true;}
-            // ★ 移除目标节点的所有出边
-            def.dag.edges=def.dag.edges.filter(function(e){return e.from!==_rmTo&&e.to!==_rmTo;});
-            debugLogger.info('🛑 删除节点及关联边: '+_rmFrom+'→'+_rmTo+' (移除'+_rmTo+')');
+            debugLogger.info('🔗 移除边: '+_rmFrom+'→'+_rmTo);
           }
         }
-        for(var nnid in newNodes){if(!def.dag.nodes[nnid]){def.dag.nodes[nnid]=newNodes[nnid];s3.node_states[nnid]={status:'pending',output:null,metrics:{},attempts:0,started_at:null,completed_at:null};}}
-        for(var mnid in modNodes){if(def.dag.nodes[mnid]){for(var mk in modNodes[mnid]){def.dag.nodes[mnid][mk]=modNodes[mnid][mk];}}}
-        for(var ei=0;ei<newEdges.length;ei++){def.dag.edges.push(newEdges[ei]);}
+        for(var nnid in newNodes){if(!_defRe.dag.nodes[nnid]){_defRe.dag.nodes[nnid]=newNodes[nnid];s3.node_states[nnid]={status:'pending',output:null,metrics:{},attempts:0,started_at:null,completed_at:null};}}
+        for(var mnid in modNodes){if(_defRe.dag.nodes[mnid]){for(var mk in modNodes[mnid]){_defRe.dag.nodes[mnid][mk]=modNodes[mnid][mk];}}}
+        for(var ei=0;ei<newEdges.length;ei++){_defRe.dag.edges.push(newEdges[ei]);}
         var affectedIds={};
         for(var ei2=0;ei2<newEdges.length;ei2++){affectedIds[newEdges[ei2].to]=true;}
         for(var nid2 in newNodes){affectedIds[nid2]=true;}
         for(var aid in affectedIds){if(s3.node_states[aid])s3.node_states[aid].status='pending';}
         debugLogger.info('🔄 DAG更新: +'+Object.keys(newNodes).length+'节点, '+newEdges.length+'边, -'+(rmEdges.length||0)+'边');
+        s3._dagUpdated=true;
       }
       if(s3.node_states[s3._reportNodeId])s3.node_states[s3._reportNodeId].status='completed';
       s3.status='running';s3._reportNodeId=null;s3._reportData=null;
