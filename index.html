@@ -9267,7 +9267,7 @@ async function _runPipelineAsync(runId,def,state){
     }
     debugLogger.info('🏁 流水线循环退出: '+runId+' | 最终状态: '+state.status);
     if(state.status!=='waiting_report'&&state.status!=='failed'){
-      var allDone=Object.keys(state.node_states).every(function(n){var s=state.node_states[n];return s.status==='completed'||s.status==='failed'||s.status==='skipped';});
+      var allDone=Object.keys(state.node_states).every(function(n){var s=state.node_states[n];return s.status==='completed'||s.status==='failed'||s.status==='skipped'||s.status==='skipped_by_cond'||s.status==='removed';});
       state.status=allDone?'completed':'failed';
     }
     state.updated_at=Date.now();await _saveRun(runId,state);
@@ -11985,7 +11985,9 @@ function startHealthCheck(){
 // 第36部分：反思手动触发
 // ================================================================
 
+var _reflecting=false;
 async function triggerManualReflection(){
+  if(_reflecting)return;
   if(!evoWorker){
     showToast('进化Worker未启动','error');
     return;
@@ -11999,8 +12001,10 @@ async function triggerManualReflection(){
     showToast('预算不足，无法执行反思','warning');
     return;
   }
+  _reflecting=true;
   showToast('正在触发反思...','info');
   evoWorker.postMessage({type:'reflect',payload:{manual:true}});
+  setTimeout(function(){_reflecting=false;},3000);
 }
 
 // ================================================================
@@ -12655,7 +12659,7 @@ function initEventBindings(){
       container.innerHTML=html;
       // 运行
       var runBtns=container.querySelectorAll('[data-pipe-run]');
-      for(var rb=0;rb<runBtns.length;rb++){runBtns[rb].addEventListener('click',async function(){var pid=this.getAttribute('data-pipe-run');var result=await toolPipeline({action:'run',pipeline_id:pid});alert(result);renderPipelineList();});}
+      for(var rb=0;rb<runBtns.length;rb++){runBtns[rb].addEventListener('click',async function(){var pid=this.getAttribute('data-pipe-run');var running=Object.values(_pipelineRuns).filter(function(r){return r.pipeline_id===pid&&(r.status==='running'||r.status==='waiting_report');});if(running.length){return;}renderPipelineList();var result=await toolPipeline({action:'run',pipeline_id:pid});alert(result);renderPipelineList();});}
       // 暂停
       var pauseBtns=container.querySelectorAll('[data-pipe-pause]');
       for(var pb=0;pb<pauseBtns.length;pb++){pauseBtns[pb].addEventListener('click',async function(){var rid=this.getAttribute('data-pipe-pause');await toolPipeline({action:'pause',run_id:rid});renderPipelineList();});}
