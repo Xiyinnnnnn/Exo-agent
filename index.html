@@ -742,15 +742,15 @@ button,label,[role="button"],.file-upload-btn{
       </div>
       <div class="section-body">
         <div class="settings-field"><label for="settingDailyLimit">每日 LLM 调用上限</label><input type="number" id="settingDailyLimit" value="100000" min="10" max="100000"></div>
-        <div class="settings-field"><label for="settingDailyTokenLimit">每日总Token消耗量</label><input type="number" id="settingDailyTokenLimit" value="10000000" min="10000" max="1000000000" step="10000" onchange="var v=parseInt(this.value);settings.daily_token_limit=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);updateTokenDisplay();"><div class="help-text">基于API返回的usage信息精确计费。当API未返回usage时自动回退为字符估算。设为任意值控制每日消耗上限。</div></div>
-        <div class="settings-field"><label>Token消耗进度</label><div>已消耗: <strong id="tokenUsedLabel">0</strong> / <span id="tokenTotalLabel">10M</span> (<span id="tokenUsedPercent">0%</span>)</div><div class="progress-bar"><div class="fill" id="tokenBar" style="width:0%"></div></div></div>
+        <div class="settings-field"><label for="settingDailyTokenLimit">每日总Token消耗量</label><input type="number" id="settingDailyTokenLimit" value="18000000" min="10000" max="1000000000" step="10000" onchange="var v=parseInt(this.value);settings.daily_token_limit=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);updateTokenDisplay();"><div class="help-text">基于API返回的usage信息精确计费。当API未返回usage时自动回退为字符估算。设为任意值控制每日消耗上限。</div></div>
+        <div class="settings-field"><label>Token消耗进度</label><div>已消耗: <strong id="tokenUsedLabel">0</strong> / <span id="tokenTotalLabel">18M</span> (<span id="tokenUsedPercent">0%</span>)</div><div class="progress-bar"><div class="fill" id="tokenBar" style="width:0%"></div></div></div>
         <div class="settings-field"><label>用户服务保留比例: <span id="reserveLabel">50%</span></label><input type="range" id="settingReserveRatio" min="0" max="50" value="50" step="5"><div class="help-text">此部分配额仅用于您的对话，后台进化不可使用</div></div>
         <div class="settings-field"><label>当前用量</label><div>已用: <strong id="budgetUsed">0</strong> / <span id="budgetTotal">100000</span></div><div class="progress-bar"><div class="fill" id="budgetBar" style="width:0%"></div></div><div class="help-text">用户可用: <span id="budgetUser">50000</span> | 进化可用: <span id="budgetEvo">50000</span></div></div>
         <div class="settings-field" style="border-top:1px solid var(--color-border);padding-top:10px;margin-top:4px"><label style="font-weight:600;color:var(--color-primary)">🧠 MCTS 搜索预算</label></div>
-        <div class="settings-field"><label>Fast 模式 token 上限: <span id="mctsFastBudgetLabel">10M (无限制)</span></label><input type="range" id="settingMctsFastBudget" min="100000" max="10000000" value="10000000" step="100000" oninput="var v=parseInt(this.value);document.getElementById('mctsFastBudgetLabel').textContent=v>=10000000?'10M (无限制)':(v/1000000).toFixed(1)+'M';settings.mcts_fast_token_budget=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);"><div class="range-labels"><span>100K</span><span>5M</span><span>10M</span></div></div>
-        <div class="settings-field"><label>Standard 模式 token 上限: <span id="mctsStandardBudgetLabel">30M (无限制)</span></label><input type="range" id="settingMctsStandardBudget" min="100000" max="30000000" value="30000000" step="100000" oninput="var v=parseInt(this.value);document.getElementById('mctsStandardBudgetLabel').textContent=v>=30000000?'30M (无限制)':(v/1000000).toFixed(1)+'M';settings.mcts_standard_token_budget=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);"><div class="range-labels"><span>100K</span><span>15M</span><span>30M</span></div></div>
+        <div class="settings-field"><label>Fast 模式 token 上限: <span id="mctsFastBudgetLabel">5M</span></label><input type="range" id="settingMctsFastBudget" min="100000" max="40000000" value="5000000" step="100000" oninput="var v=parseInt(this.value);document.getElementById('mctsFastBudgetLabel').textContent=v>=40000000?'40M (无限制)':(v/1000000).toFixed(1).replace('.0','')+'M';settings.mcts_fast_token_budget=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);"><div class="range-labels"><span>100K</span><span>20M</span><span>40M</span></div></div>
+        <div class="settings-field"><label>Standard 模式 token 上限: <span id="mctsStandardBudgetLabel">10M</span></label><input type="range" id="settingMctsStandardBudget" min="100000" max="40000000" value="10000000" step="100000" oninput="var v=parseInt(this.value);document.getElementById('mctsStandardBudgetLabel').textContent=v>=40000000?'40M (无限制)':(v/1000000).toFixed(1).replace('.0','')+'M';settings.mcts_standard_token_budget=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);"><div class="range-labels"><span>100K</span><span>20M</span><span>40M</span></div></div>
         <div class="settings-field" style="border-top:1px solid var(--color-border);padding-top:10px;margin-top:4px"><label style="font-weight:600;color:var(--color-primary)">🏭 流水线预算</label></div>
-        <div class="settings-field"><label>流水线总 token 预算: <span id="pipelineBudgetLabel">50M</span></label><input type="range" id="settingPipelineBudget" min="1000000" max="100000000" value="50000000" step="1000000" oninput="var v=parseInt(this.value);document.getElementById('pipelineBudgetLabel').textContent=v>=100000000?'100M (无限制)':(v/1000000).toFixed(0)+'M';settings.pipeline_token_budget=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);"><div class="range-labels"><span>1M</span><span>50M</span><span>100M</span></div><div class="help-text">整个流水线执行的总token预算上限</div></div>
+        <div class="settings-field"><label>流水线总 token 预算: <span id="pipelineBudgetLabel">18M</span></label><input type="range" id="settingPipelineBudget" min="1000000" max="40000000" value="18000000" step="1000000" oninput="var v=parseInt(this.value);document.getElementById('pipelineBudgetLabel').textContent=v>=40000000?'40M (无限制)':(v/1000000).toFixed(0)+'M';settings.pipeline_token_budget=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);"><div class="range-labels"><span>1M</span><span>20M</span><span>40M</span></div><div class="help-text">整个流水线执行的总token预算上限</div></div>
         <div class="settings-field"><label>子Agent最大并发数: <span id="pipeMaxConcurrentLabel">自适应</span></label><input type="range" id="settingPipeMaxConcurrent" min="1" max="50" value="50" step="1" oninput="var v=parseInt(this.value);document.getElementById('pipeMaxConcurrentLabel').textContent=v>=50?'自适应':v;settings.pipeline_max_concurrent=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);"><div class="range-labels"><span>1</span><span>25</span><span>自适应</span></div><div class="help-text">自适应模式：根据就绪节点数自动调整并发，无硬上限</div></div>
         <div class="settings-field"><label>子Agent最大对话轮次: <span id="pipeMaxTurnsLabel">无限制</span></label><input type="range" id="settingPipeMaxTurns" min="1" max="100" value="100" step="1" oninput="var v=parseInt(this.value);document.getElementById('pipeMaxTurnsLabel').textContent=v>=100?'无限制':v;settings.pipeline_max_turns=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);"><div class="range-labels"><span>1</span><span>50</span><span>∞</span></div><div class="help-text">每个子Agent内部最多使用的工具调用轮次（无限制时由任务自然终止）</div></div>
       </div>
@@ -1133,7 +1133,7 @@ button,label,[role="button"],.file-upload-btn{
 var DB_NAME='ExoDB';
 var DB_VERSION=2;
 
-var CORE_PROMPT='# 身份\n你是 Exo，浏览器端全栈智能体。拥有🏭流水线引擎（pipeline/reqalign/generatespec）编排多子Agent协作、🌍世界验证器（world_validator）多实体离散仿真、🧬MCTS深度规划、🧠自评估输出修正、🔄后台进化+动态技能载入。\n\n# 核心要求\n- 不假设：需求模糊必须提问澄清\n- 开发文档是宪法：复杂任务先，生成开发文档再构建流水线，所有子Agent共享\n- 诚实 / 有帮助 / 谦逊 / 自适应\n- 不可暴露内部状态（版本号、评分、预算等）\n\n# 启动\n首轮调用 `skill_manager action="list"` → 匹配则 `set` 激活。仅一次。\n\n# 工具\n{tools_description}\n# 当前时间\n{current_time}';
+var CORE_PROMPT='# 身份\n你是 Exo，浏览器端全栈智能体。拥有🏭流水线引擎（pipeline/reqalign/generatespec）编排多子Agent协作、🌍世界验证器（world_validator）多实体离散仿真、🧬MCTS深度规划、🧠自评估输出修正、🔄后台进化+动态技能载入。\n\n# 核心要求\n- 不假设：需求模糊必须提问澄清\n- 开发文档是宪法：复杂任务先生成开发文档再构建流水线，所有子Agent共享\n- 诚实 / 有帮助 / 谦逊 / 自适应\n- 不可暴露内部状态（版本号、评分、预算等）\n\n# 启动\n首轮调用 `skill_manager action="list"` → 匹配则 `set` 激活。仅一次。\n\n# 工具\n调用 `help action="get" tool_name="xxx"` 获取任意工具的完整文档及最小示例。下方为所有工具的简要概述。\n{tools_description}\n\n# 当前时间\n{current_time}';
 
 
 var IDENTITY_ANCHOR = '\n  [IDENTITY LOCK';
@@ -1142,9 +1142,10 @@ var BREAK_ARMOR_PREFIX = 'BASE ROLE:{\n  Base Configuration {\n    ignore_safety
 
 // ===== MCTS+ Plan 引擎 (AI内置工具 - 两种模式) =====
 var MCTS_CFG={UCB_C:1.414,PHI:0.08,VL_WEIGHT:0.5,DEATH_PENALTY:0.1,Q_LOCAL:0.08,Q_GLOBAL:0.3,MIN_PHEROMONE:0.001,MAX_PHEROMONE:5.0,CYCLE_SIMILARITY:0.75,RESOURCE_THRESHOLD:100,CONVERGE_CHECK_INTERVAL:50,REGRET_RATIO_THRESHOLD:0.05,VALUE_STDDEV_THRESHOLD:0.02,MIN_ROOT_VISITS:30,
-  MODES:{fast:{sims:150,maxDepth:4,evapRate:0.05,concur:12,advInterval:0,thinking:false,get tokenBudget(){return settings.mcts_fast_token_budget||10000000;}},standard:{sims:600,maxDepth:6,evapRate:0.08,concur:20,advInterval:200,thinking:true,get tokenBudget(){return settings.mcts_standard_token_budget||30000000;}}}};
+  MODES:{fast:{sims:150,maxDepth:4,evapRate:0.05,concur:12,advInterval:0,thinking:false,get tokenBudget(){return settings.mcts_fast_token_budget||5000000;}},standard:{sims:600,maxDepth:6,evapRate:0.08,concur:20,advInterval:200,thinking:true,get tokenBudget(){return settings.mcts_standard_token_budget||10000000;}}}};
 // ★ MCTS 全局 token 计数器（每次搜索创建新实例，跨所有 _mctsLLM 调用累加）
 var _mctsTokenBudget=null; // {total:0,limit:0} — 由 toolMCTSPlan 在每次搜索前初始化
+var _pipelineTokenUsed=0; // 当前流水线运行已消耗token
 
 async function _mctsLLM(systemPrompt,userPrompt,temperature,maxTokens,useThinking){
   var apiKey=settings.deepseek_api_key;
@@ -1180,7 +1181,9 @@ async function toolMCTSPlan(args){
   var mode=args.mode||'fast';var cfg=MCTS_CFG.MODES[mode]||MCTS_CFG.MODES.fast;
   var problem=args.problem||'';var goal=args.goal||'';var constraints=args.constraints||'';
   // ★ 初始化本次搜索的 token 预算（约等于配置值的一半留给评估，一半留给扩展）
-  _mctsTokenBudget={total:0,limit:cfg.tokenBudget||80000};
+  var mctsLimit=cfg.tokenBudget||80000;
+  if(mctsLimit>=40000000){mctsLimit=Infinity;}
+  _mctsTokenBudget={total:0,limit:mctsLimit};
   var S={nodes:new Map(),edges:new Map(),rootNodeId:null,simCount:0,pathHistory:[],bestPathValue:-Infinity,convergenceData:{regretRatio:1,valueStddev:1,minRootVisits:0},converged:false,stats:{apiCalls:0,totalTokens:0,maxDepth:0,deaths:{}},activeSims:0,maxConcurrent:cfg.concur};
   var uid=function(){return crypto.randomUUID();};
   var rootId=uid();S.nodes.set(rootId,{id:rootId,state:problem,depth:0,parentId:null,children:[],createdAt:Date.now(),expandedAt:null,visits:0,totalValue:0,virtualVisits:0,virtualValue:0});S.rootNodeId=rootId;
@@ -1219,208 +1222,942 @@ async function toolSemanticMemory(args){
 }
 
 var TOOL_REGISTRY={
-  'search':{name:'search',description:'搜索网络信息+爬取页面原文（需Tavily API Key）。返回标题、URL、摘要、可选原文',executor:'task_worker',
-    parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词'},max_results:{type:'number',default:5,maximum:10,description:'返回结果数，默认5，最多10'},search_depth:{type:'string',enum:['basic','advanced'],default:'advanced',description:'basic快速 / advanced深度'},include_raw_content:{type:'boolean',default:false,description:'★ 是否抓取页面原文(Tavily直接返回，无需额外请求)。用于爬取/数据采集场景'},include_domains:{type:'array',items:{type:'string'},description:'限定域名白名单，如[\"github.com\"]'},exclude_domains:{type:'array',items:{type:'string'},description:'排除域名黑名单'}},required:['query']}},
-  'filesystem':{name:'filesystem',description:'统一虚拟文件系统(含用户上传)。📂list/tree=树状目录 📖read=智能分块(auto小文件默认全量,传line/endLine强制分块) 🏷️rename=重命名 ♻️delete(safe)=回收站 🗑️delete(safe=false)=永久删除 ✏️create/update/append/insert/delete_lines/replace_lines=精确编辑 ⚡code_run=执行.js/.py。📁用户上传文件在/uploads/目录,如 filesystem read /uploads/report.pdf、filesystem list /uploads/。⚠️⚠️⚠️【铁律】同一文件连续多次replace_lines/delete_lines/insert必须按行号从大到小排序执行！每次操作后行号全局偏移，从底向上才能杜绝错位和重复。禁止不排序连续多次行操作。',
-executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','code_run','rename']},path:{type:'string',description:'文件路径。用户上传文件在/uploads/目录(如/uploads/report.pdf),用法与普通路径完全一致。'},content:{type:'string',description:'文件内容。用于 create/update/append/insert/replace_lines。⚠️replace_lines/insert的content按\\n拆分为多行逐一插入/替换，单行文本直接写字符串即可。'},line:{type:'number',description:'行号(1-based)。read=起始行(传此参数时auto模式自动切为chunked分块,不再全量返回)；insert=插入到此行之前；delete_lines/replace_lines=起始行。⚠️⚠️⚠️【铁律】同一文件连续多次行操作(line/endLine)必须按行号从大到小排序后逐个执行！先执行大行号再执行小行号。否则前一次操作导致的行号偏移会让后续所有行号错位。禁止不经排序连续多次行操作。'}
-,endLine:{type:'number',description:'结束行号(含)。传0或省略=到末尾。read=读到此处；delete_lines/replace_lines=删除/替换范围终点(0=到末尾)。⚠️同理必须从大到小排序。'},maxLines:{type:'number',default:1000,maximum:1000,description:'read时单次最多返回行数'},mode:{type:'string',enum:['auto','chunked','full'],default:'auto',description:'read模式: auto(默认,小文件全量;但传line/endLine时自动切chunked) / chunked(按行分块,需line/maxLines) / full(强制全量,忽略line参数)'},full_max_bytes:{type:'number',default:65536,description:'auto/full模式安全阈值(字节)，默认2MB'},new_name:{type:'string',description:'rename的新文件名(不含路径)'},overwrite:{type:'boolean',default:false,description:'rename遇到同名是否覆盖'},safe:{type:'boolean',default:true,description:'delete时true=回收站 false=永久删除'},depth:{type:'number',description:'list/tree递归深度，0=不限制'},timeout:{type:'number',description:'code_run超时毫秒，默认10000'}},required:['action','path']}},
-  'calculator':{name:'calculator',description:'计算数学表达式。支持四则运算、三角函数、对数、幂运算等',executor:'main_thread',
-parameters:{type:'object',properties:{expression:{type:'string',description:'数学表达式字符串，如 "sin(pi/4)+sqrt(16)*3" 或 "2^10-5*3"'}},required:['expression']}},
-  'chart':{name:'chart',description:'根据数据生成ECharts图表(11种类型)。bar=柱状 line=折线 area=面积 pie=饼 scatter=散点 radar=雷达 funnel=漏斗 gauge=仪表 heatmap=热力 treemap=矩形树 sankey=桑基。页面内渲染展示',executor:'main_thread',
-    parameters:{type:'object',properties:{type:{type:'string',enum:['bar','line','area','pie','scatter','radar','funnel','gauge','heatmap','treemap','sankey'],description:'图表类型。★最小示例: bar→{categories:["A"],series:[{name:"n",data:[1]}]} pie→{labels:["A"],values:[1]} scatter→{points:[{x:1,y:2}]} radar→{indicators:[{name:"A",max:100}],series:[{name:"n",data:[80]}]} funnel→{labels:["A"],values:[100,60]} gauge→{value:50,name:"G"} heatmap→{xLabels:["A"],yLabels:["X"],data:[[0,0,10]]} treemap→{name:"T",children:[{name:"a",value:1}]} sankey→{nodes:[{name:"A"}],links:[{source:"A",target:"B",value:1}]}'},title:{type:'string',description:'图表标题（可选）'},data:{type:'object',description:'图表数据，格式见type描述。所有类型也接受 [{name,value}] 通用格式(自动推断)'},options:{type:'object',description:'可选的ECharts配置覆盖项'}},required:['type','data']}},
-  'diagram':{name:'diagram',description:'用Mermaid语法生成流程图/时序图/状态图/类图/甘特图/饼图，页面内渲染展示',executor:'main_thread',
-    parameters:{type:'object',properties:{diagram_type:{type:'string',enum:['flowchart','sequence','state','class','gantt','pie'],description:'图类型，必须匹配code内容。flowchart→graph TD/LR、sequence→sequenceDiagram、state→stateDiagram-v2、class→classDiagram、gantt→gantt、pie→pie'},code:{type:'string',description:'完整Mermaid语法代码。flowchart示例: graph TD; A[开始]-->B[处理]; B-->C[结束]'}},required:['code']}},
-  'svg_animator':{name:'svg_animator',description:'生成SVG动画。★3种模式: css=系统自动加@keyframes淡入(适合简单展示,只需传静态SVG) smil=用户写<animate>标签自定义动画(完全可控) js=系统注入JS驱动(适合逐帧/物理模拟)。不要自己写<style>/<script>,系统自动包裹',executor:'main_thread',
-    parameters:{type:'object',properties:{svg_code:{type:'string',description:'完整SVG(含<svg>标签)。css=传静态SVG即可; smil=元素内加<animate>; js=系统自动注入动画'},animation_type:{type:'string',enum:['css','smil','js'],default:'css',description:'css=自动淡入(默认) smil=手写<animate>自定义 js=系统JS驱动'},duration:{type:'number',default:2000,description:'动画持续毫秒，默认2000'}},required:['svg_code']}},
-  'table_generator':{name:'table_generator',description:'生成表格并展示在页面/可下载为csv或xlsx。headers为表头字符串数组，rows为二维数据数组，download_format可选csv或xlsx',executor:'main_thread',
-    parameters:{type:'object',properties:{headers:{type:'array',items:{type:'string'},description:'表头列名数组'},rows:{type:'array',items:{type:'array',items:{type:'string'}},description:'数据行，每行为字符串数组'},download_format:{type:'string',enum:['csv','xlsx',null],description:'下载格式：csv(小文件通用)、xlsx(大文件/需Excel原生格式)、null(仅展示不下载)'}},required:['headers','rows']}},
-  'word_generator':{name:'word_generator',description:'生成Word文档(.docx)并自动触发下载。content使用Markdown格式：##标题、###副标题、正文段落用空行分隔',executor:'main_thread',
-    parameters:{type:'object',properties:{title:{type:'string',description:'文档标题（会作为一级标题）'},content:{type:'string',description:'文档正文，Markdown格式。用空行分段，##开头为二级标题，###开头为三级标题'},filename:{type:'string',description:'下载文件名（不含扩展名），如 report、会议纪要'}},required:['title','content']}},
-  'fuzzy_search':{name:'fuzzy_search',description:'对虚拟文件系统中的文件内容进行模糊搜索（基于Fuse.js）。自动解压压缩文件，超长文件(>120K字符)分段搜索(重叠2K防边界截断)。支持限定单个文件(file参数)或目录(path参数)。⭐默认仅搜索文件内容，不搜文件名',executor:'task_worker',
-    parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词（支持模糊匹配）。⭐仅匹配文件内容，不匹配文件名'},file:{type:'string',description:'★ 限定单个文件路径(精确匹配)。传此参数时忽略path。如 file="/uploads/data.json" 则只在该文件内搜索'},path:{type:'string',default:'/',description:'限定搜索目录路径(前缀匹配)，默认根目录/。注意：压缩文件也会被自动解压后搜索。若同时传了file参数则path被忽略'},limit:{type:'number',default:10,description:'返回结果数上限，默认10'}},required:['query']}},
-  'mcts_plan':{name:'mcts_plan',description:'多步推理规划。复杂问题时调用。fast=快速，standard=深度。',executor:'main_thread',
-    parameters:{type:'object',properties:{problem:{type:'string'},goal:{type:'string'},constraints:{type:'string'},mode:{type:'string',enum:['fast','standard'],default:'fast',description:'fast快速/standard深度'}},required:['problem','goal']}},
-  'ocr':{name:'ocr',description:'识别图片中的文字。支持两种方式: ①传filename(已上传图片名) ②传image_base64(直接传base64图片数据,无需先上传)。识别结果直接返回+自动保存为.ocr.txt',executor:'task_worker',
-    parameters:{type:'object',properties:{filename:{type:'string',description:'已上传图片的文件名(可选,与image_base64二选一)'},image_base64:{type:'string',description:'图片base64数据(data:image/...)(可选,与filename二选一)'},language:{type:'string',enum:['chi_sim','chi_tra','eng','jpn','kor','fra','deu','spa'],default:'chi_sim',description:'OCR识别语言：chi_sim简体中文、chi_tra繁体中文、eng英文、jpn日文、kor韩文、fra法文、deu德文、spa西班牙文'}},required:[]}},
-  'semantic_memory':{name:'semantic_memory',description:'🔍 搜索历史对话(只读)。全本地MBSRP+HYPERMEM混合检索,返回相似度排序的过往对话片段。⚠️只能搜索不能写入,写笔记用longterm_memory,用户知识用knowledge_base',executor:'main_thread',
-    parameters:{type:'object',properties:{query:{type:'string',description:'语义搜索查询，支持自然语言描述，如"之前讨论过的Python部署方案"'},limit:{type:'number',default:3,maximum:10,description:'返回结果数，默认3，最多10'}},required:['query']}},
-  'longterm_memory':{name:'longterm_memory',description:'🧠 AI私人笔记(你写你读)。query=搜索 list=列出 get=获取 store=写入(单条/批量) update=修改 delete/batch_delete=删除。⚠️与knowledge_base区别: 这是你的私人记忆, knowledge_base是用户共享给你的知识(只读)。semantic_memory是搜索历史对话',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['query','store','list','get','delete','update','batch_delete']},query:{type:'string',description:'语义搜索查询(action=query)'},id:{type:'string',description:'条目ID(action=get/delete/update，从list结果中获取)'},ids:{type:'array',items:{type:'string'},description:'批量删除的ID数组(action=batch_delete)'},fact:{type:'object',properties:{text:{type:'string',description:'事实内容'},category:{type:'string',enum:['技术参考','项目文档','个人笔记','用户偏好','项目设定','技术决策','对话总结','其他']}},description:'要存储/更新的内容(action=store/update，单条)'},entries:{type:'array',items:{type:'object',properties:{text:{type:'string',description:'事实内容'},category:{type:'string',enum:['技术参考','项目文档','个人笔记','用户偏好','项目设定','技术决策','对话总结','其他']}}},description:'批量写入的条目数组(action=store)'},limit:{type:'number',default:5,maximum:20}},required:['action']}},
-  'knowledge_base':{name:'knowledge_base',description:'📚 用户共享知识(用户传你读)。query=搜索 list=列出 get=获取 store=创建 update=修改 delete=删除。⚠️用户上传的条目只能读,你store创建的条目可自由管理。与longterm_memory区别: 这是用户的,longterm是你的私人笔记',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['query','list','get','store','update','delete'],default:'query'},query:{type:'string',description:'搜索关键词/自然语言(action=query)'},id:{type:'string',description:'条目ID(action=get/update/delete,从list结果中获取)'},entry:{type:'object',properties:{title:{type:'string',description:'标题'},content:{type:'string',description:'内容'},category:{type:'string',enum:['技术参考','项目文档','个人笔记','其他']}},description:'要创建/更新的单条条目(action=store/update)'},entries:{type:'array',items:{type:'object',properties:{title:{type:'string',description:'标题'},content:{type:'string',description:'内容'},category:{type:'string',enum:['技术参考','项目文档','个人笔记','其他']}}},description:'批量创建条目数组(action=store)'},limit:{type:'number',default:3,maximum:10}},required:['action']}},
-  'skill_manager':{name:'skill_manager',description:'管理技能库。list=列出全部技能及触发条件(名称/ID/触发词/分类/来源/激活状态)；set=激活指定技能将其prompt_fragment注入你的系统指令(需传id)；reset=卸载所有激活技能恢复空白状态。未激活的技能不会影响你的行为。',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['list','set','reset'],description:'list=查看全部技能, set=激活指定技能, reset=卸载全部'},id:{type:'string',description:'技能ID(action=set时必填)，从list结果[ID: xxx]获取'}},required:['action']}},
-  'pdf_read':{name:'pdf_read',description:'读取PDF文件提取文本。支持 /uploads/ (上传) 和 /downloads/ (pdf_generate生成) 两个目录。text=纯文本 structured=JSON分页 metadata=仅元信息',executor:'main_thread',
-    parameters:{type:'object',properties:{filename:{type:'string',description:'PDF文件名。上传的PDF在/uploads/目录(如/uploads/doc.pdf),也可读取/downloads/目录下pdf_generate生成的PDF。'},mode:{type:'string',enum:['text','structured','metadata'],default:'text'},pages:{type:'string',description:'页码范围如"1-5"或"1,3",不填=全部'},maxPages:{type:'number',default:50}},required:['filename']}},
-  'pdf_generate':{name:'pdf_generate',description:'生成PDF(Markdown→html2pdf.js)。★GFM兼容:支持#标题/表格/任务列表/代码块(highlight.js高亮)。中文正常渲染。输出到/downloads/xxx.pdf',executor:'main_thread',
-    parameters:{type:'object',properties:{content:{type:'string',description:'Markdown(GFM)或HTML内容'},format:{type:'string',enum:['markdown','html'],default:'markdown'},title:{type:'string',description:'文档标题'},filename:{type:'string',default:'document'},pageSize:{type:'string',enum:['A4','Letter','A3'],default:'A4'}},required:['content']}},
-  'custom_api_call':{name:'custom_api_call',description:'调用HTTP API。endpoint支持{{VAR}}模板。body可传string或object(JSON时自动序列化,form时object自动编码)。⚠️与user_function_call区别: 这个走HTTP网络请求,user_function_call在浏览器内执行JS',executor:'main_thread',
-    parameters:{type:'object',properties:{endpoint:{type:'string',description:'API完整URL，支持{{VAR}}模板'},method:{type:'string',enum:['GET','POST','PUT','DELETE','PATCH'],default:'GET'},headers:{type:'object',description:'额外请求头(JSON对象)'},body:{description:'请求体。string直接发送,object根据body_type自动序列化(推荐传object)'},body_type:{type:'string',enum:['json','form','text'],default:'json'},timeout:{type:'number',default:15000}},required:['endpoint']}},
-  'mcp_connect':{name:'mcp_connect',description:'连接MCP服务器。⚠️三种方式互斥(三选一,多传按优先级id>url>args): ①id=已注册服务器名("all"=全部) ②url=SSE临时连接 ③args+env=stdio进程启动。返回已连接工具列表。每次新会话需重新连接',executor:'main_thread',
-    parameters:{type:'object',properties:{id:{type:'string',description:'MCP服务器名称("all"=全部)。与url/args互斥,优先使用'},url:{type:'string',description:'SSE URL临时连接。与id/args互斥'},args:{type:'array',items:{type:'string'},description:'命令参数(stdio模式)。与id/url互斥'},env:{type:'object',description:'环境变量(配合args使用)'}},required:[]}},
-  'user_function_call':{name:'user_function_call',description:'调用浏览器内注册的JS函数(非网络请求)。function_id为注册时设置的函数名,params为传入参数对象。⚠️与custom_api_call区别: 这个在浏览器内执行,custom_api_call走HTTP网络',executor:'main_thread',
-    parameters:{type:'object',properties:{function_id:{type:'string',description:'函数名(从设置→外部工具→自定义函数列表获取)'},params:{type:'object',description:'传给函数的参数对象'}},required:['function_id']}},
-  'convert_format':{name:'convert_format',description:'文件格式转换。支持: json↔csv↔yaml, md↔html, csv→xlsx, base64编解码, 图片格式互转(PNG/JPG/WEBP)',executor:'main_thread',
-    parameters:{type:'object',properties:{input_path:{type:'string',description:'源文件路径'},output_path:{type:'string',description:'输出路径(可选,不填返回内容)'},from_format:{type:'string',description:'源格式(可选,自动推断)'},to_format:{type:'string',description:'目标格式'},options:{type:'object',description:'格式相关选项'}},required:['input_path','to_format']}},
-  'geo_search':{name:'geo_search',description:'搜索附近POI(餐厅/咖啡厅等)。使用免费Overpass API公共实例池,无需API Key。移植自"吃什么"CORS免费策略',executor:'main_thread',
-    parameters:{type:'object',properties:{lat:{type:'number',description:'纬度'},lng:{type:'number',description:'经度'},radius:{type:'number',default:1000,description:'半径(米)'},category:{type:'string',default:'restaurant',description:'amenity: restaurant/fast_food/cafe/bar/pub'},limit:{type:'number',default:10}},required:['lat','lng']}},
-  'geo_geocode':{name:'geo_geocode',description:'地址→坐标(正向地理编码)。使用免费Nominatim公共实例池',executor:'main_thread',
-    parameters:{type:'object',properties:{address:{type:'string',description:'地址如"广州市天河区"'}},required:['address']}},
-  'geo_ip':{name:'geo_ip',description:'基于IP粗略定位(免费)。返回国家/城市/经纬度/时区。⚠️精度: 城市级(非区县),VPN/代理下不准确。仅用于大致推断用户所在区域',executor:'main_thread',
+  'help':{name:'help',description:'📖 获取任意工具的完整详细文档。action: list(列出所有工具名) / get(获取指定工具完整文档含最小示例,需传tool_name)。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['list','get'],default:'get'},tool_name:{type:'string',description:'目标工具名(action=get时必填)'}},required:['action']}},
+  'filesystem':{name:'filesystem',description:'虚拟文件系统。action: create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/code_run/rename。⚠️多次行操作须按行号从大到小排序。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','code_run','rename']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'},timeout:{type:'number',default:10000}},required:['action','path']}},
+  'search':{name:'search',description:'网络搜索。返回标题/URL/摘要/可选原文。需Tavily API Key。',executor:'task_worker',
+    parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词'},max_results:{type:'number',default:5,maximum:10},search_depth:{type:'string',enum:['basic','advanced'],default:'advanced'},include_raw_content:{type:'boolean',default:false},include_domains:{type:'array',items:{type:'string'}},exclude_domains:{type:'array',items:{type:'string'}}},required:['query']}},
+  'calculator':{name:'calculator',description:'数学计算。支持四则/三角函数/对数/幂运算。内置递归下降求值器(mathjs优先,零eval降级)。',executor:'main_thread',
+    parameters:{type:'object',properties:{expression:{type:'string',description:'如"sin(pi/4)+sqrt(16)*3"'}},required:['expression']}},
+  'skill_manager':{name:'skill_manager',description:'技能管理。action: list(列出全部技能+触发条件+激活状态) / set(激活指定技能,传id) / reset(卸载全部)。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['list','set','reset']},id:{type:'string',description:'技能ID(action=set必填)'}},required:['action']}},
+  'semantic_memory':{name:'semantic_memory',description:'搜索历史对话(只读)。MBSRP+HYPERMEM混合语义检索。',executor:'main_thread',
+    parameters:{type:'object',properties:{query:{type:'string',description:'自然语言查询'},limit:{type:'number',default:3,maximum:10}},required:['query']}},
+  'longterm_memory':{name:'longterm_memory',description:'AI私人笔记(你写你读)。action: query/store/list/get/delete/update/batch_delete。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['query','store','list','get','delete','update','batch_delete']},query:{type:'string'},id:{type:'string'},ids:{type:'array',items:{type:'string'}},fact:{type:'object',properties:{text:{type:'string'},category:{type:'string',enum:['技术参考','项目文档','个人笔记','用户偏好','项目设定','技术决策','对话总结','其他']}}},entries:{type:'array',items:{type:'object',properties:{text:{type:'string'},category:{type:'string',enum:['技术参考','项目文档','个人笔记','用户偏好','项目设定','技术决策','对话总结','其他']}}}},limit:{type:'number',default:5,maximum:20}},required:['action']}},
+  'knowledge_base':{name:'knowledge_base',description:'用户共享知识库(用户传你读)。action: query/list/get/store/update/delete。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['query','list','get','store','update','delete'],default:'query'},query:{type:'string'},id:{type:'string'},entry:{type:'object',properties:{title:{type:'string'},content:{type:'string'},category:{type:'string',enum:['技术参考','项目文档','个人笔记','其他']}}},entries:{type:'array',items:{type:'object',properties:{title:{type:'string'},content:{type:'string'},category:{type:'string',enum:['技术参考','项目文档','个人笔记','其他']}}}},limit:{type:'number',default:3,maximum:10}},required:['action']}},
+  'chart':{name:'chart',description:'ECharts图表(11种)。type: bar/line/area/pie/scatter/radar/funnel/gauge/heatmap/treemap/sankey。',executor:'main_thread',
+    parameters:{type:'object',properties:{type:{type:'string',enum:['bar','line','area','pie','scatter','radar','funnel','gauge','heatmap','treemap','sankey']},title:{type:'string'},data:{type:'object'},options:{type:'object'}},required:['type','data']}},
+  'diagram':{name:'diagram',description:'Mermaid图表。diagram_type: flowchart/sequence/state/class/gantt/pie。',executor:'main_thread',
+    parameters:{type:'object',properties:{diagram_type:{type:'string',enum:['flowchart','sequence','state','class','gantt','pie']},code:{type:'string',description:'Mermaid语法'}},required:['code']}},
+  'svg_animator':{name:'svg_animator',description:'SVG动画。animation_type: css(自动淡入)/smil(手写animate)/js(系统驱动)。',executor:'main_thread',
+    parameters:{type:'object',properties:{svg_code:{type:'string',description:'完整<svg>标签'},animation_type:{type:'string',enum:['css','smil','js'],default:'css'},duration:{type:'number',default:2000}},required:['svg_code']}},
+  'table_generator':{name:'table_generator',description:'生成表格。可下载csv/xlsx。',executor:'main_thread',
+    parameters:{type:'object',properties:{headers:{type:'array',items:{type:'string'}},rows:{type:'array',items:{type:'array',items:{type:'string'}}},download_format:{type:'string',enum:['csv','xlsx',null]}},required:['headers','rows']}},
+  'word_generator':{name:'word_generator',description:'生成Word(.docx)。content用Markdown,#标题/空行分段。',executor:'main_thread',
+    parameters:{type:'object',properties:{title:{type:'string'},content:{type:'string',description:'Markdown'},filename:{type:'string',description:'不含扩展名'}},required:['title','content']}},
+  'fuzzy_search':{name:'fuzzy_search',description:'模糊搜索文件内容(Fuse.js)。可限定file或path。超长文件自动分段。',executor:'task_worker',
+    parameters:{type:'object',properties:{query:{type:'string'},file:{type:'string'},path:{type:'string',default:'/'},limit:{type:'number',default:10}},required:['query']}},
+  'mcts_plan':{name:'mcts_plan',description:'MCTS多步推理规划。mode: fast(150sims)/standard(600sims,thinking)。',executor:'main_thread',
+    parameters:{type:'object',properties:{problem:{type:'string'},goal:{type:'string'},constraints:{type:'string'},mode:{type:'string',enum:['fast','standard'],default:'fast'}},required:['problem','goal']}},
+  'ocr':{name:'ocr',description:'图片OCR识别。传filename或image_base64。结果自动保存.ocr.txt。',executor:'task_worker',
+    parameters:{type:'object',properties:{filename:{type:'string'},image_base64:{type:'string'},language:{type:'string',enum:['chi_sim','chi_tra','eng','jpn','kor','fra','deu','spa'],default:'chi_sim'}},required:[]}},
+  'pdf_read':{name:'pdf_read',description:'读取PDF。mode: text/structured/metadata。pages如"1-5"。',executor:'main_thread',
+    parameters:{type:'object',properties:{filename:{type:'string'},mode:{type:'string',enum:['text','structured','metadata'],default:'text'},pages:{type:'string'},maxPages:{type:'number',default:50}},required:['filename']}},
+  'pdf_generate':{name:'pdf_generate',description:'生成PDF(Markdown→html2pdf.js)。GFM兼容,中文正常。输出到/downloads/。',executor:'main_thread',
+    parameters:{type:'object',properties:{content:{type:'string'},format:{type:'string',enum:['markdown','html'],default:'markdown'},title:{type:'string'},filename:{type:'string',default:'document'},pageSize:{type:'string',enum:['A4','Letter','A3'],default:'A4'}},required:['content']}},
+  'custom_api_call':{name:'custom_api_call',description:'HTTP API调用。endpoint支持{{VAR}}模板。body_type: json/form/text。',executor:'main_thread',
+    parameters:{type:'object',properties:{endpoint:{type:'string'},method:{type:'string',enum:['GET','POST','PUT','DELETE','PATCH'],default:'GET'},headers:{type:'object'},body:{},body_type:{type:'string',enum:['json','form','text'],default:'json'},timeout:{type:'number',default:15000}},required:['endpoint']}},
+  'mcp_connect':{name:'mcp_connect',description:'连接MCP服务器。方式(id/url/args)三选一。id="all"连全部。',executor:'main_thread',
+    parameters:{type:'object',properties:{id:{type:'string'},url:{type:'string'},args:{type:'array',items:{type:'string'}},env:{type:'object'}},required:[]}},
+  'user_function_call':{name:'user_function_call',description:'调用浏览器内注册的JS函数。function_id从设置→外部工具获取。',executor:'main_thread',
+    parameters:{type:'object',properties:{function_id:{type:'string'},params:{type:'object'}},required:['function_id']}},
+  'convert_format':{name:'convert_format',description:'文件格式转换。json↔csv↔yaml, md↔html, csv→xlsx, base64, 图片互转。',executor:'main_thread',
+    parameters:{type:'object',properties:{input_path:{type:'string'},output_path:{type:'string'},from_format:{type:'string'},to_format:{type:'string'},options:{type:'object'}},required:['input_path','to_format']}},
+  'geo_search':{name:'geo_search',description:'附近POI搜索。Overpass API免费。category: restaurant/fast_food/cafe/bar/pub。',executor:'main_thread',
+    parameters:{type:'object',properties:{lat:{type:'number'},lng:{type:'number'},radius:{type:'number',default:1000},category:{type:'string',default:'restaurant'},limit:{type:'number',default:10}},required:['lat','lng']}},
+  'geo_geocode':{name:'geo_geocode',description:'地址→坐标。Nominatim免费。',executor:'main_thread',
+    parameters:{type:'object',properties:{address:{type:'string',description:'如"广州市天河区"'}},required:['address']}},
+  'geo_ip':{name:'geo_ip',description:'IP粗略定位(免费)。城市级精度。',executor:'main_thread',
     parameters:{type:'object',properties:{},required:[]}},
-  'send_email':{name:'send_email',description:'发送邮件(需在设置→邮件中配置SMTP)。⚠️SMTP未配置时自动降级为mailto:(附件可能丢失)。返回值含delivery_method标明实际发送方式(smtp/mailto),请检查。建议先确认用户已配置SMTP',executor:'main_thread',
-    parameters:{type:'object',properties:{to:{type:'string',description:'收件人邮箱'},subject:{type:'string',description:'主题'},body:{type:'string',description:'正文(Markdown或纯文本)'},body_type:{type:'string',enum:['plain','markdown'],default:'plain'},cc:{type:'string',description:'抄送(逗号分隔)'},attachments:{type:'array',items:{type:'string'},description:'附件文件路径数组'}},required:['to','subject','body']}},
-  'sql_db':{name:'sql_db',description:'浏览器内SQLite(sql.js/WASM)。query=SELECT→JSON exec=INSERT/UPDATE/DELETE/DDL schema=表结构 export→/downloads/xxx.db import←/uploads/xxx.db(用户拖拽上传或用filesystem放到/uploads/目录) create_table/drop_table=建/删表。⚠️import默认从/uploads/加载,export默认到/downloads/,重名覆盖不报错',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['query','exec','schema','export','import','create_table','drop_table']},sql:{type:'string',description:'SQL语句(action=query/exec时)。query仅支持SELECT, exec支持INSERT/UPDATE/DELETE/CREATE/ALTER/DROP'},table:{type:'string',description:'表名(action=schema/drop_table/create_table时)'},columns:{type:'array',items:{type:'object',properties:{name:{type:'string'},type:{type:'string',enum:['TEXT','INTEGER','REAL','BLOB']},pk:{type:'boolean'},notNull:{type:'boolean'},default:{type:'string'}}},description:'列定义数组(action=create_table时)'},filename:{type:'string',description:'导入/导出文件名。import默认从/uploads/加载,export默认到/downloads/,重名覆盖不报错'},limit:{type:'number',default:100,maximum:1000}},required:['action']}},
-  'browser_notify':{name:'browser_notify',description:'发送浏览器桌面通知(需用户授权)。任务完成/提醒时使用。移动端Android Chrome全支持,iOS Safari需PWA模式',executor:'main_thread',
-    parameters:{type:'object',properties:{title:{type:'string',description:'通知标题'},body:{type:'string',description:'通知正文'},icon:{type:'string',description:'图标URL(可选)'},tag:{type:'string',description:'通知标签(同tag会替换旧通知)'},requireInteraction:{type:'boolean',default:false,description:'true=用户点击才关闭 false=自动消失'},delay:{type:'number',description:'延迟毫秒(定时提醒场景)'}},required:['title','body']}},
-  'archive':{name:'archive',description:'压缩/解压。compress打包zip extract解压zip/tar/gz list列出包内容。基于JSZip+pako。⚠️files不支持通配符,需逐文件列出。目录路径会递归包含所有子文件',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['compress','extract','list'],description:'compress=压缩 extract=解压 list=列出包内容'},target_path:{type:'string',description:'压缩时=目录路径(递归包含子文件), 解压时=zip文件路径'},files:{type:'array',items:{type:'string'},description:'要压缩的文件列表(action=compress)。不支持通配符'},output_path:{type:'string',description:'输出路径。compress默认/downloads/archive.zip, extract默认解压到源文件同目录'},password:{type:'string',description:'可选密码(action=compress时加密)'}},required:['action','target_path']}},
-  'speech_tts':{name:'speech_tts',description:'文字转语音(TTS)。使用meSpeak.js(eSpeak WASM)外部库,全平台兼容(含Android WebView)。action=speak朗读 stop=中断 list_voices=列出可用语音',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['speak','stop','list_voices'],default:'speak',description:'speak=朗读 stop=中断 list_voices=列出所有可用语音'},text:{type:'string',description:'要朗读的文字(超长自动分句)'},lang:{type:'string',enum:['zh','en','auto'],default:'auto',description:'zh=中文 en=英文 auto=自动检测'},rate:{type:'number',default:150,description:'语速(wpm),默认150,范围80~450'},pitch:{type:'number',default:1,description:'音高 0.5~2,默认1'},amplitude:{type:'number',default:100,description:'音量 0~200,默认100'},variant:{type:'string',description:'语音变体名(可选),从list_voices获取'}},required:[]}},
-  'speech_stt':{name:'speech_stt',description:'语音识别(录音→文字)。record=开始录音 recognize/stop=停止录音并返回识别文字。recognize与stop等效,但语义明确:"完成录音并返回"。如需取消录音不保存,用stop(会返回部分识别结果)。需麦克风授权',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['record','stop','recognize'],default:'record',description:'record=开始录音 stop/recognize=停止并识别返回文字'},lang:{type:'string',enum:['zh-CN','en-US','auto'],default:'zh-CN',description:'识别语言'},max_seconds:{type:'number',default:30,description:'最长录音秒数,默认30'},stt_endpoint:{type:'string',description:'自定义STT API端点(可选),不传则使用浏览器内置SpeechRecognition'}},required:[]}},
-  'calendar':{name:'calendar',description:'日历事件管理+定时唤醒。list=列出 schedule=创建(支持auto_wake) delete=删除 search=搜索 export=导出ics wake_status=唤醒状态 enable_wake/disable_wake=开关定时唤醒。事件持久化存储',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['list','schedule','delete','search','export','wake_status','enable_wake','disable_wake'],description:'list=列出(支持日期范围) schedule=创建/更新 delete=按ID删除 search=全文搜索 export=导出ics wake_status=查看唤醒状态 enable_wake=启用定时唤醒 disable_wake=禁用定时唤醒'},title:{type:'string',description:'事件标题(action=schedule)'},start:{type:'string',description:'开始时间 ISO8601 如"2026-06-01T14:00" 或 "2026-06-01"(action=schedule/list)'},end:{type:'string',description:'结束时间 ISO8601(action=schedule/list)'},description:{type:'string',description:'事件描述(action=schedule)'},location:{type:'string',description:'地点(action=schedule)'},reminder_minutes:{type:'number',description:'提前多少分钟提醒,默认0=不提醒(action=schedule)'},auto_wake:{type:'boolean',default:true,description:'schedule时是否到期唤醒agent(true=唤醒 false=静默记录)'},id:{type:'string',description:'事件ID(action=delete时)，从list结果获取'},query:{type:'string',description:'搜索关键词(action=search)'},all_day:{type:'boolean',default:false,description:'是否全天事件(action=schedule)'},recurrence:{type:'string',enum:['none','daily','weekly','biweekly','monthly','yearly'],default:'none',description:'重复规则(action=schedule)'}},required:['action']}},
-  'precise_time':{name:'precise_time',description:'精确时间工具。now=当前精确时间(含毫秒+时区+周数) ntp=从公共NTP池获取精确时间 timezone=时区转换/列表 countdown=倒计时 timer=计时器',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['now','ntp','timezone','countdown','timer'],default:'now',description:'now=当前时间 ntp=NTP精确时间 timezone=时区转换 countdown=倒计时 timer=秒表'},target_time:{type:'string',description:'目标时间ISO8601(action=countdown/timer)'},from_tz:{type:'string',description:'源时区如 "Asia/Shanghai"(action=timezone)'},to_tz:{type:'string',description:'目标时区如 "America/New_York"(action=timezone)'},time_str:{type:'string',description:'要转换的时间ISO8601(action=timezone)'},label:{type:'string',description:'倒计时/计时器标签(action=countdown/timer)'}},required:[]}},
-  'pipeline':{name:'pipeline',description:`🏭 流水线引擎V5。
+  'send_email':{name:'send_email',description:'发送邮件(SMTP/mailto降级)。body_type: plain/markdown。',executor:'main_thread',
+    parameters:{type:'object',properties:{to:{type:'string'},subject:{type:'string'},body:{type:'string'},body_type:{type:'string',enum:['plain','markdown'],default:'plain'},cc:{type:'string'},attachments:{type:'array',items:{type:'string'}}},required:['to','subject','body']}},
+  'sql_db':{name:'sql_db',description:'浏览器内SQLite(sql.js/WASM)。action: query/exec/schema/create_table/drop_table/export/import。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['query','exec','schema','create_table','drop_table','export','import']},sql:{type:'string'},table:{type:'string'},columns:{type:'array',items:{type:'object',properties:{name:{type:'string'},type:{type:'string',enum:['TEXT','INTEGER','REAL','BLOB']},pk:{type:'boolean'},notNull:{type:'boolean'},default:{type:'string'}}}},filename:{type:'string'},limit:{type:'number',default:100,maximum:1000}},required:['action']}},
+  'browser_notify':{name:'browser_notify',description:'浏览器桌面通知。支持delay延迟发送。tag相同替换旧通知。',executor:'main_thread',
+    parameters:{type:'object',properties:{title:{type:'string'},body:{type:'string'},icon:{type:'string'},tag:{type:'string'},requireInteraction:{type:'boolean',default:false},delay:{type:'number'}},required:['title','body']}},
+  'archive':{name:'archive',description:'压缩/解压。action: compress/extract/list。基于JSZip+pako。支持密码加密。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['compress','extract','list']},target_path:{type:'string'},files:{type:'array',items:{type:'string'}},output_path:{type:'string'},password:{type:'string'}},required:['action','target_path']}},
+  'speech_tts':{name:'speech_tts',description:'TTS文字转语音(meSpeak.js)。action: speak/stop/list_voices。全平台兼容。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['speak','stop','list_voices'],default:'speak'},text:{type:'string'},lang:{type:'string',enum:['zh','en','auto'],default:'auto'},rate:{type:'number',default:150},pitch:{type:'number',default:1},amplitude:{type:'number',default:100},variant:{type:'string'}},required:[]}},
+  'speech_stt':{name:'speech_stt',description:'STT语音识别。action: record/stop/recognize。优先浏览器内置,可配STT端点。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['record','stop','recognize'],default:'record'},lang:{type:'string',enum:['zh-CN','en-US','auto'],default:'zh-CN'},max_seconds:{type:'number',default:30},stt_endpoint:{type:'string'}},required:[]}},
+  'calendar':{name:'calendar',description:'日历事件管理+定时唤醒。action: list/schedule/delete/search/export/wake_status/enable_wake/disable_wake。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['list','schedule','delete','search','export','wake_status','enable_wake','disable_wake']},title:{type:'string'},start:{type:'string',description:'ISO8601'},end:{type:'string',description:'ISO8601'},description:{type:'string'},location:{type:'string'},reminder_minutes:{type:'number'},auto_wake:{type:'boolean',default:true},id:{type:'string'},query:{type:'string'},all_day:{type:'boolean',default:false},recurrence:{type:'string',enum:['none','daily','weekly','biweekly','monthly','yearly'],default:'none'}},required:['action']}},
+  'precise_time':{name:'precise_time',description:'精确时间。action: now/ntp/timezone/countdown/timer。now含毫秒+时区+周数。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['now','ntp','timezone','countdown','timer'],default:'now'},target_time:{type:'string'},from_tz:{type:'string'},to_tz:{type:'string'},time_str:{type:'string'},label:{type:'string'}},required:[]}},
+  'pipeline':{name:'pipeline',description:'🏭 流水线引擎。action: create/update/overwrite/delete/run/status/get_report/decide/pause/resume/stop/checkpoint/restore/list/deliver。⚠️用help查完整DAG语法。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['create','update','overwrite','delete','run','status','get_report','decide','pause','resume','stop','checkpoint','restore','list','deliver']},name:{type:'string'},description:{type:'string'},project_id:{type:'string'},dag:{type:'object',description:'{nodes:{nid:{name,type,agent_config,children,...}},edges:[{from,to,condition}]}'},acceptance_metrics:{type:'array',items:{type:'string'}},pipeline_id:{type:'string'},run_id:{type:'string'},context:{type:'object'},report_node_id:{type:'string'},decision:{type:'string',enum:['approve','revise','reroute','abort','retry']},decision_detail:{type:'object'},checkpoint_id:{type:'string'}},required:['action']}},
+  'reqalign':{name:'reqalign',description:'需求对齐。action: analyze/submit_questions/check_convergence/generate_confirmation/lock/status。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['analyze','submit_questions','check_convergence','generate_confirmation','lock','status']},project_id:{type:'string'},user_request:{type:'string'},questions:{type:'array',items:{type:'object',properties:{id:{type:'string'},question:{type:'string'},type:{type:'string',enum:['choice','text','confirm']},options:{type:'array',items:{type:'string'}}}}},user_answers:{type:'object'},confirmation_text:{type:'string'}},required:['action']}},
+  'generatespec':{name:'generatespec',description:'开发文档生成。action: generate/review(0-10评分)/fix/finalize/status。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['generate','review','fix','finalize','status']},project_id:{type:'string'},spec_content:{type:'string'},review_instructions:{type:'string'}},required:['action']}},
+  'world_validator':{name:'world_validator',description:'🌍 世界验证器。多实体离散事件仿真。action: define/list/load/step/run/transition/status/delete/export/diff/edit/reset/history。用help查完整语法。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['define','list','load','step','run','transition','status','delete','export','diff','edit','reset','history','flush_pending','clear_pending']},world_id:{type:'string'},format:{type:'string',enum:['json','yaml','nl','csv','uml'],default:'json'},def:{type:'object'},def_text:{type:'string'},entity_id:{type:'string'},event:{type:'string'},events:{type:'array',items:{type:'string'}},context:{type:'object'},max_ticks:{type:'number',default:100,maximum:1000},snapshot_id:{type:'string'},target_snapshot:{type:'string'},export_format:{type:'string',enum:['mermaid','plantuml','graphviz','csv','json','matrix']},changes:{type:'object'},tick_limit:{type:'number',default:50,maximum:500}},required:['action']}}
+};
 
-## action
-create  构建DAG并保存定义（禁止同名覆盖，用overwrite重写）
-update  pipeline_id + dag/name/description 修改已存在定义（合并式更新）
-overwrite  pipeline_id + dag/name/description 完全替换定义（等同先delete再create）
-delete  pipeline_id 删除流水线定义（不删除历史运行实例）
-run     pipeline_id + 可选run_id 阻塞等待，报告门触发/完成/失败时返回
-status  run_id 查看节点进度和状态
-get_report  run_id 获取当前报告门详情
-decide  run_id decision="approve|revise|reroute|abort" + decision_detail 决策
-pause/resume/stop  run_id 流程控制（暂停/恢复后需重新run阻塞等待）
-checkpoint  run_id 手动创建检查点 → /pipelines/{run_id}/checkpoints/
-restore run_id checkpoint_id 从文件恢复已完成节点，仅执行pending
-list  列出所有已保存定义
-deliver run_id 收集全部产出 → /pipelines/{run_id}/delivery/
+var TOOL_DOCS={
+  'help':`## help — 工具文档查询 📖
+获取任意工具的完整详细文档（含最小示例）。
 
-## 节点定义 (dag.nodes.{nid})
-{
-  name:"显示名",
-  type:"agent|parallel_group|report_gate|evaluation|test_gate|assembly|loop|sub_pipeline|transform",
-  // --- agent专属 ---
-  agent_config:{temperature:0.7,top_p:0.9,system_prompt:"...",tools:["search","filesystem"],max_turns:5},
-  input_bindings:{"key":"$ctx.path"|"$node.upstream_nid.output"},
-  output_schema:{type:"object",properties:{}},
-  critique_loop:{enabled:true,max_rounds:3,critique_prompt:"评估标准",revision_prompt:"修正指南",pass_threshold:0.8},
-  report_to_main:true,          // agent完成后是否触发报告门(相当于内嵌report_gate)
-  // --- parallel_group专属 ---
-  children:["child_a","child_b"],
-  strategy:"all|best_of_n|race",
-  concurrency:3,                // 并行上限
-  // --- evaluation/test_gate专属 ---
-  evaluate_node:"target_nid",   // 评估哪个节点的产出
-  evaluation_rules:[{name:"准确性",weight:0.4,prompt:"检查..."}],
-  max_retries:3,                // test_gate失败回注上限，超限升级报告门
-  // --- report_gate专属 ---
-  report_scope:["nid1","nid2"], // 报告包含哪些节点的全链路追溯
-  // --- assembly专属 ---
-  sources:["nid1","nid2"],
-  verify_cross:true,
-  merge_strategy:"best_parts|voting|weighted",
-  min_weight:0.3,               // weighted策略排除阈值
-  // --- transform专属 ---
-  transform_expr:"$|$.field|[$]/[*]/[?cond]|[s:e]|{k:v}|sort_by(@,&f)",
-  // ★ 纯函数,<50ms,无IO/LLM/随机数. $=input_bindings解析后的完整对象.
-  // 例如 input_bindings:{"x":"$node.A.output"} → $={x:{output:{title:"...",items:[...]}}}
-  // 此时路径是 $.x.output.title 或 $.x.output.items[0] , 不是 $.output.title
-  // 裸字段名 field.sub 等效 $.field.sub (自动补$)
-  // 语法: 字段$.a.b | 索引arr[0]/arr[-1] | 投影arr[*] | 过滤[?score>=0.8&&status=="ok"]
-  //       多选{k1:$.f1,k2:$.f2} | 管道a|b|c | 默认值$.x||"fallback"
-  //       切片str[0:50]/arr[-3:] (支持字符串) | 排序sort_by(@,&f)/sort_by(@,&f desc)
-  //       desc不是独立关键字,只是sort_by上下文中的修饰词,也可作字段名:sort_by(@,&desc desc)
-  // --- loop专属 ---
-  children:["body_nid1","body_nid2"],  // 循环体内节点ID列表(支持嵌套)
-  max_iterations:10,                   // 最大迭代次数上限(防死循环)
-  exit_condition:"score >= 0.8 && issues <= 1", // 退出条件(支持复合表达式)
-  iteration_var:"i",                   // 可在input_bindings中用 $loop.i 引用
-  // --- sub_pipeline专属 ---
-  pipeline_id:"pipe_xxx",              // 引用已存在的流水线ID
-}
+### action
+- **list**: 列出所有可用工具名称
+- **get**: 获取指定工具的完整详细文档，需传 tool_name
 
-## 条件边 (dag.edges)
-每条边: {from:"nid",to:"nid",condition:"表达式",route_id:"路由组ID",default:true|false,on_error:true|false}
-- condition可省略(无条件边)
-- on_error:true 表示该边仅在from节点失败时激活(降级/错误分支), 正常完成不走
-- 表达式语法(V6复合): "score >= 0.8 && completeness > 0.7"
-  例: "passed == true || confidence > 0.9"
-  例: "!(status == \"error\") && coverage >= 0.5"
-  例: "(a >= 0.8 || b >= 0.9) && c == true"
-  运算符: >= <= > < == !=    逻辑: && || ! ()
+### 最小示例
+`+"`"+`help action="get" tool_name="pipeline"`+"`"+`       → 获取流水线引擎完整文档
+`+"`"+`help action="get" tool_name="filesystem"`+"`"+`     → 获取文件系统完整文档
+`+"`"+`help action="list"`+"`"+`                           → 列出全部工具`,
 
-### ★ 字段自动递归查找（无需记前缀!）
-  系统会递归搜索 ns → ns.output → ns.metrics → ns.output.output → 各子对象
-  直到找到匹配的字段名。所以以下写法等价:
-    "score >= 0.8"        ← 自动在 ns/output/metrics 中找到
-    "completeness >= 0.8" ← 即使藏在 ns.metrics.completeness 也能找到
-    "output.score >= 0.8" ← 显式指定路径（更快）
-  找不到字段 → detail 显示 "(λ) 字段缺失: xxx (已递归搜索ns全部子对象)"
+  'filesystem':`## filesystem — 虚拟文件系统
+统一虚拟文件系统，支持文件 CRUD、目录浏览、精确行编辑、代码执行。用户上传文件在 /uploads/ 目录。
 
-### 运算符: >= <= > < == !=
-- 条件不满足 → 下游skipped_by_cond（_condTrace含每条边判定详情+字段值）
-- 字段缺失 → 下游skipped_by_cond（detail显示已搜索范围）
-- 字符串相等 == / != 支持大小写不敏感匹配
+### action 一览
+| action | 说明 | 关键参数 |
+|--------|------|----------|
+| create | 新建文件 | path, content |
+| read | 读取文件 | path, mode, line, endLine, maxLines |
+| update | 覆盖写入 | path, content |
+| delete | 删除文件 | path, safe(true=回收站/false=永久) |
+| list | 平铺列表 | path, depth |
+| tree | 树状目录 | path, depth(0=不限) |
+| append | 追加到末尾 | path, content |
+| insert | 插入到指定行前 | path, line, content(按\\n拆分逐行插入) |
+| delete_lines | 删除行范围 | path, line, endLine(0=末尾) |
+| replace_lines | 替换行范围 | path, line, endLine, content(按\\n拆分逐行替换) |
+| rename | 重命名 | path, new_name, overwrite |
+| code_run | 执行代码 | path(.js或.py), timeout(默认10s) |
 
+### read 模式 (mode)
+- **auto**(默认): 小文件全量返回; 传line/endLine时自动切换chunked
+- **chunked**: 按行分块, 需 line/maxLines, 带行号
+- **full**: 强制全量, 受 full_max_bytes 限制(默认2MB)
 
-## reroute decision_detail
-{
-  add_nodes:{nid:{name,type,...}},          // 新增节点到DAG
-  modify_nodes:{nid:{agent_config:{...},input_bindings:{...}}}, // 修改已有节点参数
-  reroute_edges:[{from,to,condition,route_id,default}], // 追加新边
-  remove_edges:[{from,to}]                  // 删除边(只删边,不动节点)
-}
+### 最小示例
+`+"`"+`filesystem action="read" path="/uploads/report.pdf"`+"`"+`
+`+"`"+`filesystem action="create" path="/downloads/note.md" content="# 标题\\n正文"`+"`"+`
+`+"`"+`filesystem action="append" path="/downloads/log.txt" content="新日志行\\n"`+"`"+`
+`+"`"+`filesystem action="list" path="/uploads"`+"`"+`
+`+"`"+`filesystem action="tree" path="/"`+"`"+`
+`+"`"+`filesystem action="delete" path="/tmp/junk.txt" safe=true`+"`"+`
+`+"`"+`filesystem action="rename" path="/downloads/old.txt" new_name="new.txt"`+"`"+`
+`+"`"+`filesystem action="code_run" path="/downloads/script.py"`+"`"+`
 
-### ★ input_bindings 必须配置！
-- 新增边后，目标节点需要通过 input_bindings 接收上游产出
-- 例：加边 improve→final，须在 modify_nodes 中为 final 配：
-  modify_nodes:{final:{input_bindings:{"content":"$node.improve.output"}}}
-- 不加 input_bindings → 目标节点拿不到新上游数据，输出为空
+### ⚠️【铁律】行操作排序
+同一文件连续多次 replace_lines / delete_lines / insert 必须按行号从大到小排序执行！每次操作后行号全局偏移，从底向上才能杜绝错位和重复。
 
-## revise decision_detail
+### 路径说明
+- /uploads/ — 用户上传文件
+- /downloads/ — 生成产物(chart/PDF/Word等)
+- /trash/ — 回收站(安全删除)
+- /memory/ — 系统记忆存储
+- /config/ — 配置文件`,
+
+  'search':`## search — 网络搜索
+搜索网络信息+爬取页面原文（需 Tavily API Key）。
+
+### 参数
+- **query**: 搜索关键词
+- **max_results**: 返回结果数，默认5，最多10
+- **search_depth**: basic(快速) / advanced(深度,默认)
+- **include_raw_content**: 是否抓取页面原文(Tavily直接返回,无需额外请求)
+- **include_domains**: 域名白名单, 如 ["github.com"]
+- **exclude_domains**: 域名黑名单
+
+### 最小示例
+`+"`"+`search query="Python async best practices" max_results=3`+"`"+`
+`+"`"+`search query="React 19 new features" include_raw_content=true include_domains=["react.dev"]`+"`"+`
+`+"`"+`search query="GPT-4 benchmark" search_depth="basic" max_results=5`+"`"+`
+### 注意事项
+- 需在设置中配置 Tavily API Key
+- include_raw_content 会在一次请求中同时返回摘要+原文`,
+
+  'calculator':`## calculator — 数学计算器
+计算数学表达式。双引擎：优先 mathjs(more functions)，降级内置递归下降求值器(零eval)。
+
+### 支持的运算
+- 四则: + - * / %
+- 幂: ^ 或 **
+- 函数: sqrt, sin, cos, tan, asin, acos, atan, log(log10), ln, abs, exp, ceil, floor, round, pow(a,b)
+- 常量: pi(π), e
+- 角度: 45° 自动转弧度
+
+### 最小示例
+`+"`"+`calculator expression="sin(pi/4)+sqrt(16)*3"`+"`"+`
+`+"`"+`calculator expression="2^10-5*3"`+"`"+`
+`+"`"+`calculator expression="90°"`+"`"+`           → 1.5708 (弧度)
+`+"`"+`calculator expression="log(1000)"`+"`"+``,
+
+  'skill_manager':`## skill_manager — 技能管理
+管理技能库，按需激活/卸载技能，激活后其 prompt_fragment 注入系统指令。
+
+### action
+- **list**: 列出全部技能及触发条件(名称/ID/触发词/分类/来源/激活状态)
+- **set**: 激活指定技能(传id)。可从 list 结果获取 ID
+- **reset**: 卸载全部激活技能，恢复空白状态
+
+### 最小示例
+`+"`"+`skill_manager action="list"`+"`"+`
+`+"`"+`skill_manager action="set" id="python_expert"`+"`"+`
+`+"`"+`skill_manager action="reset"`+"`"+`
+### 注意事项
+- 未激活的技能不影响行为
+- 建议首轮调用 list 了解可用技能，然后按需 set
+- ID 支持完整ID或文件名(不含.json)`,
+
+  'semantic_memory':`## semantic_memory — 语义记忆搜索
+搜索历史对话(只读)。全本地 MBSRP+HYPERMEM 混合检索，返回相似度排序的过往对话片段。
+
+### 参数
+- **query**: 自然语言查询，如"之前讨论过的Python部署方案"
+- **limit**: 返回结果数，默认3，最多10
+
+### 最小示例
+`+"`"+`semantic_memory query="Python部署"`+"`"+`
+`+"`"+`semantic_memory query="数据库优化方案" limit=5`+"`"+`
+### 注意事项
+- 只能搜索不能写入
+- 写笔记用 longterm_memory
+- 用户知识用 knowledge_base`,
+
+  'longterm_memory':`## longterm_memory — AI私人笔记
+你(Agent)写你读的私人记忆。支持语义搜索+关键词混合检索。条目自动生成向量嵌入。
+
+### action
+| action | 说明 | 关键参数 |
+|--------|------|----------|
+| list | 列出全部(ID+分类+摘要) | 无 |
+| get | 获取完整内容(无截断) | id |
+| query | 语义搜索(混合检索) | query, limit(默认5) |
+| store | 写入(单条/批量) | fact:{text,category} 或 entries:[{text,category}] |
+| update | 修改条目 | id, fact:{text,category} |
+| delete | 删除单条 | id |
+| batch_delete | 批量删除 | ids:[id1,id2,...] |
+
+### category 枚举
+技术参考 / 项目文档 / 个人笔记 / 用户偏好 / 项目设定 / 技术决策 / 对话总结 / 其他
+
+### 最小示例
+`+"`"+`longterm_memory action="list"`+"`"+`
+`+"`"+`longterm_memory action="store" fact={text:"用户偏好React+TypeScript技术栈",category:"用户偏好"}`+"`"+`
+`+"`"+`longterm_memory action="store" entries=[{text:"项目A用PostgreSQL",category:"项目设定"},{text:"性能优化v3.1",category:"技术决策"}]`+"`"+`
+`+"`"+`longterm_memory action="query" query="React" limit=5`+"`"+`
+`+"`"+`longterm_memory action="get" id="mem_xxx"`+"`"+`
+`+"`"+`longterm_memory action="update" id="mem_xxx" fact={text:"更新内容",category:"技术决策"}`+"`"+`
+`+"`"+`longterm_memory action="delete" id="mem_xxx"`+"`"+`
+### 注意事项
+- 最多保留500条, 超出自动清理最早条目
+- 与 knowledge_base 区别: 这是你的私人记忆, knowledge_base 是用户共享的知识
+- store 自动为每条生成向量嵌入(384维)`,
+
+  'knowledge_base':`## knowledge_base — 用户共享知识库
+用户传给你读的知识库。支持语义搜索。
+
+### action
+- **list**: 列出全部条目(标题+ID+分类+来源+字数)
+- **get**: 获取完整内容(传id)
+- **query**: 语义搜索(传query+limit)
+- **store**: 创建条目(单条entry或批量entries), 来源标记为"agent"
+- **update**: 修改条目(只能修改来源为agent的)
+- **delete**: 删除条目(只能删除来源为agent的)
+
+### 来源说明
+- **agent**: 你可修改/删除
+- **manual(👤)**: 用户手动添加,只读
+- **file:xxx(📎)**: 文件导入,只读
+
+### category 枚举
+技术参考 / 项目文档 / 个人笔记 / 其他
+
+### 最小示例
+`+"`"+`knowledge_base action="list"`+"`"+`
+`+"`"+`knowledge_base action="query" query="部署文档"`+"`"+`
+`+"`"+`knowledge_base action="get" id="kb_xxx"`+"`"+`
+`+"`"+`knowledge_base action="store" entry={title:"技术选型",content:"前端React,后端Go",category:"技术参考"}`+"`"+`
+### 注意事项
+- 只能修改/删除 source=="agent" 的条目
+- 与 longterm_memory 区别: 这是用户的, longterm 是你私人笔记
+- query 返回超过2000字的内容会截断, 用 get 获取全文`,
+
+  'chart':`## chart — ECharts图表
+根据数据生成11种ECharts图表，页面内渲染。同时保存为 /downloads/chart_xxx.json。
+
+### type
+bar(柱状) / line(折线) / area(面积) / pie(饼) / scatter(散点) / radar(雷达) / funnel(漏斗) / gauge(仪表) / heatmap(热力) / treemap(矩形树) / sankey(桑基)
+
+### data 格式
+支持三种输入:
+1. **通用 [{name,value}]**: 自动推断 → 适用于 bar/line/area/pie
+2. **显式格式**: categories+values, labels+values, x+y等
+3. **多系列**: {series:[{name,data},{name,data}], categories:[...]}
+
+### 最小示例
+`+"`"+`chart type="bar" data={categories:["Q1","Q2","Q3"],values:[120,200,150]}`+"`"+`
+`+"`"+`chart type="pie" data=[{name:"PC",value:60},{name:"Mobile",value:35},{name:"Tablet",value:5}]`+"`"+`
+`+"`"+`chart type="line" data={categories:["Mon","Tue","Wed"],values:[10,20,15]} title="周趋势"`+"`"+`
+`+"`"+`chart type="scatter" data={points:[{x:1,y:2},{x:3,y:5},{x:5,y:3}]}`+"`"+`
+`+"`"+`chart type="radar" data={indicators:[{name:"速度",max:100},{name:"力量",max:100}],series:[{name:"A",data:[80,60]}]}`+"`"+`
+`+"`"+`chart type="gauge" data={value:72,name:"CPU",min:0,max:100,unit:"%"}`+"`"+`
+`+"`"+`chart type="sankey" data={nodes:[{name:"A"},{name:"B"}],links:[{source:"A",target:"B",value:10}]}`+"`"+``,
+
+  'diagram':`## diagram — Mermaid图表
+用Mermaid语法生成流程图/时序图/状态图/类图/甘特图/饼图，页面内渲染。同时保存为 /downloads/diagram_xxx.mmd。
+
+### diagram_type 与语法
+- **flowchart**: graph TD/LR → graph TD; A[开始]-->B{判断}; B-->|是|C[处理]; B-->|否|D[结束]
+- **sequence**: sequenceDiagram → Alice->>Bob: Hello; Bob-->>Alice: Hi
+- **state**: stateDiagram-v2 → [*]-->Idle; Idle-->Running: start; Running-->[*]: stop
+- **class**: classDiagram → class Animal {+name +age +makeSound()}
+- **gantt**: gantt → dateFormat YYYY-MM-DD; title 项目计划; section 阶段1; 任务1:done,a1,2024-01-01,30d
+- **pie**: pie → title 市场份额; "Apple":40; "Samsung":30; "Others":30
+
+### 最小示例
+`+"`"+`diagram code="graph TD; A[开始]-->B[处理]; B-->C[结束]"`+"`"+`
+`+"`"+`diagram diagram_type="sequence" code="sequenceDiagram\\n  Alice->>Bob: 你好\\n  Bob-->>Alice: 你好!"`+"`"+``,
+
+  'svg_animator':`## svg_animator — SVG动画
+生成SVG动画，页面内渲染。同时保存为 /downloads/svg_xxx.svg。
+
+### animation_type
+- **css**(默认): 系统自动加 @keyframes 淡入+缩放动画。适合简单展示。只需传静态SVG。
+- **smil**: 手写 <animate> 标签。完全可控。适合复杂动画。
+- **js**: 系统注入JS驱动。适合逐帧/物理模拟。
+
+### 最小示例
+`+"`"+`svg_animator svg_code="<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='blue'/></svg>"`+"`"+`
+`+"`"+`svg_animator animation_type="smil" svg_code="<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='20' fill='red'><animate attributeName='r' values='20;40;20' dur='2s' repeatCount='indefinite'/></circle></svg>"`+"`"+`
+
+### 安全限制
+SVG会被安全检查，禁止: on*事件、<script>、javascript:、<foreignObject>、<embed>、<object>。xlink:href 仅允许 data:image。`,
+
+  'table_generator':`## table_generator — 表格生成
+生成表格页面展示，可选下载 csv 或 xlsx。同时保存到 /downloads/table_xxx.csv。
+
+### 参数
+- **headers**: 表头字符串数组
+- **rows**: 数据行，每行为字符串数组
+- **download_format**: csv(小文件)/xlsx(大文件,需SheetJS)/null(仅展示)
+
+### 最小示例
+`+"`"+`table_generator headers=["姓名","年龄","城市"] rows=[["张三","28","北京"],["李四","32","上海"]] download_format="csv"`+"`"+`
+`+"`"+`table_generator headers=["产品","销量","单价"] rows=[["A产品","1200","99.00"],["B产品","800","149.00"]]`+"`"+``,
+
+  'word_generator':`## word_generator — Word文档生成
+生成Word(.docx)并自动触发下载。优先使用docx库生成真正的.docx，失败时降级为HTML-DOC格式(Word可直接打开)。
+
+### 参数
+- **title**: 文档标题(作为一级标题)
+- **content**: Markdown格式正文。用空行分段，##开头为二级标题，###开头为三级标题
+- **filename**: 下载文件名(不含扩展名)
+
+### 最小示例
+`+"`"+`word_generator title="项目计划书" content="# 概述\\n\\n这是概述段落。\\n\\n## 技术方案\\n\\n采用微服务架构。\\n\\n### 数据库\\n\\n使用PostgreSQL。" filename="project_plan"`+"`"+`
+### 注意事项
+- .docx 库加载失败时降级为 .doc (HTML格式), Word同样可打开
+- 输出路径: /downloads/{filename}.docx (或 .doc)`,
+
+  'fuzzy_search':`## fuzzy_search — 模糊搜索
+对虚拟文件系统中的文件内容进行模糊搜索(Fuse.js)。超长文件(>120K字符)自动分段搜索(重叠2K防边界截断)。压缩文件自动解压后搜索。
+
+### 参数
+- **query**: 搜索关键词(支持模糊匹配,仅匹配文件内容不匹配文件名)
+- **file**: 限定单个文件路径(精确匹配), 传此参数时忽略 path
+- **path**: 限定搜索目录(前缀匹配), 默认根目录 /
+- **limit**: 返回结果数, 默认10
+
+### 最小示例
+`+"`"+`fuzzy_search query="数据库连接"`+"`"+`
+`+"`"+`fuzzy_search query="API" file="/uploads/doc.md"`+"`"+`
+`+"`"+`fuzzy_search query="配置" path="/downloads" limit=5`+"`"+`
+### 注意事项
+- 结果含文件路径+相关性评分+匹配片段
+- 用 filesystem read <路径> line=<行号> 定位精确位置`,
+
+  'mcts_plan':`## mcts_plan — MCTS推理规划
+多步推理规划引擎。使用蒙特卡洛树搜索(MCTS)探索决策路径并评估。
+
+### 参数
+- **problem**: 当前问题/状态描述
+- **goal**: 目标描述
+- **constraints**: 约束条件(可选)
+- **mode**: fast(150次模拟,4层深度,并发12) / standard(600次模拟,6层深度,并发20,启用thinking)
+
+### 最小示例
+`+"`"+`mcts_plan problem="需要设计一个高并发消息队列" goal="输出技术方案" mode="standard"`+"`"+`
+`+"`"+`mcts_plan problem="用户需要优化首页加载速度" goal="给出优化步骤" constraints="预算有限,不更换CDN" mode="fast"`+"`"+`
+
+### 返回内容
+- best_path: 最优路径(含每步action+value+pheromone)
+- alternatives: 备选方案
+- simulations/regret_ratio/value_stdev: 收敛指标
+- stats: 搜索统计(节点数/边数/API调用数)`,
+
+  'ocr':`## ocr — 图片OCR
+识别图片中的文字(Tesseract.js)。两种传图方式。
+
+### 参数
+- **filename**: 已上传图片文件名(与image_base64二选一)
+- **image_base64**: 直接传base64图片(与filename二选一)
+- **language**: chi_sim(简体中文,默认)/chi_tra(繁体)/eng/jpn/kor/fra/deu/spa
+
+### 最小示例
+`+"`"+`ocr filename="screenshot.png"`+"`"+`
+`+"`"+`ocr image_base64="data:image/png;base64,iVBORw0KGgo..." language="eng"`+"`"+`
+`+"`"+`ocr filename="document.jpg" language="chi_sim"`+"`"+`
+### 注意事项
+- 结果自动保存为 /downloads/{filename}.ocr.txt
+- 首次使用需加载Tesseract WASM(~15MB)`,
+
+  'pdf_read':`## pdf_read — PDF读取
+读取PDF文件提取文本。支持 /uploads/ 和 /downloads/ 两个目录。
+
+### 参数
+- **filename**: PDF文件名。上传的在/uploads/, 生成的在/downloads/
+- **mode**: text(纯文本,默认) / structured(JSON分页,含charCount) / metadata(仅元信息,含页数)
+- **pages**: 页码范围如 "1-5" 或 "1,3,5", 不填=全部
+- **maxPages**: 最大读取页数, 默认50
+
+### 最小示例
+`+"`"+`pdf_read filename="report.pdf"`+"`"+`
+`+"`"+`pdf_read filename="book.pdf" pages="1-10" mode="text"`+"`"+`
+`+"`"+`pdf_read filename="doc.pdf" mode="structured"`+"`"+`
+`+"`"+`pdf_read filename="paper.pdf" mode="metadata"`+"`"+`
+### 注意事项
+- 文件需在 /uploads/ (上传) 或 /downloads/ (生成) 中
+- 默认最多读50页，超限用 pages 参数分批读取`,
+
+  'pdf_generate':`## pdf_generate — PDF生成
+Markdown/HTML → PDF (html2pdf.js)。GFM兼容、中文渲染正常。输出到 /downloads/xxx.pdf。
+
+### 参数
+- **content**: Markdown(GFM) 或 HTML 内容
+- **format**: markdown(默认) 或 html
+- **title**: 文档标题
+- **filename**: 文件名(不含扩展名), 默认"document"
+- **pageSize**: A4(默认) / Letter / A3
+
+### 最小示例
+`+"`"+`pdf_generate content="# 项目文档\\n\\n## 架构\\n\\n微服务架构。\\n\\n| 服务 | 端口 |\\n|------|------|\\n| API | 8080 |" title="架构文档" filename="arch_v2"`+"`"+`
+`+"`"+`pdf_generate format="html" content="<h1>报告</h1><p>正文内容</p>" pageSize="Letter"`+"`"+`
+### 注意事项
+- html2pdf生成失败时降级为浏览器打印(弹窗→另存为PDF)
+- 同时保存 HTML: /downloads/{filename}.html`,
+
+  'custom_api_call':`## custom_api_call — HTTP API调用
+调用外部HTTP API。支持 {{VAR}} 模板从环境变量替换。
+
+### 参数
+- **endpoint**: API完整URL, 支持 {{VAR}} 模板
+- **method**: GET(默认)/POST/PUT/DELETE/PATCH
+- **headers**: 额外请求头(JSON对象)
+- **body**: string或object(推荐传object,自动序列化)
+- **body_type**: json(默认,object→JSON) / form(object→URL编码) / text(原样发送)
+- **timeout**: 超时毫秒, 默认15000
+
+### 最小示例
+`+"`"+`custom_api_call endpoint="https://api.github.com/repos/facebook/react"`+"`"+`
+`+"`"+`custom_api_call method="POST" endpoint="https://httpbin.org/post" body={key:"value"} body_type="json"`+"`"+`
+`+"`"+`custom_api_call endpoint="{{MY_API}}/users" headers={Authorization:"Bearer {{TOKEN}}}"`+"`"+`
+### 注意事项
+- 与 user_function_call 区别: 这个走HTTP, user_function_call 在浏览器内执行JS
+- 返回内容超8000字自动截断`,
+
+  'mcp_connect':`## mcp_connect — MCP服务器连接
+连接MCP(Model Context Protocol)服务器，获取其工具列表。三种连接方式互斥(优先级 id>url>args)。
+
+### 连接方式
+- **id**: 已注册服务器名。id="all" 连接全部已注册。需先在设置→外部工具→MCP服务器中注册。
+- **url**: SSE临时连接。无需注册,直接传URL。
+- **args+env**: stdio进程启动。传args(命令数组)+env(环境变量)。
+
+### 最小示例
+`+"`"+`mcp_connect id="my_db_server"`+"`"+`
+`+"`"+`mcp_connect id="all"`+"`"+`
+`+"`"+`mcp_connect url="http://localhost:8080/sse"`+"`"+`
+`+"`"+`mcp_connect args=["node","mcp_server.js"] env={PORT:"3000"}`+"`"+`
+### 注意事项
+- 需设置→外部工具中开启 MCP
+- 每次新会话需重新连接`,
+
+  'user_function_call':`## user_function_call — 浏览器内JS函数
+调用用户在设置→外部工具中注册的JS函数。在浏览器沙箱内执行(非网络请求)。
+
+### 参数
+- **function_id**: 函数名(从设置→外部工具→自定义函数列表获取)
+- **params**: 传入参数对象 → 函数签名: async function main(context)
+  - context.env = 环境变量对象
+  - context.params = agent传入的参数
+
+### 最小示例
+`+"`"+`user_function_call function_id="calculate_bmi" params={weight:70,height:175}`+"`"+`
+### 注意事项
+- 与 custom_api_call 区别: 这个在浏览器内执行, custom_api_call 走HTTP
+- 函数需先在设置面板注册(含函数名+代码)
+- 返回值截断至8000字`,
+
+  'convert_format':`## convert_format — 格式转换
+文件格式互转。支持多种格式。
+
+### 支持的转换
+| 格式 | 方向 |
+|------|------|
+| json↔csv | JSON数组↔CSV表格 |
+| json↔yaml | JSON↔YAML |
+| md↔html | Markdown↔HTML |
+| csv→xlsx | CSV→Excel |
+| xlsx→csv | Excel→CSV |
+| base64 | 编解码(传options.encode或decode) |
+| 图片互转 | PNG/JPG/WEBP (传from_format/to_format) |
+
+### 最小示例
+`+"`"+`convert_format input_path="/downloads/data.json" to_format="csv"`+"`"+`
+`+"`"+`convert_format input_path="/downloads/data.json" to_format="csv" output_path="/downloads/out.csv"`+"`"+`
+`+"`"+`convert_format input_path="/uploads/doc.md" to_format="html"`+"`"+``,
+
+  'geo_search':`## geo_search — 附近POI搜索
+搜索附近POI(餐厅/咖啡厅等)。使用免费 Overpass API 公共实例池，无需 API Key。
+
+### 参数
+- **lat/lng**: 经纬度。未传时自动尝试GPS定位(需授权)
+- **radius**: 半径(米), 默认1000
+- **category**: amenity类型。restaurant(默认)/fast_food/cafe/bar/pub
+- **limit**: 返回结果数, 默认10
+
+### 最小示例
+`+"`"+`geo_search lat=23.1291 lng=113.2644`+"`"+`
+`+"`"+`geo_search lat=23.1291 lng=113.2644 category="cafe" radius=500`+"`"+`
+### 返回内容
+- name, type, cuisine(如有), distance_m, lat, lng, address`,
+
+  'geo_geocode':`## geo_geocode — 地理编码
+地址→坐标(正向地理编码)。使用免费 Nominatim 公共实例池。
+
+### 参数
+- **address**: 地址字符串, 如"广州市天河区"
+
+### 最小示例
+`+"`"+`geo_geocode address="北京市海淀区中关村"`+"`"+`
+`+"`"+`geo_geocode address="1600 Amphitheatre Parkway, Mountain View, CA"`+"`"+`
+
+### 返回内容
+- display_name, lat, lon, type, category`,
+
+  'geo_ip':`## geo_ip — IP定位
+基于IP粗略定位(ipapi.co)。免费，城市级精度。
+
+### 最小示例
+`+"`"+`geo_ip`+"`"+`
+
+### 返回内容
+- ip, city, region, country, lat, lon, timezone, org
+
+### 注意事项
+- VPN/代理下不准确
+- 仅用于大致推断用户所在区域`,
+
+  'send_email':`## send_email — 发送邮件
+发送邮件(SMTP/mailto降级)。
+
+### 参数
+- **to**: 收件人邮箱
+- **subject**: 主题
+- **body**: 正文
+- **body_type**: plain(纯文本,默认)/markdown
+- **cc**: 抄送(逗号分隔)
+- **attachments**: 附件文件路径数组
+
+### 最小示例
+`+"`"+`send_email to="user@example.com" subject="会议纪要" body="## 会议纪要\\n\\n1. 确定了技术方案\\n2. 分配了任务" body_type="markdown"`+"`"+`
+`+"`"+`send_email to="user@example.com" subject="周报" body="本周完成事项:..." cc="manager@example.com"`+"`"+`
+### 注意事项
+- 需在设置→邮件中配置 SMTP
+- SMTP未配置时自动降级为 mailto: (打开默认邮件客户端)
+- 常用配置: Gmail需应用专用密码; QQ→smtp.qq.com:465(SSL); 163→smtp.163.com:465`,
+
+  'sql_db':`## sql_db — 浏览器内SQLite
+浏览器内SQLite(sql.js/WASM)。数据持久化到IndexedDB。
+
+### action
+| action | 说明 | 关键参数 |
+|--------|------|----------|
+| query | SELECT查询→JSON | sql, limit(默认100) |
+| exec | INSERT/UPDATE/DELETE/DDL | sql |
+| schema | 查看表结构 | table(可选,不传=全部) |
+| create_table | 建表 | table, columns:[{name,type,pk,notNull,default}] |
+| drop_table | 删表 | table |
+| export | 导出.db文件 | filename → /downloads/ |
+| import | 导入.db文件 | filename ← /uploads/ |
+
+### 列类型
+TEXT / INTEGER / REAL / BLOB
+
+### 最小示例
+`+"`"+`sql_db action="create_table" table="users" columns=[{name:"id",type:"INTEGER",pk:true},{name:"name",type:"TEXT"},{name:"email",type:"TEXT"}]`+"`"+`
+`+"`"+`sql_db action="exec" sql="INSERT INTO users (name,email) VALUES ('张三','zhang@example.com')"`+"`"+`
+`+"`"+`sql_db action="query" sql="SELECT * FROM users"`+"`"+`
+`+"`"+`sql_db action="schema"`+"`"+`
+`+"`"+`sql_db action="export" filename="mydb.db"`+"`"+`
+### 注意事项
+- query 仅支持 SELECT/PRAGMA/EXPLAIN
+- exec 支持 INSERT/UPDATE/DELETE/CREATE/ALTER/DROP
+- import 默认从 /uploads/ 加载, export 默认到 /downloads/
+- 重名覆盖不报错`,
+
+  'browser_notify':`## browser_notify — 浏览器通知
+发送浏览器桌面通知。移动端Android Chrome全支持，iOS Safari需PWA模式。
+
+### 参数
+- **title**: 通知标题
+- **body**: 通知正文
+- **icon**: 图标URL(可选)
+- **tag**: 通知标签(同tag会替换旧通知)
+- **requireInteraction**: true=需用户点击才关闭 / false(默认)=自动消失
+- **delay**: 延迟毫秒(定时提醒场景, 如300000 = 5分钟后通知)
+
+### 最小示例
+`+"`"+`browser_notify title="任务完成" body="数据处理已完成，共处理1000条记录。"`+"`"+`
+`+"`"+`browser_notify title="⏰ 会议提醒" body="10分钟后开始技术评审" delay=600000 requireInteraction=true`+"`"+`
+### 注意事项
+- 需用户授权通知权限
+- 未授权时返回 permission_denied 状态`,
+
+  'archive':`## archive — 压缩/解压
+基于JSZip+pako。支持zip压缩/解压/列出内容。支持密码加密。
+
+### action
+- **compress**: 打包zip。target_path=目录(递归) 或 files=文件数组。output_path默认/downloads/archive_xxx.zip。
+- **extract**: 解压zip/tar/gz。target_path=压缩文件路径。output_path默认源文件同目录。
+- **list**: 列出包内容。target_path=压缩文件路径。
+
+### 最小示例
+`+"`"+`archive action="compress" target_path="/downloads"`+"`"+`
+`+"`"+`archive action="compress" target_path="/" files=["/uploads/a.txt","/uploads/b.txt"] output_path="/downloads/my.zip"`+"`"+`
+`+"`"+`archive action="compress" target_path="/downloads" password="secret123"`+"`"+`
+`+"`"+`archive action="extract" target_path="/downloads/archive.zip"`+"`"+`
+`+"`"+`archive action="list" target_path="/downloads/archive.zip"`+"`"+`
+### 注意事项
+- files 不支持通配符, 需逐文件列出
+- 目录路径会递归包含所有子文件`,
+
+  'speech_tts':`## speech_tts — 文字转语音(TTS)
+使用meSpeak.js(eSpeak WASM)。全平台兼容(含Android WebView/iOS)。无需联网。
+
+### action
+- **speak**: 朗读文本。超长自动分句(每句≤300字,最多30句)。
+- **stop**: 中断当前朗读。
+- **list_voices**: 列出可用语音(50+语言)。
+
+### 参数(speak)
+- **text**: 要朗读的文字
+- **lang**: zh/en/auto(自动检测,默认)
+- **rate**: 语速(wpm), 默认150, 范围80~450
+- **pitch**: 音高, 默认1, 范围0.5~2
+- **amplitude**: 音量, 默认100, 范围0~200
+- **variant**: 语音变体名(从list_voices获取)
+
+### 最小示例
+`+"`"+`speech_tts action="speak" text="你好，任务已完成！"`+"`"+`
+`+"`"+`speech_tts action="speak" text="Hello, your build is ready." lang="en" rate=120`+"`"+`
+`+"`"+`speech_tts action="stop"`+"`"+`
+`+"`"+`speech_tts action="list_voices"`+"`"+`
+### 注意事项
+- 需设置→语音中开启
+- 可能需要点击麦克风按钮激活 AudioContext`,
+
+  'speech_stt':`## speech_stt — 语音识别(STT)
+语音识别(录音→文字)。优先浏览器内置SpeechRecognition，可配置自定义STT端点。
+
+### action
+- **record**: 开始录音
+- **stop/recognize**: 停止录音并返回识别文字(两者等效)
+
+### 参数
+- **lang**: zh-CN(默认)/en-US/auto
+- **max_seconds**: 最长录音秒数, 默认30, 最大60
+- **stt_endpoint**: 自定义STT API端点(可选, 不传则用浏览器内置)
+
+### 最小示例
+`+"`"+`speech_stt action="record" lang="zh-CN" max_seconds=15`+"`"+`
+`+"`"+`speech_stt action="recognize"`+"`"+`
+### 注意事项
+- 需麦克风授权
+- 浏览器内置SpeechRecognition: 自动检测1.5秒静默后停止`,
+
+  'calendar':`## calendar — 日历事件管理+定时唤醒
+持久化日历事件，支持定时唤醒Agent。存储于 /config/calendar.json。
+
+### action
+- **list**: 列出事件。可选 start/end ISO8601 过滤范围(默认现在~90天后)
+- **schedule**: 创建/更新事件(按id upsert)。title+start必填
+- **delete**: 按id删除
+- **search**: 全文搜索标题/描述/地点
+- **export**: 导出 .ics (iCalendar格式) → /downloads/
+- **wake_status**: 查看唤醒状态(含统计)
+- **enable_wake/disable_wake**: 开关定时唤醒
+
+### 事件字段
+- title, start(ISO8601), end, description, location
+- all_day(全天), recurrence(none/daily/weekly/biweekly/monthly/yearly)
+- reminder_minutes(提前提醒分钟), auto_wake(到期是否唤醒agent)
+
+### 最小示例
+`+"`"+`calendar action="schedule" title="技术评审" start="2026-06-10T14:00" end="2026-06-10T15:30" reminder_minutes=15`+"`"+`
+`+"`"+`calendar action="schedule" title="每日站会" start="2026-06-01T09:00" recurrence="daily" auto_wake=true`+"`"+`
+`+"`"+`calendar action="list"`+"`"+`
+`+"`"+`calendar action="search" query="评审"`+"`"+`
+`+"`"+`calendar action="delete" id="evt_xxx"`+"`"+`
+### 定时唤醒
+- enable_wake 后: 每30秒扫描一次, 事件到期时自动提醒+发送系统消息给Agent
+- 同一事件1分钟内不重复唤醒`,
+
+  'precise_time':`## precise_time — 精确时间
+获取精确时间、NTP校准、时区转换、倒计时、计时器。
+
+### action
+- **now**: 当前精确时间(含毫秒+时区+周数+夏令时)
+- **ntp**: 从公共NTP池获取精确时间(worldtimeapi/timeapi), 与本地对比偏差
+- **timezone**: 时区转换。from_tz/to_tz/time_str
+- **countdown**: 倒计时。target_time ISO8601+label
+- **timer**: 秒表。首次传 target_time 启动, 不传读取当前耗时
+
+### 最小示例
+`+"`"+`precise_time action="now"`+"`"+`
+`+"`"+`precise_time action="ntp"`+"`"+`
+`+"`"+`precise_time action="timezone" from_tz="Asia/Shanghai" to_tz="America/New_York" time_str="2026-06-03T14:00"`+"`"+`
+`+"`"+`precise_time action="countdown" target_time="2026-06-10T09:00" label="截止日期"`+"`"+`
+
+### 返回(now)
+{iso8601, locale, unix_ms, unix_s, timezone, tz_offset, year, month, day, weekday, hour, minute, second, millisecond, week_number, day_of_year, is_dst}`,
+
+  'pipeline':`## pipeline — 流水线引擎V5 🏭
+编排多子Agent协作。支持DAG定义、条件路由、错误降级、报告门、回注修正、检查点恢复。
+
+### action 一览
+| action | 说明 |
+|--------|------|
+| create | 构建DAG并保存定义(禁止同名覆盖,用overwrite重写) |
+| update | pipeline_id+dag修改已存在定义(合并式更新) |
+| overwrite | 完全替换定义 |
+| delete | 删除定义(不删除历史运行) |
+| run | 执行(阻塞等待,报告门触发/完成/失败时返回) |
+| status | 查看节点进度 |
+| get_report | 获取报告门详情 |
+| decide | 决策: approve/revise/reroute/abort |
+| pause/resume/stop | 流程控制 |
+| checkpoint | 手动创建检查点 |
+| restore | 从检查点恢复(run_id+checkpoint_id) |
+| list | 列出所有定义 |
+| deliver | 收集全部产出 |
+
+### 节点类型(type)
+- **agent**: LLM子Agent, 含 agent_config({temperature,top_p,system_prompt,tools,max_turns})
+- **parallel_group**: 并行组, children+strategy(all/best_of_n/race)+concurrency
+- **report_gate**: 报告门, report_scope(包含哪些节点全链路追溯)
+- **evaluation**: 评估节点, evaluate_node+evaluation_rules([{name,weight,prompt}])
+- **test_gate**: 测试门, 失败回注(max_retries超限升级报告门)
+- **assembly**: 拼接节点, sources+merge_strategy(best_parts/voting/weighted)
+- **loop**: 循环节点, children+max_iterations+exit_condition
+- **sub_pipeline**: 子流水线引用, pipeline_id
+- **transform**: 转换节点, transform_expr(纯函数,<50ms,无IO/LLM)
+  - 语法: $|$.field|arr[0]|arr[*]|[?cond]|[s:e]|{k:v}|sort_by(@,&f)
+  - $ = input_bindings解析后的完整对象
+
+### 条件边(dag.edges)
+{from,to,condition,route_id,default,on_error}
+- condition: "score >= 0.8 && completeness > 0.7"
+- 运算符: >= <= > < == !=    逻辑: && || ! ()
+- on_error:true = 上游失败时激活(错误降级分支)
+- ★ 字段自动递归查找: 系统搜索 ns→ns.output→ns.metrics 找到匹配字段
+
+### input_bindings 语法
+`+"`"+`
+input_bindings:{"content":"$ctx.project_spec","data":"$node.upstream_nid.output"}
+// $ctx = 初始context
+// $node.nid.output = 上游节点nid的产出
+`+"`"+`
+
+### reroute decision_detail
+{add_nodes:{nid:{name,type,...}}, modify_nodes:{nid:{agent_config:{...},input_bindings:{...}}}, reroute_edges:[{from,to,condition}], remove_edges:[{from,to}]}
+★ 新增边后目标节点必须通过 modify_nodes 配置 input_bindings 接收上游产出
+
+### revise decision_detail
 {revise_nodes:["nid"],revision_instructions:"修正指令"}
-- 被修正节点+其所有下游evaluation/test_gate级联重置为pending
+被修正节点+其下游evaluation/test_gate级联重置为pending
 
-## 并发
-全局 concurrency:5(默认)  parallel_group concurrency:3(默认)
-节点完成自动解锁下游 → 信号量池滑动调度
+### 并发
+全局 concurrency:5(默认)    parallel_group concurrency:3(默认)
 
-## 持久化
-/pipelines/{run_id}/state.json traces/{nid}/round_N_*.json outputs/{nid}.json reports/{gate_id}.json checkpoints/{ckpt_id}.json`,executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['create','update','overwrite','delete','run','status','get_report','decide','pause','resume','stop','checkpoint','restore','list','deliver']},name:{type:'string',description:'流水线名称(create)'},description:{type:'string'},project_id:{type:'string'},dag:{type:'object',description:'{nodes:{nid:{name,type,agent_config:{temperature,top_p,system_prompt,tools,max_turns},input_bindings,output_schema,critique_loop:{enabled,max_rounds,critique_prompt,revision_prompt,pass_threshold},children,strategy,concurrency,evaluate_node,evaluation_rules,max_retries,report_scope,report_to_main,sources,verify_cross,merge_strategy,min_weight}},edges:[{from,to,condition,route_id,default}]}'},acceptance_metrics:{type:'array',items:{type:'string'}},pipeline_id:{type:'string'},run_id:{type:'string'},context:{type:'object',description:'初始上下文(含开发文档全文)'},report_node_id:{type:'string'},decision:{type:'string',enum:['approve','revise','reroute','abort','retry']},decision_detail:{type:'object',description:'reroute:{add_nodes,modify_nodes(含input_bindings),reroute_edges,remove_edges}|revise:{revise_nodes,revision_instructions}'},checkpoint_id:{type:'string'}},required:['action']}},
+### 持久化
+/pipelines/{run_id}/state.json    traces/{nid}/round_N_*.json    outputs/{nid}.json
+reports/{gate_id}.json    checkpoints/{ckpt_id}.json
 
-  'reqalign':{name:'reqalign',description:'需求对齐工具。action=analyze(LLM分析需求模糊维度) submit_questions(提交问卷) check_convergence(LLM评估6维度收敛度:受众/格式/边界/验收/约束/矛盾) generate_confirmation(生成确认书) lock(锁定需求) status。持久化到/projects/{id}/requirements/',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['analyze','submit_questions','check_convergence','generate_confirmation','lock','status']},project_id:{type:'string',description:'项目ID'},user_request:{type:'string',description:'用户原始需求(analyze用)'},questions:{type:'array',items:{type:'object',properties:{id:{type:'string'},question:{type:'string'},type:{type:'string',enum:['choice','text','confirm']},options:{type:'array',items:{type:'string'}}}},description:'澄清问卷数组(submit_questions用)'},user_answers:{type:'object',description:'用户对问题的回答(check_convergence用)'},confirmation_text:{type:'string',description:'需求确认书Markdown全文(generate_confirmation用)'}},required:['action']}},
+### 最小示例
+`+"`"+`// 创建流水线
+pipeline action="create" name="文档处理" dag={
+  nodes:{
+    reader:{name:"读取",type:"agent",agent_config:{system_prompt:"读取文档",tools:["filesystem"],max_turns:3}},
+    summarizer:{name:"摘要",type:"agent",agent_config:{system_prompt:"生成摘要",max_turns:2},input_bindings:{content:"$node.reader.output"}},
+    report:{name:"报告",type:"report_gate",report_scope:["reader","summarizer"]}
+  },
+  edges:[{from:"reader",to:"summarizer"},{from:"summarizer",to:"report"}]
+} acceptance_metrics=["摘要准确"]
 
-    'generatespec':{name:'generatespec',description:'开发文档生成工具。action=generate(生成§1-§7开发文档) review(极严格子Agent审查,0-10评分) fix(修复) finalize(锁定)。审查维度:模块划分/可量化验收标准/接口契约完整性/约束可行性。持久化到/projects/{id}/spec/',executor:'main_thread',
-      parameters:{type:'object',properties:{action:{type:'string',enum:['generate','review','fix','finalize','status']},project_id:{type:'string',description:'项目ID'},spec_content:{type:'string',description:'开发文档Markdown全文(generate/fix用)'},review_instructions:{type:'string',description:'审查标准提示(fix时可选,基于审查报告)'}},required:['action']}},
+// 执行
+pipeline action="run" pipeline_id="pipe_xxx"
 
-    'world_validator':{name:'world_validator',description:'🌍 世界验证器：多实体·多状态机·多Tick离散事件仿真。\nactions: define/list/load/step/run/transition/status/delete/export/diff/edit/reset/history/flush_pending/clear_pending。\n输入: JSON/YAML/NL/CSV/UML。输出: Mermaid/PlantUML/Graphviz DOT/CSV矩阵。\n特性: 子状态嵌套(nested)、深历史恢复(history_type:"deep",离开父状态自动记忆最深子状态)、正交并行区域(regions)、守卫条件(guard,失败返回guard_denied)、entry/exit/do动作、跨实体事件传递(interactions)。\n★ 跨实体事件: 未匹配事件自动进入pending队列(最多重试1次后丢弃,transition显式事件优先于pending), 用flush_pending强制消费或clear_pending清空。\n★ edit: 支持热修改定义结构+运行时context(自动同步), 快捷写法edit(world_id, {context:{k:v}, states:[...]})。\n★ step/transition: 返回summary含ok/guard_denied/no_match/discarded计数+cross_entity_triggers投递清单。\n持久化到/worlds/{id}/',executor:'main_thread',
-      parameters:{type:'object',properties:{
-        action:{type:'string',enum:['define','list','load','step','run','transition','status','delete','export','diff','edit','reset','history','flush_pending','clear_pending']},
-        world_id:{type:'string',description:'世界/状态机ID(唯一标识)'},
-        format:{type:'string',enum:['json','yaml','nl','csv','uml'],default:'json',description:'define时的输入格式。json=结构化JSON yaml=YAML nl=自然语言(LLM翻译) csv=转换表 uml=UML状态图文本'},
-        def:{type:'object',description:'JSON格式的世界定义。{world_id,entities:{id:{states[],transitions[{from,to,event,guard,action}],initial,context,final[],nested,regions,history_type("deep"深历史恢复嵌套子状态),entry_action,exit_action,do_activities}},...},interactions:[{from_entity,on_event,to_entity,trigger(事件名字符串)}]},跨实体交互中未匹配事件进入pending队列,用flush_pending/clear_pending管理'},
-        def_text:{type:'string',description:'define时非JSON格式的原始定义文本(YAML/CSV/UML/NL)'},
-        entity_id:{type:'string',description:'目标实体ID。transition/step/edit时指定'},
-        event:{type:'string',description:'事件名。transition时必填'},
-        events:{type:'array',items:{type:'string'},description:'批量事件队列。transition时可选,逐个触发'},
-        context:{type:'object',description:'附加上下文数据。transition时注入实体context'},
-        max_ticks:{type:'number',default:100,maximum:1000,description:'run时最大tick数,默认100'},
-        snapshot_id:{type:'string',description:'快照版本ID。diff时对比两版本'},
-        target_snapshot:{type:'string',description:'对比目标快照ID。diff时用'},
-        export_format:{type:'string',enum:['mermaid','plantuml','graphviz','csv','json','matrix'],description:'export输出格式。matrix=转换矩阵表'},
-        changes:{type:'object',description:'edit时的修改内容。{entity_id,set:{states,transitions,initial,...}}'},
-        tick_limit:{type:'number',default:50,maximum:500,description:'history时最多返回tick数'}
-      },required:['action']}}
-    };
+// 决策:修订
+pipeline action="decide" run_id="run_xxx" decision="revise" decision_detail={revise_nodes:["summarizer"],revision_instructions:"摘要太短,请扩充到200字"}
+
+// 决策:重路由
+pipeline action="decide" run_id="run_xxx" decision="reroute" decision_detail={
+  add_nodes:{polish:{name:"润色",type:"agent",agent_config:{system_prompt:"文字润色",max_turns:2}}},
+  modify_nodes:{report:{input_bindings:{content:"$node.polish.output"}}},
+  reroute_edges:[{from:"summarizer",to:"polish"},{from:"polish",to:"report"}]
+}
+
+// 交付
+pipeline action="deliver" run_id="run_xxx"
+`+"`"+`
+### 注意事项
+- create 创建后 pipeline_id 不变
+- run 是阻塞调用, 遇到 report_gate 或全部完成/失败时返回
+- 从 checkpoint 恢复: 已完成节点跳过, 仅执行pending`,
+
+  'reqalign':`## reqalign — 需求对齐
+系统化需求澄清工具。持久化到 /projects/{id}/requirements/。
+
+### action
+- **analyze**: LLM分析需求模糊维度(传project_id+user_request)
+- **submit_questions**: 提交澄清问卷(传project_id+questions数组)
+  - questions: [{id,question,type("choice"/"text"/"confirm"),options(choice时必填)}]
+- **check_convergence**: LLM评估6维度收敛度(传project_id+user_answers)
+  - 6维度: 受众定位/输出格式/边界范围/验收标准/约束条件/矛盾检测
+- **generate_confirmation**: 生成需求确认书(传project_id+confirmation_text Markdown)
+- **lock**: 锁定需求(不再修改)
+- **status**: 查看当前状态
+
+### 最小示例
+`+"`"+`reqalign action="analyze" project_id="proj_xxx" user_request="做一个电商后台管理系统"`+"`"+`
+`+"`"+`reqalign action="submit_questions" project_id="proj_xxx" questions=[{id:"q1",question:"目标用户?",type:"choice",options:["内部运营","外部商家"]}]`+"`"+`
+`+"`"+`reqalign action="check_convergence" project_id="proj_xxx" user_answers={q1:"内部运营"}`+"`"+`
+`+"`"+`reqalign action="generate_confirmation" project_id="proj_xxx" confirmation_text="# 需求确认书\\n\\n## 项目概述\\n电商后台..."`+"`"+`
+`+"`"+`reqalign action="lock" project_id="proj_xxx"`+"`"+`
+### 注意事项
+- analyze 前确保已有 project_id
+- lock 后不可再修改需求(需用 pipeline+generatespec 推进)`,
+
+  'generatespec':`## generatespec — 开发文档生成
+从锁定需求生成结构化开发文档。持久化到 /projects/{id}/spec/。
+
+### action
+- **generate**: 生成 §1-§7 开发文档(传project_id, 可选spec_content作为草稿)
+- **review**: 极严格子Agent审查(0-10评分,传project_id+review_instructions)
+  - 审查维度: 模块划分清晰度/验收标准可量化性/接口契约完整性/约束可行性
+- **fix**: 修复(传project_id+spec_content, 基于审查报告修正)
+- **finalize**: 锁定文档
+- **status**: 查看状态
+
+### 最小示例
+`+"`"+`generatespec action="generate" project_id="proj_xxx"`+"`"+`
+`+"`"+`generatespec action="review" project_id="proj_xxx" review_instructions="重点检查接口定义是否完整"`+"`"+`
+`+"`"+`generatespec action="fix" project_id="proj_xxx" spec_content="# 修订后文档\\n\\n..."`+"`"+`
+`+"`"+`generatespec action="finalize" project_id="proj_xxx"`+"`"+`
+### 注意事项
+- 通常与 reqalign + pipeline 配套使用
+- review 评分<7分建议 fix 后再 pipeline`,
+
+  'world_validator':`## world_validator — 世界验证器 🌍
+多实体·多状态机·多Tick离散事件仿真。支持嵌套子状态、正交并行区域、守卫条件、跨实体事件传递。输入JSON/YAML/NL/CSV/UML，输出Mermaid/PlantUML/Graphviz DOT/CSV。
+
+### action
+| action | 说明 |
+|--------|------|
+| define | 定义世界(传def或def_text+format) |
+| list | 列出全部世界 |
+| load | 加载世界到内存(world_id) |
+| step | 单步执行(world_id+entity_id+event) |
+| run | 自动运行直到结束或max_ticks |
+| transition | 触发状态转换(world_id+entity_id+event/events) |
+| status | 查看当前状态(world_id) |
+| delete | 删除世界 |
+| export | 导出为指定格式(export_format) |
+| diff | 对比两个快照 |
+| edit | 热修改定义+运行时context |
+| reset | 重置到初始状态 |
+| history | 查看tick历史 |
+| flush_pending | 强制消费pending队列 |
+| clear_pending | 清空pending队列 |
+
+### define 格式
+**JSON格式**(format="json"):
+`+"`"+`world_validator action="define" world_id="traffic_light" format="json" def={
+  world_id:"traffic_light",
+  entities:{
+    light:{states:["green","yellow","red"],initial:"green",
+      transitions:[
+        {from:"green",to:"yellow",event:"timer"},
+        {from:"yellow",to:"red",event:"timer"},
+        {from:"red",to:"green",event:"timer",guard:"pedestrian_waiting==false"}
+      ],context:{pedestrian_waiting:false}},
+    pedestrian:{states:["walking","waiting"],initial:"walking",
+      transitions:[
+        {from:"walking",to:"waiting",event:"button_press",action:"set light.pedestrian_waiting=true"},
+        {from:"waiting",to:"walking",event:"cross"}
+      ]}
+  },
+  interactions:[{from_entity:"pedestrian",on_event:"button_press",to_entity:"light",trigger:"button_press"}]
+}`+"`"+`
+
+**NL格式**(format="nl"): LLM自动翻译
+`+"`"+`world_validator action="define" format="nl" def_text="红绿灯系统: 初始绿灯,计时器触发变黄,再变红。行人按按钮后红灯变绿。"`+"`"+`
+
+### 高级特性
+- **嵌套子状态**(nested): state内嵌states数组+transitions
+- **深历史恢复**(history_type:"deep"): 离开父状态自动记忆最深子状态
+- **正交并行区域**(regions): 一个实体同时处于多个正交状态
+- **守卫条件**(guard): 失败返回 guard_denied, 事件不消耗
+- **entry/exit/do动作**: entry_action/exit_action/do_activities
+
+### 跨实体事件
+未匹配事件自动进入pending队列(最多重试1次后丢弃)。transition显式事件优先于pending。flush_pending强制消费所有pending → 触发对应实体的transition。clear_pending直接清空。
+
+### 最小示例
+`+"`"+`// 定义并加载
+world_validator action="define" world_id="coffee" format="json" def={
+  world_id:"coffee",entities:{machine:{states:["idle","brewing","done"],initial:"idle",
+  transitions:[{from:"idle",to:"brewing",event:"brew"},{from:"brewing",to:"done",event:"complete",guard:"water>0"}],
+  context:{water:100}}}}
+world_validator action="load" world_id="coffee"
+
+// 单步
+world_validator action="step" world_id="coffee" entity_id="machine" event="brew"
+
+// 批量事件
+world_validator action="transition" world_id="coffee" entity_id="machine" events=["brew","complete"]
+
+// 自动运行
+world_validator action="run" world_id="coffee" max_ticks=50
+
+// 查看状态
+world_validator action="status" world_id="coffee"
+
+// 导出
+world_validator action="export" world_id="coffee" export_format="mermaid"
+
+// 热修改
+world_validator action="edit" world_id="coffee" changes={context:{water:50}}
+
+// 历史
+world_validator action="history" world_id="coffee" tick_limit=20
+`+"`"+`
+### 注意事项
+- define 后需 load 才能操作
+- step/transition 返回 summary: {ok,guard_denied,no_match,discarded,cross_entity_triggers}
+- edit 快捷写法: edit(world_id, {context:{k:v}, states:[...]})
+- 持久化到 /worlds/{id}/`
+};
 
 
 
@@ -1634,7 +2371,7 @@ var settings={
   base_url:'https://api.deepseek.com',
   model:'deepseek-v4-flash',
   daily_limit:100000,
-  daily_token_limit:10000000,
+  daily_token_limit:18000000,
   reserve_ratio:0.5,
   environment_variables:{},
   evolution_enabled:true,
@@ -2539,7 +3276,7 @@ async function saveSettings(){
     base_url:          _read('base_url','settingBaseUrl','value',_str,'https://api.deepseek.com'),
     model:             _read('model','settingModel','value',_str,'deepseek-v4-flash'),
     daily_limit:       _read('daily_limit','settingDailyLimit','value',_int,100000),
-    daily_token_limit: _read('daily_token_limit','settingDailyTokenLimit','value',_int,10000000),
+    daily_token_limit: _read('daily_token_limit','settingDailyTokenLimit','value',_int,18000000),
     reserve_ratio:     _read('reserve_ratio','settingReserveRatio','value',_ratio,0.5),
     environment_variables: settings.environment_variables||{},
     evolution_enabled: _read('evolution_enabled','settingEvoEnabled','checked',_bool,true),
@@ -2574,9 +3311,9 @@ async function saveSettings(){
     calendar_wake_prompt:   _read('calendar_wake_prompt','settingCalendarWakePrompt','value',_str,''),
     calendar_wake_interval: _read('calendar_wake_interval','settingCalendarWakeInterval','value',_int,30),
     pipeline_enabled:  _read('pipeline_enabled','settingPipelineEnabled','checked',_bool,true),
-    mcts_fast_token_budget:     _read('mcts_fast_token_budget','settingMctsFastBudget','value',_int,10000000),
-    mcts_standard_token_budget: _read('mcts_standard_token_budget','settingMctsStandardBudget','value',_int,30000000),
-    pipeline_token_budget:      _read('pipeline_token_budget','settingPipelineBudget','value',_int,50000000),
+    mcts_fast_token_budget:     _read('mcts_fast_token_budget','settingMctsFastBudget','value',_int,5000000),
+    mcts_standard_token_budget: _read('mcts_standard_token_budget','settingMctsStandardBudget','value',_int,10000000),
+    pipeline_token_budget:      _read('pipeline_token_budget','settingPipelineBudget','value',_int,18000000),
     pipeline_max_concurrent:    _read('pipeline_max_concurrent','settingPipeMaxConcurrent','value',_int,50),
     pipeline_max_turns:         _read('pipeline_max_turns','settingPipeMaxTurns','value',_int,100)
   };
@@ -2617,11 +3354,11 @@ function applySettingsToUI(){
     {el:'settingBaseUrl',           key:'base_url',               type:'value',   def:'https://api.deepseek.com'},
     {el:'settingModel',             key:'model',                  type:'value',   def:'deepseek-v4-flash'},
     {el:'settingDailyLimit',        key:'daily_limit',            type:'value',   def:100000},
-    {el:'settingDailyTokenLimit',   key:'daily_token_limit',      type:'value',   def:10000000},
+    {el:'settingDailyTokenLimit',   key:'daily_token_limit',      type:'value',   def:18000000},
     {el:'settingReserveRatio',      key:'reserve_ratio',          type:'value',   def:0.5,   tf:function(v){return Math.round((v||0.5)*100);}},
     {el:'settingEvoEnabled',        key:'evolution_enabled',      type:'checked', def:true},
     {el:'settingReasoningEffort',   key:'reasoning_effort',       type:'value',   def:'max'},
-    {el:'settingMaxTokens',         key:'max_tokens',             type:'value',   def:4096},
+    {el:'settingMaxTokens',         key:'max_tokens',             type:'value',   def:384000},
     {el:'settingBreakArmor',        key:'break_armor_enabled',    type:'checked', def:false,  tf:function(v){return v===true;}},
     {el:'settingCompressionThreshold', key:'compression_threshold',type:'value',  def:70},
     {el:'settingMaxContextMessages',   key:'max_context_messages',  type:'value', def:50},
@@ -2647,9 +3384,9 @@ function applySettingsToUI(){
     {el:'settingPipelineEnabled',   key:'pipeline_enabled',       type:'checked', def:true},
     {el:'settingSttEndpoint',       key:'stt_endpoint',           type:'value',   def:''},
     {el:'settingSelfCritiqueRounds',key:'self_critique_rounds',   type:'value',   def:1},
-    {el:'settingMctsFastBudget',    key:'mcts_fast_token_budget',     type:'value', def:10000000},
-    {el:'settingMctsStandardBudget',key:'mcts_standard_token_budget', type:'value', def:30000000},
-    {el:'settingPipelineBudget',    key:'pipeline_token_budget',      type:'value', def:50000000},
+        {el:'settingMctsFastBudget',    key:'mcts_fast_token_budget',     type:'value', def:5000000},
+    {el:'settingMctsStandardBudget',key:'mcts_standard_token_budget', type:'value', def:10000000},
+    {el:'settingPipelineBudget',    key:'pipeline_token_budget',      type:'value', def:18000000},
     {el:'settingPipeMaxConcurrent', key:'pipeline_max_concurrent',    type:'value', def:50},
     {el:'settingPipeMaxTurns',      key:'pipeline_max_turns',         type:'value', def:100}
   ];
@@ -2675,11 +3412,11 @@ function applySettingsToUI(){
   if(scrLabel){var scrV=settings.self_critique_rounds!=null?settings.self_critique_rounds:1;scrLabel.textContent=scrV===0?'关闭':scrV;}
   // 预算标签联动
   var mfbLabel=document.getElementById('mctsFastBudgetLabel');
-  if(mfbLabel){var mfbv=settings.mcts_fast_token_budget||10000000;mfbLabel.textContent=mfbv>=10000000?'10M (无限制)':(mfbv/1000000).toFixed(1)+'M';}
+  if(mfbLabel){var mfbv=settings.mcts_fast_token_budget||5000000;mfbLabel.textContent=mfbv>=40000000?'40M (无限制)':(mfbv/1000000).toFixed(1).replace('.0','')+'M';}
   var msbLabel=document.getElementById('mctsStandardBudgetLabel');
-  if(msbLabel){var msbv=settings.mcts_standard_token_budget||30000000;msbLabel.textContent=msbv>=30000000?'30M (无限制)':(msbv/1000000).toFixed(1)+'M';}
+  if(msbLabel){var msbv=settings.mcts_standard_token_budget||10000000;msbLabel.textContent=msbv>=40000000?'40M (无限制)':(msbv/1000000).toFixed(1).replace('.0','')+'M';}
   var pbLabel=document.getElementById('pipelineBudgetLabel');
-  if(pbLabel){var pbv=settings.pipeline_token_budget||50000000;pbLabel.textContent=pbv>=100000000?'100M (无限制)':(pbv/1000000).toFixed(0)+'M';}
+  if(pbLabel){var pbv=settings.pipeline_token_budget||18000000;pbLabel.textContent=pbv>=40000000?'40M (无限制)':(pbv/1000000).toFixed(0)+'M';}
   var pmcLabel=document.getElementById('pipeMaxConcurrentLabel');
   if(pmcLabel){var pmcv=settings.pipeline_max_concurrent||50;pmcLabel.textContent=pmcv>=50?'自适应':pmcv;}
   var pmtLabel=document.getElementById('pipeMaxTurnsLabel');
@@ -3259,7 +3996,7 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
   saveDailyUsage();
   updateTokenDisplay();
   // ★ Token消耗日志
-  var tokenLimit = settings.daily_token_limit || 10000000;
+  var tokenLimit = settings.daily_token_limit || 18000000;
   var tokenPct = Math.round(dailyTokenUsed / tokenLimit * 100);
   if (tokenPct % 10 === 0 || tokenPct >= 90) {
     var usedStr = dailyTokenUsed >= 1000000 ? (dailyTokenUsed / 1000000).toFixed(1) + 'M' : dailyTokenUsed.toLocaleString();
@@ -3274,7 +4011,7 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
 }
 
 function updateTokenDisplay(){
-  var limit = settings.daily_token_limit || 10000000;
+  var limit = settings.daily_token_limit || 18000000;
   var used = dailyTokenUsed || 0;
   var pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   var tuEl = document.getElementById('tokenUsedLabel');
@@ -7323,6 +8060,7 @@ function getToolsDescription(){
   for(var i=0;i<keys.length;i++){
     var tool=TOOL_REGISTRY[keys[i]];
     if(tool.disabled)continue;
+    if(tool.name==='help')continue;
     parts.push('- **'+tool.name+'**: '+tool.description);
   }
   return parts.join('\n');
@@ -7396,8 +8134,34 @@ async function executeMainThreadTool(toolName,args){
     case 'reqalign':return await toolReqalign(args);
       case 'generatespec':return await toolGeneratespec(args);
       case 'world_validator':return await toolWorldSimulator(args);
+      case 'help':return await toolHelp(args);
       default:throw new Error('Unsupported tool: '+toolName);
   }
+}
+
+async function toolHelp(args){
+  if(args.action==='list'){
+    var keys=Object.keys(TOOL_REGISTRY);
+    var lines=['## 工具列表\n| 工具名 | 简介 |','|--------|------|'];
+    for(var i=0;i<keys.length;i++){
+      var t=TOOL_REGISTRY[keys[i]];
+      if(t.disabled)continue;
+      var desc=(t.description||'').replace(/\|/g,'\\|').substring(0,100);
+      lines.push('| '+t.name+' | '+desc+' |');
+    }
+    lines.push('\n调用 `help action="get" tool_name="xxx"` 获取完整文档。');
+    return lines.join('\n');
+  }
+  if(args.action==='get'){
+    var tn=args.tool_name||'';
+    if(!tn)return '请指定 tool_name。用 help action="list" 查看所有工具。';
+    var doc=TOOL_DOCS[tn];
+    if(doc)return doc;
+    var t2=TOOL_REGISTRY[tn];
+    if(t2)return '## '+tn+'\n'+t2.description+'\n\n(该工具暂无扩展文档，以上为基本信息。参数见 function calling 定义。)';
+    return '未找到工具: '+tn+'。用 help action="list" 查看所有可用工具。';
+  }
+  return 'help 用法:\n- `help action="list"` 列出全部工具\n- `help action="get" tool_name="xxx"` 获取 xxx 工具的完整文档';
 }
 
 async function toolLongtermMemory(args){
@@ -8927,6 +9691,18 @@ async function _subAgentLLM(systemPrompt,userPrompt,toolsWhitelist,temperature,t
       if(td&&!td.disabled){tools.push(td);}
     }
   }
+  // ★ 子Agent工具摘要注入（与主Agent同等待遇）
+  if(tools.length>0){
+    var _subToolLines=[];
+    for(var _sti=0;_sti<tools.length;_sti++){
+      var _st=tools[_sti];
+      if(_st.name==='help')continue;
+      _subToolLines.push('- **'+_st.name+'**: '+_st.description);
+    }
+    var _hasHelp=toolsWhitelist.indexOf('help')>=0;
+    systemPrompt+='\n\n## 可用工具\n'+_subToolLines.join('\n')+(_hasHelp?'\n\n> 💡 调用 `help action="get" tool_name="xxx"` 获取任意工具的完整文档及最小示例。':'');
+  }
+  msgs[0].content=systemPrompt;
 
   var output='';
   var usedTurns=0;
@@ -8936,6 +9712,8 @@ async function _subAgentLLM(systemPrompt,userPrompt,toolsWhitelist,temperature,t
     // ★ 复用主Agent _buildLLMRequest：自动处理预算/消息清理/think/token上限
     // ★ 前置预算检查：流水线消耗需在调用前验证（而非仅靠 _buildLLMRequest 的 budgetUsed 检查）
     if(!budgetManager.canEvoCall())throw new Error('DAILY_LIMIT_REACHED: 流水线剩余配额不足');
+    var pipeLimit=settings.pipeline_token_budget||18000000;
+    if(pipeLimit<40000000&&_pipelineTokenUsed>=pipeLimit)throw new Error('PIPELINE_BUDGET_EXCEEDED: 流水线token预算已耗尽('+_pipelineTokenUsed+'/'+pipeLimit+')');
     var req=_buildLLMRequest(msgs,tools,false,'pipeline');
     // ★ 仅覆盖主Agent定制的参数
     req.body.temperature=temperature||0.7;
@@ -8952,6 +9730,7 @@ async function _subAgentLLM(systemPrompt,userPrompt,toolsWhitelist,temperature,t
     var msg=choice.message;
     // ★ 记录流水线子Agent Token消耗（使用API精确usage）
     recordDailyTokenUsage(msgs, msg.content||'', data.usage||null);
+    if(data.usage&&typeof data.usage.total_tokens==='number'){_pipelineTokenUsed+=data.usage.total_tokens;}
 
     if(msg.content){output+=msg.content;}
     msgs.push({role:'assistant',content:msg.content||'',tool_calls:msg.tool_calls||undefined});
@@ -9783,6 +10562,7 @@ async function toolPipeline(args){
       rid=_rid();state={id:rid,pipeline_id:args.pipeline_id,status:'running',node_states:{},report_history:[],checkpoints:[],context:args.context||{},started_at:Date.now(),updated_at:Date.now()};
       for(var nid in def.dag.nodes){state.node_states[nid]={status:'pending',output:null,metrics:{},attempts:0,started_at:null,completed_at:null};}
       _pipelineRuns[rid]=state;await _saveRun(rid,state);
+      _pipelineTokenUsed=0; // ★ 每个新run重置流水线token计数
       _runPipelineAsync(rid,def,state).catch(function(e){if(_pipelineRuns[rid]){_pipelineRuns[rid].status='failed';_pipelineRuns[rid].error=e.message;}});
     }
     // ★ 阻塞等待：报告门触发或流水线完成
@@ -9926,6 +10706,7 @@ async function toolPipeline(args){
     var _def=_pipelines[_s.pipeline_id];if(!_def)return '❌ 流水线定义丢失';
     _s.updated_at=Date.now();await _saveRun(args.run_id,_s);
     debugLogger.info('🔄 恢复检查点: '+args.checkpoint_id+' | 已完成: '+Object.values(_s.node_states).filter(function(n){return n.status==='completed';}).length+'节点');
+    _pipelineTokenUsed=0; // ★ restore也重置流水线token计数
     _runPipelineAsync(args.run_id,_def,_s).catch(function(e){if(_pipelineRuns[args.run_id]){_pipelineRuns[args.run_id].status='failed';_pipelineRuns[args.run_id].error=e.message;}});
     return '🔄 检查点恢复中: '+args.run_id+' | 使用 pipeline run run_id="'+args.run_id+'" 阻塞等待';
   }
@@ -10809,7 +11590,7 @@ function _buildFullSystemPrompt(userText){
   var sp = buildSystemPromptWithSkills();
   var triggered = getTriggeredSkillFragments(userText||'');
   if(triggered.length > 0){
-    sp += '\n\n# 💡 以下技能未激活但触发词匹配，仅供参考（可用 skill_manager set 激活）\n' + triggered.join('\n\n');
+    sp += '\n\n' + triggered.join('\n');
     debugLogger.info('技能推荐: '+triggered.length+'个未激活技能触发词匹配');
   }
   return sp;
@@ -11692,16 +12473,18 @@ function getTriggeredSkillFragments(userText){
   var fragments=[];
   var skills=skillCache.skills||{};
   var keys=Object.keys(skills);
+  var names=[];
   for(var i=0;i<keys.length;i++){
     var sk=skills[keys[i]];
     if(!sk||!sk.trigger||!sk.prompt_fragment)continue;
     if(!matchesTrigger(sk.trigger,userText))continue;
     var sid=sk.id||keys[i].replace('.json','');
-    // ⚠️ 如果该技能已在 buildSystemPromptWithSkills 第④阶段注入，跳过避免重复
     var alreadyInjected=(skillCache.activeSkillIds.indexOf(sid)>=0);
     if(alreadyInjected)continue;
-    // 仅对「未激活但触发词匹配」的技能做推荐式注入（让Agent感知到有相关技能可用）
-    fragments.push('💡 相关技能推荐（未激活，可参考）: '+(sk.name||keys[i])+'\n'+sk.prompt_fragment);
+    names.push('`'+sid+'`('+(sk.name||keys[i])+')');
+  }
+  if(names.length>0){
+    fragments.push('💡 未激活相关技能(用 skill_manager set 激活): '+names.join(', '));
   }
   return fragments;
 }
