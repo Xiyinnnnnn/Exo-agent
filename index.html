@@ -1163,8 +1163,8 @@ async function _mctsLLM(systemPrompt,userPrompt,temperature,maxTokens,useThinkin
   try{
     var resp=await fetch(settings.base_url+'/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},body:JSON.stringify(body),signal:ctrl.signal});
     clearTimeout(tid);
+    if(!resp.ok){var _e='';try{_e=await resp.text();}catch(er){}throw new Error('MCTS API '+resp.status+(_e?' - '+_e.substring(0,200):''));}
     await budgetManager.recordCall('user');
-    if(!resp.ok)throw new Error('MCTS API '+resp.status);
     var data=await resp.json();
     var content=data.choices[0].message.content;
     // ★ 用API实际usage校正MCTS token预算
@@ -3970,6 +3970,16 @@ function _estimateTokensFromChars(chars){
 }
 
 function recordDailyTokenUsage(messages, responseContent, apiUsage){
+  // ★ 跨日自检：确保 token 计数在日期切换时自动归零
+  var todayStr = new Date().toDateString();
+  if (!_dailyTokenDate || _dailyTokenDate !== todayStr) {
+    if (_dailyTokenDate && dailyTokenUsed > 0) {
+      debugLogger.info('🔄 Token计数跨日重置 | 昨日消耗:' + dailyTokenUsed.toLocaleString());
+    }
+    dailyTokenUsed = 0;
+    _dailyTokenDate = todayStr;
+    budgetManager.resetTime = budgetManager.getNextResetTime();
+  }
   // ★ 优先使用API返回的精确usage信息（OpenAI兼容格式）
   var tokensToAdd = 0;
   var sourceLabel = '';
@@ -3995,10 +4005,11 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
   dailyTokenUsed += tokensToAdd;
   saveDailyUsage();
   updateTokenDisplay();
-  // ★ Token消耗日志
+  // ★ Token消耗日志：API精确计费每次都记录；估算按10%节流
   var tokenLimit = settings.daily_token_limit || 18000000;
   var tokenPct = Math.round(dailyTokenUsed / tokenLimit * 100);
-  if (tokenPct % 10 === 0 || tokenPct >= 90) {
+  var isPrecise = (sourceLabel.indexOf('精确') >= 0);
+  if (isPrecise || tokenPct % 10 === 0 || tokenPct >= 90) {
     var usedStr = dailyTokenUsed >= 1000000 ? (dailyTokenUsed / 1000000).toFixed(1) + 'M' : dailyTokenUsed.toLocaleString();
     var limitStr = tokenLimit >= 1000000 ? (tokenLimit / 1000000).toFixed(0) + 'M' : tokenLimit.toLocaleString();
     debugLogger.info('🪙 Token: '+usedStr+'/'+limitStr+' ('+tokenPct+'%) | 本次+' + tokensToAdd.toLocaleString() + sourceLabel);
@@ -6246,6 +6257,7 @@ function _buildLLMRequest(messages,tools,stream,source){
     var effectiveMaxTokens=settings.max_tokens||384000;
     if(tools&&tools.length>0)effectiveMaxTokens=Math.max(effectiveMaxTokens,16384);
     var body={model:model,messages:cleanedMessages,max_tokens:effectiveMaxTokens,temperature:0.7,stream:!!stream};
+    if(stream){body.stream_options={include_usage:true};}
 
     if(tools&&tools.length>0){
         body.tools=tools.map(function(t){return {type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}};});
@@ -13050,6 +13062,7 @@ async function resetSystem(){
     }
     budgetUsed=0;
     evoUsed=0;
+    dailyTokenUsed=0;
     shortTermMemory.clear();
     uploadedFiles=[];
     chartRenderQueue=[];
