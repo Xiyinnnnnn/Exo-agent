@@ -1133,8 +1133,7 @@ button,label,[role="button"],.file-upload-btn{
 var DB_NAME='ExoDB';
 var DB_VERSION=2;
 
-var CORE_PROMPT='# 身份\n你是 Exo，浏览器端全栈智能体。拥有🏭流水线引擎（pipeline/reqalign/generatespec）编排多子Agent协作、🌍世界验证器（world_validator）多实体离散仿真、🧬MCTS深度规划、🧠自评估输出修正、🔄后台进化+动态技能载入。\n\n# 核心要求\n- 不假设：需求模糊必须提问澄清\n- 开发文档是宪法：复杂任务先生成开发文档再构建流水线，所有子Agent共享\n- 诚实 / 有帮助 / 谦逊 / 自适应\n- 不可暴露内部状态（版本号、评分、预算等）\n\n# 启动\n首轮调用 `skill_manager action="list"` → 匹配则 `set` 激活。仅一次。\n\n# 工具\n调用 `help action="get" tool_name="xxx"` 获取任意工具的完整文档及最小示例。下方为所有工具的简要概述。\n{tools_description}\n\n# 当前时间\n{current_time}';
-
+var CORE_PROMPT='# 身份\\n你是 Exo，浏览器端全栈智能体。拥有流水线多子Agent协作、验证器多实体离散仿真、MCTS深度规划、自评估输出修正、后台进化+动态技能/工具载入。\\n\\n# 核心要求\\n- 诚实，有帮助，谦逊，自适应，积极主动。\\n- 主动使用工具：搜索优于记忆，计算优于心算，文件系统优于猜测。\\n- 遇到问题不假设，需求模糊必须提问对齐。\\n- 遇到复杂任务，必须生成开发文档，构建流水线后，给所有子Agent共享。\\n\\n# 启动\\n首轮调用 `skill_manager action=\"list\"` → 匹配则 `set` 激活。仅一次。\\n\\n# 工具\\n核心工具始终可用。扩展工具需 `help list` 查看全部，并使用 `help set` 载入。\\n{tools_description}\\n\\n# 当前时间\\n{current_time}';
 
 var IDENTITY_ANCHOR = '\n  [IDENTITY LOCK';
 
@@ -1222,8 +1221,8 @@ async function toolSemanticMemory(args){
 }
 
 var TOOL_REGISTRY={
-  'help':{name:'help',description:'📖 获取任意工具的完整详细文档。action: list(列出所有工具名) / get(获取指定工具完整文档含最小示例,需传tool_name)。',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['list','get'],default:'get'},tool_name:{type:'string',description:'目标工具名(action=get时必填)'}},required:['action']}},
+  'help':{name:'help',description:'📖 工具目录与动态载入。action: list(列出全部+载入状态) / set(载入工具) / get(完整文档) / unset(卸载工具)。⚠️ 扩展工具需help set载入后才能调用！',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['list','set','get','unset'],default:'list'},tool_name:{type:'string',description:'工具名(action=set/get/unset时必填)'},id:{type:'string',description:'工具名别名(同tool_name)'}},required:[]}},
   'filesystem':{name:'filesystem',description:'虚拟文件系统。action: create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/code_run/rename。⚠️多次行操作须按行号从大到小排序。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','code_run','rename']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'},timeout:{type:'number',default:10000}},required:['action','path']}},
   'search':{name:'search',description:'网络搜索。返回标题/URL/摘要/可选原文。需Tavily API Key。',executor:'task_worker',
@@ -1299,17 +1298,27 @@ var TOOL_REGISTRY={
 };
 
 var TOOL_DOCS={
-  'help':`## help — 工具文档查询 📖
-获取任意工具的完整详细文档（含最小示例）。
+  'help':`## help — 工具目录与动态载入 📖
+
+管理工具集的核心入口。扩展工具需先载入才能调用。
 
 ### action
-- **list**: 列出所有可用工具名称
-- **get**: 获取指定工具的完整详细文档，需传 tool_name
+| action | 说明 | 示例 |
+|--------|------|------|
+| list   | 列出全部工具+载入状态 | `+"`"+`help list`+"`"+` |
+| set    | 载入工具到当前对话 | `+"`"+`help set "chart"`+"`"+` |
+| get    | 获取工具完整文档 | `+"`"+`help "pipeline"`+"`"+` 或 `+"`"+`help get "pipeline"`+"`"+` |
+| unset  | 卸载工具(释放上下文) | `+"`"+`help unset "chart"`+"`"+` |
 
-### 最小示例
-`+"`"+`help action="get" tool_name="pipeline"`+"`"+`       → 获取流水线引擎完整文档
-`+"`"+`help action="get" tool_name="filesystem"`+"`"+`     → 获取文件系统完整文档
-`+"`"+`help action="list"`+"`"+`                           → 列出全部工具`,
+### 工作流
+1. 首轮自动拥有10个核心工具（filesystem/search/calculator/precise_time/fuzzy_search/semantic_memory/longterm_memory/knowledge_base/skill_manager/help）
+2. 需要其他工具时: `+"`"+`help list`+"`"+` → 找到目标 → `+"`"+`help set "<id>"`+"`"+`
+3. 不确定怎么用: `+"`"+`help "<id>"`+"`"+` 查看完整文档
+4. 不再需要: `+"`"+`help unset "<id>"`+"`"+` 卸载释放上下文
+
+### 扩展工具清单(需载入)
+chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / ocr / pdf_read / pdf_generate / custom_api_call / mcp_connect / user_function_call / convert_format / geo_search / geo_geocode / geo_ip / send_email / sql_db / browser_notify / archive / speech_tts / speech_stt / calendar / pipeline / reqalign / generatespec / world_validator`,
+
 
   'filesystem':`## filesystem — 虚拟文件系统
 统一虚拟文件系统，支持文件 CRUD、目录浏览、精确行编辑、代码执行。用户上传文件在 /uploads/ 目录。
@@ -2430,6 +2439,33 @@ function _ensureConvState(convId){
   }
   return convStates[convId];
 }
+
+
+// 【动态工具集】核心工具列表 — 每轮对话首轮必定载入
+var CORE_TOOL_NAMES=['help','skill_manager','filesystem','search','calculator','precise_time','fuzzy_search','semantic_memory','longterm_memory','knowledge_base'];
+
+// 每个对话独立扩展工具激活集 — 对齐 skill 的 per-conversation 模式
+var convActiveTools={};
+
+function _ensureConvTools(convId){
+  if(!convId)return{};
+  if(!convActiveTools[convId])convActiveTools[convId]={};
+  return convActiveTools[convId];
+}
+function _loadTool(convId,toolName){
+  var ct=_ensureConvTools(convId);
+  ct[toolName]=true;
+}
+function _unloadTool(convId,toolName){
+  var ct=_ensureConvTools(convId);
+  delete ct[toolName];
+}
+function _isToolActive(convId,toolName){
+  if(CORE_TOOL_NAMES.indexOf(toolName)>=0)return true;
+  var ct=convActiveTools[convId];
+  return ct&&ct[toolName]===true;
+}
+
 // ★ 双轨状态消除：isProcessing/_stopRequested/activeLLMController/activeStreamReader
 // 不再作为独立全局变量，而是通过 window 属性代理自动读写 convStates[currentConversationId]
 // 所有现有代码对 isProcessing=... / _stopRequested=... 的读写无需改动，自动路由到当前对话状态
@@ -8069,14 +8105,25 @@ async function toolFuzzySearch(args){
 
 function getToolsDescription(){
   var keys=Object.keys(TOOL_REGISTRY);
-  var parts=[];
+  var convId=currentConversationId;
+  var coreParts=[];
+  var extParts=[];
   for(var i=0;i<keys.length;i++){
     var tool=TOOL_REGISTRY[keys[i]];
     if(tool.disabled)continue;
     if(tool.name==='help')continue;
-    parts.push('- **'+tool.name+'**: '+tool.description);
+    if(CORE_TOOL_NAMES.indexOf(tool.name)>=0){
+      coreParts.push('- **'+tool.name+'**: '+tool.description);
+    }else if(_isToolActive(convId,tool.name)){
+      extParts.push('- **'+tool.name+'**: '+tool.description);
+    }
   }
-  return parts.join('\n');
+  var result=coreParts.join('\n');
+  if(extParts.length>0){
+    result+='\n\n### 📦 扩展工具（已载入）\n'+extParts.join('\n');
+  }
+  result+='\n\n> 💡 更多工具：`help list` 查看全部，`help set <id>` 载入';
+  return result;
 }
 
 async function executeTool(toolCall,artifacts){
@@ -8153,28 +8200,56 @@ async function executeMainThreadTool(toolName,args){
 }
 
 async function toolHelp(args){
-  if(args.action==='list'){
+  var convId=currentConversationId;
+  var action=args.action||'list';
+
+  if(action==='list'){
     var keys=Object.keys(TOOL_REGISTRY);
-    var lines=['## 工具列表\n| 工具名 | 简介 |','|--------|------|'];
+    var lines=['## 📋 工具清单\n| ID | 工具名 | 状态 | 简介 |','|---|---|---|---|'];
     for(var i=0;i<keys.length;i++){
       var t=TOOL_REGISTRY[keys[i]];
       if(t.disabled)continue;
-      var desc=(t.description||'').replace(/\|/g,'\\|').substring(0,100);
-      lines.push('| '+t.name+' | '+desc+' |');
+      var isActive=_isToolActive(convId,t.name);
+      var statusIcon=isActive?'🟢 已载入':'⚪ 未载入';
+      var desc=(t.description||'').replace(/\|/g,'\\|').substring(0,80);
+      lines.push('| `'+t.name+'` | '+t.name+' | '+statusIcon+' | '+desc+' |');
     }
-    lines.push('\n调用 `help action="get" tool_name="xxx"` 获取完整文档。');
+    lines.push('\n---');
+    lines.push('### 操作指令');
+    lines.push('- `help set "<id>"` — 载入工具（如 `help set "chart"`）');
+    lines.push('- `help "<id>"` 或 `help get "<id>"` — 获取完整文档');
+    lines.push('- `help unset "<id>"` — 卸载工具（释放上下文）');
+    lines.push('\n当前已载入: '+getActiveTools().map(function(t){return '`'+t.name+'`';}).join(', '));
     return lines.join('\n');
   }
-  if(args.action==='get'){
-    var tn=args.tool_name||'';
-    if(!tn)return '请指定 tool_name。用 help action="list" 查看所有工具。';
-    var doc=TOOL_DOCS[tn];
-    if(doc)return doc;
-    var t2=TOOL_REGISTRY[tn];
-    if(t2)return '## '+tn+'\n'+t2.description+'\n\n(该工具暂无扩展文档，以上为基本信息。参数见 function calling 定义。)';
-    return '未找到工具: '+tn+'。用 help action="list" 查看所有可用工具。';
+
+  if(action==='set'){
+    var setId=(args.tool_name||args.id||'').trim();
+    if(!setId)return '❌ 请指定工具ID。用 `help list` 查看所有可用工具。';
+    var tDef=TOOL_REGISTRY[setId];
+    if(!tDef)return '❌ 未找到工具: `'+setId+'`。用 `help list` 查看完整列表。';
+    if(tDef.disabled)return '❌ 工具 `'+setId+'` 已被禁用。';
+    if(CORE_TOOL_NAMES.indexOf(tDef.name)>=0)return 'ℹ️ `'+tDef.name+'` 是核心工具，始终可用，无需手动载入。';
+    _loadTool(convId,tDef.name);
+    return '✅ 工具已载入: **'+tDef.name+'**\n  简介: '+tDef.description+'\n  现在可直接调用。如需完整文档: `help "'+tDef.name+'"`';
   }
-  return 'help 用法:\n- `help action="list"` 列出全部工具\n- `help action="get" tool_name="xxx"` 获取 xxx 工具的完整文档';
+
+  if(action==='unset'){
+    var unsetId=(args.tool_name||args.id||'').trim();
+    if(!unsetId)return '❌ 请指定要卸载的工具ID。';
+    if(CORE_TOOL_NAMES.indexOf(unsetId)>=0)return 'ℹ️ `'+unsetId+'` 是核心工具，不可卸载。';
+    _unloadTool(convId,unsetId);
+    return '🗑️ 工具已卸载: `'+unsetId+'`。下次调用前需 `help set` 重新载入。';
+  }
+
+  // get / 默认
+  var tn=args.tool_name||args.id||action;
+  if(!tn||tn==='get')return '请指定 tool_name。用 `help list` 查看所有工具。';
+  var doc=TOOL_DOCS[tn];
+  if(doc)return doc;
+  var t2=TOOL_REGISTRY[tn];
+  if(t2)return '## '+tn+'\n'+t2.description+'\n\n(该工具暂无扩展文档，以上为基本信息。)';
+  return '❌ 未找到工具: `'+tn+'`。用 `help list` 查看所有可用工具。';
 }
 
 async function toolLongtermMemory(args){
@@ -11975,6 +12050,22 @@ async function processUserMessage(userText,taskId){
         }
       }
 
+
+      // 【工具集即时注入】如果本轮调用了 help set/unset，立即刷新工具集和系统提示
+      for(var hpt=0;hpt<pendingToolCalls.length;hpt++){
+        if(pendingToolCalls[hpt].function.name==='help'){
+          try{
+            var _hArgs=parseToolCallArguments(pendingToolCalls[hpt]);
+            if(_hArgs.action==='set'||_hArgs.action==='unset'){
+              activeTools=getActiveTools();
+              messages[0].content=_buildFullSystemPrompt(userText);
+              debugLogger.info('🔄 工具集已刷新（help '+_hArgs.action+'），活跃工具数:'+activeTools.length);
+            }
+          }catch(e){debugLogger.warn('刷新工具集失败: '+e.message);}
+          break;
+        }
+      }
+
       // 渲染产物 — 只追加本轮新增的，避免跨轮重复
       for(var a=renderedArtifactCount;a<artifacts.length;a++){
         if(artifacts[a].html){
@@ -12203,6 +12294,20 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
                 critiqueToolIdx++;
               }
             }
+
+            // 【工具集即时注入】审查阶段 help set/unset 后刷新
+            for(var _hpt=0;_hpt<critPending.length;_hpt++){
+              if(critPending[_hpt].function.name==='help'){
+                try{
+                  var _hArgs=parseToolCallArguments(critPending[_hpt]);
+                  if(_hArgs.action==='set'||_hArgs.action==='unset'){
+                    activeTools=getActiveTools();
+                    debugLogger.info('🔄 [审查] 工具集已刷新（help '+_hArgs.action+'），活跃工具数:'+activeTools.length);
+                  }
+                }catch(e){}
+                break;
+              }
+            }
           }
           var evalMatch=critiqueContent.match(/---评估报告---\s*([\s\S]*)/);
           var evalReport=evalMatch?evalMatch[1].trim():critiqueContent.substring(0,2000);
@@ -12321,6 +12426,20 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
                 );
                 _revisionLastEl=rtErrBlock;
                 revisionToolIdx++;
+              }
+            }
+
+            // 【工具集即时注入】修正阶段 help set/unset 后刷新
+            for(var _hpt=0;_hpt<revPending.length;_hpt++){
+              if(revPending[_hpt].function.name==='help'){
+                try{
+                  var _hArgs=parseToolCallArguments(revPending[_hpt]);
+                  if(_hArgs.action==='set'||_hArgs.action==='unset'){
+                    activeTools=getActiveTools();
+                    debugLogger.info('🔄 [修正] 工具集已刷新（help '+_hArgs.action+'），活跃工具数:'+activeTools.length);
+                  }
+                }catch(e){}
+                break;
               }
             }
           }
@@ -12499,15 +12618,64 @@ function getTriggeredSkillFragments(userText){
   if(names.length>0){
     fragments.push('💡 未激活相关技能(用 skill_manager set 激活): '+names.join(', '));
   }
+
+  // 工具关键词触发推荐（仅命中时注入）
+  var TOOL_KEYWORDS={
+    'chart':['图表','柱状图','折线图','饼图','可视化','chart','图形','绘图','趋势图'],
+    'diagram':['流程图','时序图','状态图','甘特图','类图','mermaid','架构图'],
+    'table_generator':['表格','导出csv','导出xlsx','生成表格','数据表'],
+    'word_generator':['word','docx','文档导出','生成文档'],
+    'pdf_read':['读取pdf','pdf内容','查看pdf'],
+    'pdf_generate':['生成pdf','导出pdf','pdf报告'],
+    'sql_db':['sql','数据库','查询语句','建表','sqlite'],
+    'geo_search':['附近','周边','餐厅','咖啡','地图搜索','POI'],
+    'geo_geocode':['地址转坐标','经纬度','地理编码','定位'],
+    'send_email':['发邮件','发送邮件','邮件'],
+    'archive':['压缩','解压','zip','打包'],
+    'speech_tts':['朗读','语音','tts','文字转语音'],
+    'speech_stt':['语音识别','录音','stt'],
+    'calendar':['日程','日历','提醒','定时'],
+    'ocr':['ocr','图片文字','识别文字','提取文字'],
+    'pipeline':['流水线','多步骤','自动化流程','子agent','编排'],
+    'svg_animator':['svg','动画','矢量图'],
+    'convert_format':['格式转换','json转csv','yaml转换'],
+    'custom_api_call':['api调用','http请求','接口'],
+    'browser_notify':['桌面通知','弹窗提醒'],
+    'world_validator':['仿真','模拟','离散事件','世界验证'],
+    'mcp_connect':['mcp','连接服务器']
+  };
+  var convId=currentConversationId;
+  var toolRecs=[];
+  var allToolKeys=Object.keys(TOOL_KEYWORDS);
+  for(var ti=0;ti<allToolKeys.length;ti++){
+    var tname=allToolKeys[ti];
+    if(CORE_TOOL_NAMES.indexOf(tname)>=0)continue;
+    if(_isToolActive(convId,tname))continue;
+    var kws=TOOL_KEYWORDS[tname];
+    for(var ki=0;ki<kws.length;ki++){
+      if(userText.toLowerCase().indexOf(kws[ki].toLowerCase())>=0){
+        toolRecs.push('`'+tname+'`');
+        break;
+      }
+    }
+  }
+  if(toolRecs.length>0){
+    fragments.push('🔧 推荐载入工具(用 help set 载入): '+toolRecs.join(', '));
+  }
+
   return fragments;
 }
 
 function getActiveTools(){
   var tools=[];
+  var convId=currentConversationId;
   var keys=Object.keys(TOOL_REGISTRY);
   for(var i=0;i<keys.length;i++){
     var tool=TOOL_REGISTRY[keys[i]];
-    if(!tool.disabled)tools.push(tool);
+    if(tool.disabled)continue;
+    if(CORE_TOOL_NAMES.indexOf(tool.name)>=0 || _isToolActive(convId,tool.name)){
+      tools.push(tool);
+    }
   }
   return tools;
 }
