@@ -703,9 +703,9 @@ button,label,[role="button"],.file-upload-btn{
     <!-- 1. API Key配置 — 默认展开 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="api" onclick="toggleSettingsSection(this)">
-        <h3> API 配置</h3><span class="section-arrow">▼</span>
+        <h3> API 配置</h3><span class="section-arrow collapsed">▼</span>
       </div>
-      <div class="section-body">
+      <div class="section-body collapsed">
         <div class="settings-field"><label for="settingApiKey">DeepSeek API Key</label><input type="password" id="settingApiKey" placeholder="sk-..."></div>
         <div class="settings-field"><label for="settingBaseUrl">Base URL</label><input type="text" id="settingBaseUrl" value="https://api.deepseek.com"></div>
         <div class="settings-field"><label for="settingModel">模型名称</label><input type="text" id="settingModel" value="deepseek-v4-flash"></div>
@@ -726,7 +726,14 @@ button,label,[role="button"],.file-upload-btn{
         <h3> 搜索设置</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
-        <div class="settings-field"><label for="settingTavilyKey">Tavily API Key（搜索工具需要）</label><input type="password" id="settingTavilyKey" placeholder="tvly-..."></div>
+        <div class="settings-field">
+          <label>Tavily API Keys（多Key轮换，超额自动切换）</label>
+          <div id="tavilyKeysContainer" style="display:flex;flex-direction:column;gap:6px;"></div>
+          <button type="button" id="btnAddTavilyKey" style="margin-top:8px;font-size:13px;padding:4px 12px;border-radius:6px;border:1px dashed var(--color-border);background:var(--color-bg);cursor:pointer;color:var(--color-primary);">+ 添加 Key</button>
+          <input type="hidden" id="settingTavilyKeys" value="[]">
+          <div class="help-text">支持多个Tavily API Key。单个Key超额(429/403)时自动轮换下一个，直到全部额度用完。</div>
+        </div>
+
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 Tavily 联网搜索</span><label class="toggle-switch"><input type="checkbox" id="settingTavilyEnabled" checked><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 LLM 无法调用搜索工具，节省 Tavily API 免费额度</div></div>
       </div>
     </div>
@@ -734,9 +741,9 @@ button,label,[role="button"],.file-upload-btn{
     <!-- 3. 预算面板 — 默认展开 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="budget" onclick="toggleSettingsSection(this)">
-        <h3> 预算控制</h3><span class="section-arrow">▼</span>
+        <h3> 预算控制</h3><span class="section-arrow collapsed">▼</span>
       </div>
-      <div class="section-body">
+      <div class="section-body collapsed">
         <div class="settings-field"><label for="settingDailyLimit">每日 LLM 调用上限</label><input type="number" id="settingDailyLimit" value="100000" min="10" max="100000"></div>
         <div class="settings-field"><label for="settingDailyTokenLimit">每日总Token消耗量</label><input type="number" id="settingDailyTokenLimit" value="222000000" min="10000" max="1000000000" step="10000" onchange="var v=parseInt(this.value);settings.daily_token_limit=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);updateTokenDisplay();"> <div class="help-text">基于API返回的usage信息精确计费。当API未返回usage时自动回退为字符估算。设为任意值控制每日消耗上限。</div></div>
         <div class="settings-field"><label>Token消耗进度</label><div>已消耗: <strong id="tokenUsedLabel">0</strong> / <span id="tokenTotalLabel">222M</span> (<span id="tokenUsedPercent">0%</span>)</div><div class="progress-bar"><div class="fill" id="tokenBar" style="width:0%"></div></div></div>
@@ -2408,7 +2415,7 @@ var ERROR_CODES={
 var db=null;
 var settings={
   deepseek_api_key:'',
-  tavily_api_key:'',
+  tavily_api_keys:[],
   base_url:'https://api.deepseek.com',
   model:'deepseek-v4-flash',
   daily_limit:100000,
@@ -3469,10 +3476,15 @@ async function saveSettings(){
   function _boolStrict(v){return v===true;}
   function _ratio(v){return (parseInt(v)||50)/100;}
   function _scr(v){var iv=parseInt(v);return isNaN(iv)?1:iv;}
+  function _readTavilyKeys(){
+    var el=document.getElementById('settingTavilyKeys');
+    if(!el)return[];
+    try{var arr=JSON.parse(el.value);return Array.isArray(arr)?arr.filter(function(k){return k&&k.trim();}):[];}catch(e){return[];}
+  }
 
   var newSettings={
     deepseek_api_key:  _read('deepseek_api_key','settingApiKey','value',_str,''),
-    tavily_api_key:    _read('tavily_api_key','settingTavilyKey','value',_str,''),
+    tavily_api_keys:   _readTavilyKeys(),
     base_url:          _read('base_url','settingBaseUrl','value',_str,'https://api.deepseek.com'),
     model:             _read('model','settingModel','value',_str,'deepseek-v4-flash'),
     daily_limit:       _read('daily_limit','settingDailyLimit','value',_int,100000),
@@ -3531,7 +3543,8 @@ async function saveSettings(){
   if(newSettings.mcts_standard_token_budget===10000000||newSettings.mcts_standard_token_budget===_oldStdProp)
     newSettings.mcts_standard_token_budget=Math.round(newSettings.daily_token_limit/5);
   settings=newSettings;
-  TOOL_REGISTRY['search'].disabled=!newSettings.tavily_enabled;
+  var hasKeys=(newSettings.tavily_api_keys&&newSettings.tavily_api_keys.length>0)||(newSettings.tavily_api_key&&newSettings.tavily_api_key.trim());
+  TOOL_REGISTRY['search'].disabled=!(newSettings.tavily_enabled&&hasKeys);
   var existing=await readFile('/config/settings.json');
   if(existing!==null){
     await updateFile('/config/settings.json',JSON.stringify(newSettings,null,2));
@@ -3563,7 +3576,7 @@ function applySettingsToUI(){
   // —— 映射表：elementId → {settingKey, type:'value'|'checked', defaultVal, transform?} ——
   var BINDINGS=[
     {el:'settingApiKey',            key:'deepseek_api_key',       type:'value',   def:''},
-    {el:'settingTavilyKey',         key:'tavily_api_key',         type:'value',   def:''},
+    {el:'settingTavilyKeys',        key:'tavily_api_keys',        type:'value',   def:'[]',  tf:function(v){return JSON.stringify(v||[]);}},
     {el:'settingBaseUrl',           key:'base_url',               type:'value',   def:'https://api.deepseek.com'},
     {el:'settingModel',             key:'model',                  type:'value',   def:'deepseek-v4-flash'},
     {el:'settingDailyLimit',        key:'daily_limit',            type:'value',   def:100000},
@@ -3613,6 +3626,8 @@ function applySettingsToUI(){
     else el.value=tfVal;
   }
 
+  _renderTavilyKeyInputs();
+
   // —— 联动更新（滑条标签文本） ——
   var reserveLabel=document.getElementById('reserveLabel');
   if(reserveLabel)reserveLabel.textContent=Math.round((settings.reserve_ratio||0.5)*100)+'%';
@@ -3642,7 +3657,8 @@ function applySettingsToUI(){
   if(pmtLabel){var pmtv=settings.pipeline_max_turns||100;pmtLabel.textContent=pmtv>=100?'无限制':pmtv;}
 
   // —— 联动更新（工具开关 / MCP / 函数 / 权限状态） ——
-  TOOL_REGISTRY['search'].disabled=!(settings.tavily_enabled!==false);
+  var hasKeys2=(settings.tavily_api_keys&&settings.tavily_api_keys.length>0)||(settings.tavily_api_key&&settings.tavily_api_key.trim());
+  TOOL_REGISTRY['search'].disabled=!(settings.tavily_enabled!==false&&hasKeys2);
   _updateNotifyPermStatus();
   _renderMcpConnections();
   _renderUserFunctions();
@@ -3673,6 +3689,48 @@ function applySettingsToUI(){
     }
   }
 }
+
+// —— 多Key输入UI辅助函数 ——
+function addTavilyKeyInput(value){
+  value=value||'';
+  var container=document.getElementById('tavilyKeysContainer');
+  if(!container)return;
+  var row=document.createElement('div');
+  row.style.display='flex';row.style.gap='4px';row.style.alignItems='center';
+  row.innerHTML='<input type="password" class="tavily-key-input" placeholder="tvly-..." value="'+_escapeAttr(value)+'" style="flex:1;padding:7px 10px;border:1px solid var(--color-border);border-radius:6px;font-size:14px;background:var(--color-surface);color:var(--color-text)"><button type="button" class="btn-remove-tavily-key" title="移除" style="background:none;border:none;cursor:pointer;color:var(--color-danger);font-size:18px;padding:0 4px;line-height:1">&times;</button>';
+  var _inputEl=row.querySelector('.tavily-key-input');
+  var _btnEl=row.querySelector('.btn-remove-tavily-key');
+  if(_inputEl)_inputEl.addEventListener('input',_syncTavilyKeys);
+  if(_btnEl)_btnEl.addEventListener('click',function(){removeTavilyKeyInput(_btnEl);});
+  container.appendChild(row);
+  _syncTavilyKeys();
+}
+function removeTavilyKeyInput(btn){
+  var row=btn.parentElement;
+  if(row&&row.parentElement)row.parentElement.removeChild(row);
+  _syncTavilyKeys();
+}
+function _syncTavilyKeys(){
+  var inputs=document.querySelectorAll('#tavilyKeysContainer .tavily-key-input');
+  var keys=[];
+  for(var i=0;i<inputs.length;i++){var v=inputs[i].value.trim();if(v)keys.push(v);}
+  var hidden=document.getElementById('settingTavilyKeys');
+  if(hidden)hidden.value=JSON.stringify(keys);
+  if(typeof TOOL_REGISTRY!=='undefined'&&TOOL_REGISTRY['search']){
+    TOOL_REGISTRY['search'].disabled=!(keys.length>0&&settings.tavily_enabled!==false);
+  }
+}
+function _renderTavilyKeyInputs(){
+  var container=document.getElementById('tavilyKeysContainer');
+  if(!container)return;
+  container.innerHTML='';
+  var keys=settings.tavily_api_keys||[];
+  if(keys.length===0&&settings.tavily_api_key)keys=[settings.tavily_api_key];
+  for(var i=0;i<keys.length;i++){addTavilyKeyInput(keys[i]);}
+  if(keys.length===0){addTavilyKeyInput('');}
+}
+function _escapeAttr(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
 var _btnTestTTS_bound=false;
 
 // ── 麦克风按钮事件绑定 ──
@@ -4420,7 +4478,7 @@ var errorHandler={
               var f=allFiles[i];
               if(f.path==='/config/settings.json'){
                 var s=JSON.parse(f.content);
-                delete s.deepseek_api_key;delete s.tavily_api_key;delete s.environment_variables;
+                delete s.deepseek_api_key;delete s.tavily_api_key;delete s.tavily_api_keys;delete s.environment_variables;
                 exportData.files[f.path]=JSON.stringify(s);
               }else{exportData.files[f.path]=f.content;}
             }
@@ -5691,24 +5749,29 @@ src+='  }\n';
   src+='}\n';
   src+='\n';
   
-  // === performSearch ===
+  // === performSearch (多Key轮换版) ===
   src+='async function performSearch(params){\n';
-  src+='  var query=params.query,max_results=params.max_results||5,search_depth=params.search_depth||\"advanced\",apiKey=params.apiKey,include_raw_content=params.include_raw_content||false,include_domains=params.include_domains||[],exclude_domains=params.exclude_domains||[];\n';
+  src+='  var query=params.query,max_results=params.max_results||5,search_depth=params.search_depth||\"advanced\",apiKeys=params.apiKeys||[],include_raw_content=params.include_raw_content||false,include_domains=params.include_domains||[],exclude_domains=params.exclude_domains||[];\n';
   src+='  if(!query||!query.trim())throw new Error(\"搜索关键词不能为空\");\n';
-  src+='  if(!apiKey)throw new Error(\"Tavily API Key未配置\");\n';
-  src+='  var controller=new AbortController();\n';
-  src+='  var timeoutId=setTimeout(function(){controller.abort()},30000);\n';
-  src+='  try{\n';
-  src+='    var response=await fetch(\"https://api.tavily.com/search\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer \"+apiKey},body:JSON.stringify({query:query.trim(),max_results:Math.min(max_results,10),search_depth:search_depth,include_raw_content:include_raw_content||false,include_domains:include_domains||[],exclude_domains:exclude_domains||[]}),signal:controller.signal});\n';
-  src+='    clearTimeout(timeoutId);\n';
-  src+='    if(!response.ok){var errText=await response.text().catch(function(){return\"\"});throw new Error(\"Tavily API错误 (\"+response.status+\"): \"+errText.substring(0,200))}\n';
-  src+='    var data=await response.json();var results=data.results||[];\n';
-  src+='    if(results.length===0)return (data.answer?\"AI摘要: \"+data.answer:\"未找到相关搜索结果。\");\n';
-  src+='    var formatted=results.map(function(r,i){return (i+1)+\". **\"+(r.title||\"无标题\")+\"**\\n   \"+(r.content||\"(无内容)\")+\"\\n   URL: \"+r.url+(r.raw_content?\"\\n    原文长度: ~\"+r.raw_content.length+\"字符\":\"\")}).join(\"\\n\\n\");\n';
-  src+='    if(data.answer)formatted+=\"\\n\\n AI摘要: \"+data.answer;\n';
-  src+='    if(include_raw_content&&results.length>0){formatted+=\"\\n\\n 已抓取\"+results.length+\"个页面原文(raw_content)，可通过 search 工具结果中的 raw_content 字段获取。\";}\n';
-  src+='    return formatted;\n';
-  src+='  }catch(e){clearTimeout(timeoutId);if(e.name===\"AbortError\")throw new Error(\"搜索请求超时(30秒)，请稍后重试。\");throw e}\n';
+  src+='  if(!apiKeys||apiKeys.length===0)throw new Error(\"Tavily API Key未配置\");\n';
+  src+='  var lastError=null;\n';
+  src+='  for(var ki=0;ki<apiKeys.length;ki++){\n';
+  src+='    var apiKey=apiKeys[ki];if(!apiKey)continue;\n';
+  src+='    var controller=new AbortController();\n';
+  src+='    var timeoutId=setTimeout(function(){controller.abort()},30000);\n';
+  src+='    try{\n';
+  src+='      var response=await fetch(\"https://api.tavily.com/search\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer \"+apiKey},body:JSON.stringify({query:query.trim(),max_results:Math.min(max_results,10),search_depth:search_depth,include_raw_content:include_raw_content||false,include_domains:include_domains||[],exclude_domains:exclude_domains||[]}),signal:controller.signal});\n';
+  src+='      clearTimeout(timeoutId);\n';
+  src+='      if(!response.ok){var errText=await response.text().catch(function(){return\"\"});var isQuota=(response.status===429||response.status===403||(errText&&(errText.indexOf(\"quota\")>-1||errText.indexOf(\"exceeded\")>-1||errText.indexOf(\"limit\")>-1||errText.indexOf(\"usage\")>-1||errText.indexOf(\"exhausted\")>-1)));if(isQuota){lastError=new Error(\"Key #\"+(ki+1)+\" 额度已用完: \"+errText.substring(0,100));continue;}throw new Error(\"Tavily API错误 (\"+response.status+\"): \"+errText.substring(0,200));}\n';
+  src+='      var data=await response.json();var results=data.results||[];\n';
+  src+='      if(results.length===0)return (data.answer?\"AI摘要: \"+data.answer:\"未找到相关搜索结果。\");\n';
+  src+='      var formatted=results.map(function(r,i){return (i+1)+\". **\"+(r.title||\"无标题\")+\"**\\n   \"+(r.content||\"(无内容)\")+\"\\n   URL: \"+r.url+(r.raw_content?\"\\n    原文长度: ~\"+r.raw_content.length+\"字符\":\"\")}).join(\"\\n\\n\");\n';
+  src+='      if(data.answer)formatted+=\"\\n\\n AI摘要: \"+data.answer;\n';
+  src+='      if(include_raw_content&&results.length>0){formatted+=\"\\n\\n 已抓取\"+results.length+\"个页面原文(raw_content)，可通过 search 工具结果中的 raw_content 字段获取。\";}\n';
+  src+='      return formatted;\n';
+  src+='    }catch(e){clearTimeout(timeoutId);if(e.name===\"AbortError\"){lastError=new Error(\"Key #\"+(ki+1)+\" 搜索超时，尝试下一个...\");continue;}if(e.message&&e.message.indexOf(\"额度已用完\")>-1){lastError=e;continue;}throw e;}\n';
+  src+='  }\n';
+  src+='  throw lastError||new Error(\"所有Tavily API Key均已耗尽，请更换Key或等待额度重置。\");\n';
   src+='}\n';
 
   
@@ -11709,7 +11772,8 @@ async function executeTaskWorkerTool(toolName,args){
       if(!settings.tavily_enabled)throw new Error('Tavily 联网搜索已在设置中关闭。如需使用请前往设置面板开启。');
       var query=args.query||'';
       if(!query)throw new Error('search 需要 query 参数');
-      var resp=await sendToTaskWorker('search',{query:query,max_results:args.max_results||5,search_depth:args.search_depth||'advanced',include_raw_content:args.include_raw_content||false,include_domains:args.include_domains||[],exclude_domains:args.exclude_domains||[],apiKey:settings.tavily_api_key});
+      var apiKeys=(settings.tavily_api_keys&&settings.tavily_api_keys.length>0)?settings.tavily_api_keys:(settings.tavily_api_key?[settings.tavily_api_key]:[]);
+      var resp=await sendToTaskWorker('search',{query:query,max_results:args.max_results||5,search_depth:args.search_depth||'advanced',include_raw_content:args.include_raw_content||false,include_domains:args.include_domains||[],exclude_domains:args.exclude_domains||[],apiKeys:apiKeys});
       if(!resp||!resp.success)throw new Error(resp?resp.error:'搜索执行失败');
       return resp.data;
     }
@@ -13413,7 +13477,7 @@ async function exportAllData(){
       if(f.path==='/config/settings.json'){
         try{
           var s=JSON.parse(f.content);
-          delete s.deepseek_api_key;delete s.tavily_api_key;delete s.environment_variables;
+          delete s.deepseek_api_key;delete s.tavily_api_key;delete s.tavily_api_keys;delete s.environment_variables;
           exportData.files[f.path]=JSON.stringify(s);
         }catch(e){
           exportData.files[f.path]=f.content;
@@ -13519,7 +13583,7 @@ async function resetSystem(){
 	skillCache={skills:{},version:0,activeSkillIds:[]};
     settings={
       deepseek_api_key:settings.deepseek_api_key||'',
-      tavily_api_key:settings.tavily_api_key||'',
+      tavily_api_keys:settings.tavily_api_keys||[],
       base_url:settings.base_url||'https://api.deepseek.com',
       model:settings.model||'deepseek-v4-flash',
       daily_limit:100000,
@@ -13815,6 +13879,8 @@ function initEventBindings(){
   // 保存设置
   var btnSaveSettings=document.getElementById('btnSaveSettings');
   if(btnSaveSettings)btnSaveSettings.addEventListener('click',saveSettings);
+  var btnAddTavilyKey=document.getElementById('btnAddTavilyKey');
+  if(btnAddTavilyKey)btnAddTavilyKey.addEventListener('click',function(){addTavilyKeyInput();});
 
   // === 设置面板折叠/展开 ===
   window.toggleSettingsSection=function(headerEl){
