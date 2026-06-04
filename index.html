@@ -709,7 +709,7 @@ button,label,[role="button"],.file-upload-btn{
         <div class="settings-field"><label for="settingApiKey">DeepSeek API Key</label><input type="password" id="settingApiKey" placeholder="sk-..."></div>
         <div class="settings-field"><label for="settingBaseUrl">Base URL</label><input type="text" id="settingBaseUrl" value="https://api.deepseek.com"></div>
         <div class="settings-field"><label for="settingModel">模型名称</label><input type="text" id="settingModel" value="deepseek-v4-flash"></div>
-        <div class="settings-field"><label for="settingReasoningEffort">思考深度</label><select id="settingReasoningEffort"><option value="low">低（low）</option><option value="medium">中（medium）</option><option value="high">高（high）</option><option value="max" selected>最大（max）</option></select></div>
+        <div class="settings-field"><label for="settingReasoningEffort">思考深度</label><select id="settingReasoningEffort"><option value="off">关闭（off）</option><option value="high">高（high）</option><option value="max" selected>最大（max）</option></select></div>
         <div class="settings-field"><label for="settingMaxTokens">最大输出 Token</label><input type="number" id="settingMaxTokens" value="384000" min="256" max="384000" step="256"></div>
         <div class="range-slider-group">
           <label><span>压缩积极度</span><span class="range-value" id="compressionAggressivenessValue">适中 (~594K)</span></label>
@@ -1158,7 +1158,7 @@ async function _mctsLLM(systemPrompt,userPrompt,temperature,maxTokens,useThinkin
     _mctsTokenBudget.total+=effectiveMax;
   }
   var body={model:settings.model,messages:[{role:'system',content:_safeMessageStr(systemPrompt)},{role:'user',content:_safeMessageStr(userPrompt)}],temperature:temperature,max_tokens:effectiveMax,response_format:{type:'json_object'}};
-  if(useThinking){body.thinking={type:'enabled'};body.reasoning_effort=settings.reasoning_effort||'high';}else{body.thinking={type:'disabled'};}
+  if(useThinking&&settings.reasoning_effort!=='off'){body.thinking={type:'enabled'};body.reasoning_effort=settings.reasoning_effort||'high';}else{body.thinking={type:'disabled'};}
   var ctrl=new AbortController();var tid=setTimeout(function(){ctrl.abort();},useThinking?60000:15000);
   try{
     var resp=await fetch(settings.base_url+'/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},body:JSON.stringify(body),signal:ctrl.signal});
@@ -2612,19 +2612,15 @@ async function _compressOldMessages(messages,modelMaxTokens){
   var _compMaxTokens=Math.min(384,Math.ceil(rawText.length*0.4)+100);
 
   try{
-    var apiKey=settings.deepseek_api_key;
-    var baseUrl=settings.base_url||'https://api.deepseek.com';
-    var fetchResp=await fetch(baseUrl+'/v1/chat/completions',{
+    var msgs=[{role:'system',content:systemPrompt},{role:'user',content:'请压缩以下对话历史：\n\n'+rawText}];
+    var req=_buildLLMRequest(msgs,null,false,'compression');
+    req.body.temperature=0.3;
+    req.body.max_tokens=_compMaxTokens;
+    if(settings.reasoning_effort==='off'){req.body.thinking={type:'disabled'};}else{req.body.thinking={type:'enabled'};req.body.reasoning_effort=settings.reasoning_effort||'max';}
+    var fetchResp=await fetch(req.baseUrl+'/v1/chat/completions',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
-      body:JSON.stringify({
-        model:settings.model||'deepseek-v4-flash',
-        messages:[
-          {role:'system',content:systemPrompt},
-          {role:'user',content:'请压缩以下对话历史：\n\n'+rawText}
-        ],
-        max_tokens:_compMaxTokens,temperature:0.3
-      })
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
+      body:JSON.stringify(req.body)
     });
     if(!fetchResp.ok)return null;
     var data=await fetchResp.json();
@@ -6077,8 +6073,7 @@ async function handleProxyLLMCall(msg){
   var model=settings.model||'deepseek-v4-flash';
   var body={model:model,messages:messages,max_tokens:max_tokens,temperature:0.3};
   if(response_format)body.response_format=response_format;
-  if(payload.reasoning_effort)body.reasoning_effort=payload.reasoning_effort;
-  if(payload.thinking)body.thinking=payload.thinking;
+  if(settings.reasoning_effort==='off'){body.thinking={type:'disabled'};}else{body.thinking={type:'enabled'};body.reasoning_effort=settings.reasoning_effort||'max';}
   var response=await fetch(baseUrl+'/v1/chat/completions',{
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+settings.deepseek_api_key},
@@ -6537,7 +6532,7 @@ function _buildLLMRequest(messages,tools,stream,source){
     var apiKey=settings.deepseek_api_key;
     if(!apiKey)throw new Error('API Key未配置');
     var limit=settings.daily_limit||100000;
-    if(budgetUsed>=limit&&!(source==='evo'&&budgetManager.getAvailableForEvo()>0)){
+    if(budgetUsed>=limit&&!(source==='evo'&&budgetManager.getAvailableForEvo()>0)&&source!=='compression'){
         throw new Error('DAILY_LIMIT_REACHED');
     }
     var tokenLimit=settings.daily_token_limit||222000000;
@@ -6612,7 +6607,9 @@ function _buildLLMRequest(messages,tools,stream,source){
         body.tools=tools.map(function(t){return {type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}};});
         body.tool_choice='auto';
     }
-    if(settings.deep_thinking){
+    if(settings.reasoning_effort==='off'){
+        body.thinking={type:'disabled'};
+    }else if(settings.deep_thinking){
         body.thinking={type:'enabled'};
         body.reasoning_effort=settings.reasoning_effort||'max';
     }
