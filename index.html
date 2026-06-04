@@ -1218,13 +1218,41 @@ async function toolSemanticMemory(args){
   return experiences.map(function(exp,i){
     return (i+1)+'. [语义相似度: '+(exp.similarity*100).toFixed(0)+'%] '+(exp.text.length>2000?exp.text.substring(0,2000)+'\n...(以上为前2000字摘要，全文'+exp.text.length+'字。使用 filesystem create /downloads/memory_fragment.md 写入完整内容后 filesystem read 读取)':exp.text);
   }).join('\n\n');
+	}
+
+// ═══════════════════════════════════════════════════════════════
+// code_run VFS 权限配置（快照注入+选择性回写）
+// ═══════════════════════════════════════════════════════════════
+var CODE_RUN_FS_ACCESS={
+  '/config/':    'none',
+  '/memory/':    'none',
+  '/pipelines/': 'none',
+  '/trash/':     'none',
+  '/uploads/':   'read',
+  '/downloads/': 'readwrite',
+  '/sandbox/':   'readwrite',
+  '/tmp/':       'readwrite'
+};
+function getCodeRunPermission(filePath){
+  var np=normalizePath(filePath);
+  if(!np.endsWith('/'))np+='/';
+  var best='none',bestLen=0;
+  var keys=Object.keys(CODE_RUN_FS_ACCESS);
+  for(var i=0;i<keys.length;i++){
+    if(np.indexOf(keys[i])===0&&keys[i].length>bestLen){
+      best=CODE_RUN_FS_ACCESS[keys[i]];
+      bestLen=keys[i].length;
+    }
+  }
+  return best;
 }
 
 var TOOL_REGISTRY={
   'help':{name:'help',description:'📖 工具目录与动态载入。action: list(列出全部+载入状态) / set(载入工具) / get(完整文档) / unset(卸载工具)。⚠️ 扩展工具需help set载入后才能调用！',executor:'main_thread',
+
     parameters:{type:'object',properties:{action:{type:'string',enum:['list','set','get','unset'],default:'list'},tool_name:{type:'string',description:'工具名(action=set/get/unset时必填)'},id:{type:'string',description:'工具名别名(同tool_name)'}},required:[]}},
-  'filesystem':{name:'filesystem',description:'虚拟文件系统。action: create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/code_run/rename。⚠️多次行操作须按行号从大到小排序。',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','code_run','rename']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'},timeout:{type:'number',default:10000}},required:['action','path']}},
+  'filesystem':{name:'filesystem',description:'虚拟文件系统。action: create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/code_run/rename。⚠️多次行操作须按行号从大到小排序。code_run支持沙箱内读写VFS(权限控制)。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','code_run','rename']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'},timeout:{type:'number',default:10000},sandbox_dir:{type:'string',description:'沙箱工作目录(默认/sandbox/)'}},required:['action','path']}},
   'search':{name:'search',description:'网络搜索。返回标题/URL/摘要/可选原文。需Tavily API Key。',executor:'task_worker',
     parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词'},max_results:{type:'number',default:5,maximum:10},search_depth:{type:'string',enum:['basic','advanced'],default:'advanced'},include_raw_content:{type:'boolean',default:false},include_domains:{type:'array',items:{type:'string'}},exclude_domains:{type:'array',items:{type:'string'}}},required:['query']}},
   'calculator':{name:'calculator',description:'数学计算。支持四则/三角函数/对数/幂运算。内置递归下降求值器(mathjs优先,零eval降级)。',executor:'main_thread',
@@ -1337,7 +1365,7 @@ chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / 
 | delete_lines | 删除行范围 | path, line, endLine(0=末尾) |
 | replace_lines | 替换行范围 | path, line, endLine, content(按\\n拆分逐行替换) |
 | rename | 重命名 | path, new_name, overwrite |
-| code_run | 执行代码 | path(.js或.py), timeout(默认10s) |
+| code_run | 执行代码(可读写VFS) | path(.js或.py), timeout(默认10s), sandbox_dir |
 
 ### read 模式 (mode)
 - **auto**(默认): 小文件全量返回; 传line/endLine时自动切换chunked
@@ -1354,12 +1382,23 @@ chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / 
 `+"`"+`filesystem action="rename" path="/downloads/old.txt" new_name="new.txt"`+"`"+`
 `+"`"+`filesystem action="code_run" path="/downloads/script.py"`+"`"+`
 
+### code_run VFS权限
+沙箱内代码可读写虚拟文件系统，受权限控制：
+- /config/、/memory/、/pipelines/、/trash/ — 🔒 不可见
+- /uploads/ — 👁 只读可读取
+- /downloads/、/sandbox/、/tmp/ — ✏️ 可读写
+- /tmp/ 下的文件在代码执行后自动清理
+- JS代码内用 fs.read(path) 和 fs.write(path,content) 读写（同步）
+- Python代码内用原生 open(path).read() 和 open(path,'w').write(content)
+
 ### ⚠️【铁律】行操作排序
 同一文件连续多次 replace_lines / delete_lines / insert 必须按行号从大到小排序执行！每次操作后行号全局偏移，从底向上才能杜绝错位和重复。
 
 ### 路径说明
-- /uploads/ — 用户上传文件
-- /downloads/ — 生成产物(chart/PDF/Word等)
+- /uploads/ — 用户上传文件(code_run中只读)
+- /downloads/ — 生成产物(chart/PDF/Word等,code_run中可读写)
+- /sandbox/ — 代码执行工作区(code_run中可读写)
+- /tmp/ — 临时文件(code_run中可读写,执行后自动清理)
 - /trash/ — 回收站(安全删除)
 - /memory/ — 系统记忆存储
 - /config/ — 配置文件`,
@@ -3144,6 +3183,43 @@ async function getFileMeta(path){
     return null;
   }
   return {path:record.path,size:record.size,created_at:record.created_at,updated_at:record.updated_at,accessed_at:record.accessed_at,compressed:record.compressed,isDir:record.content==='__DIR__'};
+}
+
+// === code_run 辅助：列出所有VFS路径 ===
+async function listAllVfsPaths(){
+  var d=await getDB();
+  return new Promise(function(resolve,reject){
+    var transaction=d.transaction('files','readonly');
+    var store=transaction.objectStore('files');
+    var results=[];
+    var request=store.openCursor();
+    request.onsuccess=function(event){
+      var cursor=event.target.result;
+      if(cursor){
+        if(cursor.value.content!=='__DIR__')results.push(cursor.value.path);
+        cursor.continue();
+      }else{resolve(results);}
+    };
+    request.onerror=function(){reject(request.error);};
+  });
+}
+
+// === code_run 辅助：按白名单收集VFS快照 ===
+async function collectVfsSnapshot(sandboxDir){
+  var snapshot={};
+  var allPaths=await listAllVfsPaths();
+  for(var i=0;i<allPaths.length;i++){
+    var fp=allPaths[i];
+    var perm=getCodeRunPermission(fp);
+    if(perm==='none')continue;
+    var content=await readFile(fp);
+    if(content===null)continue;
+    snapshot[fp]={content:content,permission:perm};
+  }
+  var sd=sandboxDir||'/sandbox/';
+  if(!sd.endsWith('/'))sd+='/';
+  snapshot[sd]={content:'__DIR__',permission:'readwrite'};
+  return snapshot;
 }
 
 // ================================================================
@@ -4974,65 +5050,84 @@ function buildTaskWorkerSource(){
   src+='      case "pca_update":_pcaUpdate(params.embeddings);result={vectors:PCA_VECS,dim:PCA_DIM};break;\n';
   src+='      default:throw new Error("Unknown task type: "+type);\n';
   src+='    }\n';
-  src+='    self.postMessage({id:id,success:true,data:result,duration:Date.now()-startTime});\n';
+  src+='    var _respData=result;\n';
+  src+='    var _respFsChanges=null;\n';
+  src+='    if(result&&typeof result==="object"&&result.fs_changes){\n';
+  src+='      _respData=result.result;\n';
+  src+='      _respFsChanges=result.fs_changes;\n';
+  src+='    }\n';
+  src+='    self.postMessage({id:id,success:true,data:_respData,fs_changes:_respFsChanges,duration:Date.now()-startTime});\n';
   src+='  }catch(error){self.postMessage({id:id,success:false,error:error.message,duration:Date.now()-startTime});}\n';
   src+='};\n';
   src+='\n';
   
-  // === executeCode - JavaScript sandbox ===
+  // === executeCode - JS(无沙箱直接执行)+Python(Pyodide)+VFS快照 ===
   src+='async function executeCode(params){\n';
   src+='  var language=params.language,code=params.code,timeout=params.timeout||10000;\n';
+  src+='  var fsSnapshot=params.fs_snapshot||{};\n';
+  src+='\n';
   src+='  if(language==="javascript"){\n';
-  src+='    return new Promise(function(resolve,reject){\n';
-  // 使用模板构建sandbox代码 — 在Worker内部构建嵌套Worker的Blob
-  src+='      var sandboxCode="self.onmessage=function(e){';
-src+='var forbidden=[';
-src+='\\"document\\",\\"window\\",\\"globalThis\\",\\"self\\",\\"fetch\\",';
-src+='\\"XMLHttpRequest\\",\\"WebSocket\\",\\"indexedDB\\",\\"localStorage\\",';
-src+='\\"sessionStorage\\",\\"Worker\\",\\"importScripts\\",\\"Function\\",\\"eval\\"';
-src+='];';
-src+='var sandbox={};forbidden.forEach(function(k){';
-src+='Object.defineProperty(sandbox,k,{get:function(){';
-src+='throw new Error(\\"禁止访问: \\"+k)},set:function(){}})});';
-src+='sandbox.console={log:function(){';
-src+='var args=Array.prototype.slice.call(arguments);';
-src+='self.postMessage({type:\\"stdout\\",data:args.join(\\" \\")})';
-src+='},error:function(){';
-src+='var args=Array.prototype.slice.call(arguments);';
-src+='self.postMessage({type:\\"stderr\\",data:args.join(\\" \\")})}};';
-src+='sandbox.setTimeout=function(fn,delay){';
-src+='if(delay>5000)throw new Error(\\"setTimeout最大5秒\\");';
-src+='return setTimeout(fn,delay)};';
-src+='sandbox.setInterval=function(){throw new Error(\\"setInterval不允许\\")};';
-src+='sandbox.Math=Math;sandbox.JSON=JSON;sandbox.Date=Date;';
-src+='sandbox.String=String;sandbox.Number=Number;sandbox.Array=Array;';
-src+='sandbox.Object=Object;sandbox.RegExp=RegExp;';
-src+='sandbox.parseInt=parseInt;sandbox.parseFloat=parseFloat;';
-	src+='sandbox.isNaN=isNaN;sandbox.isFinite=isFinite;';
-		src+='sandbox.CONTEXT_FILES=e.data.context_files||{};';
-		src+='var __savedConsole=self.console;var __realEval=eval;try{self.console=sandbox.console;var __result=(function(sandbox,_eval){with(sandbox){return _eval(e.data.code)}})(sandbox,__realEval);';
-	src+='Promise.resolve(__result).then(function(r){self.postMessage({success:true,result:String(r)})}).catch(function(err){self.postMessage({success:false,error:err.message})}).finally(function(){self.console=__savedConsole})}';
-	src+='catch(e){self.postMessage({success:false,error:e.message});self.console=__savedConsole}}\";\n';
-
-  src+='      var blob=new Blob([sandboxCode],{type:"application/javascript"});\n';
-  src+='      var subWorker=new Worker(URL.createObjectURL(blob));\n';
-  src+='      var timer=setTimeout(function(){subWorker.terminate();reject(new Error("执行超时"))},timeout);\n';
-  src+='      var _stdout=[];subWorker.onmessage=function(e){if(e.data.type==="stdout"){_stdout.push(e.data.data);return}if(e.data.type==="stderr")return;clearTimeout(timer);subWorker.terminate();if(e.data.success)resolve(_stdout.length>0?_stdout.join("\\n")+"\\n"+e.data.result:e.data.result);else reject(new Error(e.data.error))};\n';
-  src+='      subWorker.postMessage({code:code,context_files:params.context_files||{}});\n';
+  src+='    var _vfs=new Map();\n';
+  src+='    for(var _fp in fsSnapshot){\n';
+  src+='      if(fsSnapshot[_fp].content!=="__DIR__"){\n';
+  src+='        _vfs.set(_fp,fsSnapshot[_fp].content);\n';
+  src+='      }\n';
+  src+='    }\n';
+  src+='    var _stdout=[];\n';
+  src+='    var api={\n';
+  src+='      fs:{\n';
+  src+='        read:function(p){if(!_vfs.has(p))throw new Error("文件不存在: "+p);return _vfs.get(p);},\n';
+  src+='        write:function(p,content){_vfs.set(p,content);return true;},\n';
+  src+='        exists:function(p){return _vfs.has(p);},\n';
+  src+='        list:function(dir){var r=[];_vfs.forEach(function(v,k){if(!dir||k.indexOf(dir)===0)r.push(k);});return r;},\n';
+  src+='        delete:function(p){return _vfs.delete(p);}\n';
+  src+='      },\n';
+  src+='      console:{log:function(){_stdout.push(Array.prototype.slice.call(arguments).join(" "));}},\n';
+  src+='      CONTEXT_FILES:params.context_files||{},\n';
+  src+='      setTimeout:self.setTimeout\n';
+  src+='    };\n';
+  src+='    var _result=await Promise.race([\n';
+  src+='      Promise.resolve(new Function("api","return (function(){"+code+"})()")(api)),\n';
+  src+='      new Promise(function(_,reject){setTimeout(function(){reject(new Error("执行超时"))},timeout);})\n';
+  src+='    ]);\n';
+  src+='    var _fsChanges=[];\n';
+  src+='    _vfs.forEach(function(v,k){\n';
+  src+='      var orig=fsSnapshot[k];\n';
+  src+='      if(!orig||orig.content!==v)_fsChanges.push({type:"write",path:k,content:v});\n';
   src+='    });\n';
+  src+='    for(var _op in fsSnapshot){\n';
+  src+='      if(fsSnapshot[_op].content!=="__DIR__"&&!_vfs.has(_op)){\n';
+  src+='        _fsChanges.push({type:"delete",path:_op});\n';
+  src+='      }\n';
+  src+='    }\n';
+  src+='    var _out=_stdout.length>0?_stdout.join("\\n")+"\\n":"";\n';
+  src+='    return {result:_out+(_result!==undefined?String(_result):""),fs_changes:_fsChanges};\n';
   src+='  }else if(language==="python"){\n';
   src+='    if(!pyodide){\n';
   src+='      try{await loadScript("pyodide",["https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js","https://unpkg.com/pyodide@0.25.0/pyodide.js"],"loadPyodide");pyodide=await loadPyodide({indexURL:"https://cdn.jsdelivr.net/pyodide/v0.25.0/full/"})}catch(e){throw new Error("Python执行需要加载Pyodide，当前环境不支持。请使用JavaScript。")}\n';
   src+='    }\n';
-  src+='    var pyOut="";pyodide.setStdout({batched:function(t){pyOut+=String(t)+"\\\\n"}});\n';
-  src+='    var result=await Promise.race([pyodide.runPythonAsync(code),new Promise(function(_,reject){return setTimeout(function(){reject(new Error(\"Python执行超时\"))},timeout)})]);\n';
-  src+='    return pyOut+(result!==undefined?String(result):"");\n';
-
+  src+='    for(var _fp2 in fsSnapshot){\n';
+  src+='      var _entry=fsSnapshot[_fp2];\n';
+  src+='      if(_entry.content==="__DIR__")continue;\n';
+  src+='      var _dir=_fp2.substring(0,_fp2.lastIndexOf("/"));\n';
+  src+='      if(_dir&&_dir!=="/"){try{pyodide.FS.mkdirTree(_dir);}catch(_e){}}\n';
+  src+='      pyodide.FS.writeFile(_fp2,_entry.content);\n';
+  src+='    }\n';
+  src+='    var pyOut="";pyodide.setStdout({batched:function(t){pyOut+=String(t)+"\\n"}});\n';
+  src+='    var result=await Promise.race([pyodide.runPythonAsync(code),new Promise(function(_,reject){return setTimeout(function(){reject(new Error("Python执行超时"))},timeout)})]);\n';
+  src+='    var _pyChanges=[];\n';
+  src+='    for(var _fp3 in fsSnapshot){\n';
+  src+='      if(fsSnapshot[_fp3].content==="__DIR__")continue;\n';
+  src+='      try{\n';
+  src+='        var _pyNew=pyodide.FS.readFile(_fp3,{encoding:"utf8"});\n';
+  src+='        if(_pyNew!==fsSnapshot[_fp3].content)_pyChanges.push({type:"write",path:_fp3,content:_pyNew});\n';
+  src+='      }catch(_e2){_pyChanges.push({type:"delete",path:_fp3});}\n';
+  src+='    }\n';
+  src+='    return {result:pyOut+(result!==undefined?String(result):""),fs_changes:_pyChanges};\n';
   src+='  }\n';
   src+='  throw new Error("不支持的语言: "+language);\n';
   src+='}\n';
-  src+='\n';
-  
+
 		// === MBSRP 超密度嵌入引擎（Multi-Basis Sparse Random Projection）===
 		// 384维 | 16个独立高斯随机投影基 | 20+特征类型 | TF-IDF动态加权 | 位置编码
 		// 目标：以纯JS算法接近80MB MiniLM模型的语义检索质量
@@ -6213,7 +6308,13 @@ function handleTaskWorkerMessage(event){
     var entry=pendingWorkerRequests.get(msg.id);
     pendingWorkerRequests.delete(msg.id);
     if(entry&&entry.resolve){
-      if(msg.success)entry.resolve(msg);
+      if(msg.success){
+        if(msg.fs_changes){
+          entry.resolve({success:true,data:{result:msg.data,fs_changes:msg.fs_changes}});
+        }else{
+          entry.resolve(msg);
+        }
+      }
       else entry.reject(new Error(msg.error||'任务Worker返回失败'));
     }
   }
@@ -6684,11 +6785,55 @@ async function toolFilesystem(args){
       if(!runLang)throw new Error('code_run 不支持 .'+runExt+' 文件。仅 .js 和 .py');
       var runCode=await readFile(path);
       if(runCode===null)throw new Error('文件不存在: '+path+'。请先 create 创建。');
-      // ★ 原始代码直接传给 Worker，由 Worker 内部沙箱执行，主线程不 eval
+
+      // ★ 构建VFS快照：按白名单收集文件，注入沙箱
+      var sandboxDir=args.sandbox_dir||('/sandbox/'+(currentConversationId||'default')+'/');
+      if(!sandboxDir.endsWith('/'))sandboxDir+='/';
+      var vfsSnapshot=await collectVfsSnapshot(sandboxDir);
+
       var runTimeout=runLang==='python'?60000:10000;
-      var runResp=await sendToTaskWorker('code_run',{language:runLang,code:runCode,timeout:args.timeout||runTimeout,context_files:args.context_files||{}});
+      var runResp=await sendToTaskWorker('code_run',{
+        language:runLang,
+        code:runCode,
+        timeout:args.timeout||runTimeout,
+        context_files:args.context_files||{},
+        fs_snapshot:vfsSnapshot,
+        sandbox_dir:sandboxDir
+      });
       if(!runResp||!runResp.success)throw new Error(runResp?runResp.error:'代码执行失败');
-      return runResp.data;
+
+      // ★ 选择性回写：只回写 readwrite 目录的变更
+      var output=runResp.data;
+      var fsChanges=(output&&output.fs_changes)?output.fs_changes:[];
+      var resultText=(output&&output.result)?output.result:(typeof output==='string'?output:JSON.stringify(output));
+      var writeCount=0,skipCount=0;
+      for(var ci=0;ci<fsChanges.length;ci++){
+        var change=fsChanges[ci];
+        var perm=getCodeRunPermission(change.path);
+        if(perm!=='readwrite'){skipCount++;continue;}
+        try{
+          if(change.type==='write'||change.type==='create'){
+            await createFile(change.path,change.content||'');
+            writeCount++;
+          }else if(change.type==='delete'){
+            await deleteFile(change.path);
+            writeCount++;
+          }
+        }catch(e){debugLogger.warn('code_run 回写失败: '+change.path+' '+e.message);}
+      }
+
+      // ★ 清理 /tmp/ 目录
+      for(var ti=0;ti<fsChanges.length;ti++){
+        var tc=fsChanges[ti];
+        if(tc.path.indexOf('/tmp/')===0){
+          try{await deleteFile(tc.path);}catch(e){}
+        }
+      }
+
+      var metaNote='';
+      if(writeCount>0)metaNote+='\n[VFS回写: '+writeCount+'个文件]';
+      if(skipCount>0)metaNote+='\n[VFS跳过(只读): '+skipCount+'个文件]';
+      return resultText+metaNote;
     }
 
     default:throw new Error('未知的文件操作: '+action);
