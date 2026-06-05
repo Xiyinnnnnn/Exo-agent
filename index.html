@@ -10249,7 +10249,7 @@ async function _execAgentNode(nodeDef,state,def,runId,nodeId){
 
   for(var round=0;round<maxRounds;round++){
     // 评估
-    var critiquePrompt=(cl.critique_prompt||'你是严格审查官。评估产出质量。')+'\n\n## 产出\n'+currentOutput.substring(0,8000);
+    var critiquePrompt=(cl.critique_prompt||'你是严格审查官。评估产出质量。')+'\\n\\n## 产出\\n'+currentOutput;
     var critiqueResult=await _subAgentLLM(critiquePrompt,'请给出评分(0-1)和改进建议。输出JSON: {"score":0.85,"issues":["..."],"passed":true|false}',cl.tools||[],0.2,0.8,3,nodeId+'_critique',runId);
     await _wtTrace(runId,nodeId,'round_'+round+'_critique.json',critiqueResult.content);
 
@@ -10265,7 +10265,7 @@ async function _execAgentNode(nodeDef,state,def,runId,nodeId){
     if(passed)break;
 
     // 修正
-    var revisionPrompt=(cl.revision_prompt||'你是修正师。基于评估报告修正产出。')+'\n\n## 评估报告\n'+critiqueResult.content+'\n\n## 当前产出\n'+currentOutput.substring(0,6000);
+    var revisionPrompt=(cl.revision_prompt||'你是修正师。基于评估报告修正产出。')+'\\n\\n## 评估报告\\n'+critiqueResult.content+'\\n\\n## 当前产出\\n'+currentOutput;
     var revisionResult=await _subAgentLLM(revisionPrompt,'请修正产出',cl.tools||['filesystem'],0.5,0.85,4,nodeId+'_revise',runId);
     await _wtTrace(runId,nodeId,'round_'+round+'_revision.json',revisionResult.content);
     currentOutput=revisionResult.content;
@@ -12545,7 +12545,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
           var _evalHistoryCtx = _evalHistory ? '\\n\\n[前序评估历史]\\n'+_evalHistory : '';
           critiqueMessages.push({
             role:'user',
-            content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent.substring(0,8000)+_toolCallSummary+_evalHistoryCtx
+            content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent+_toolCallSummary+_evalHistoryCtx
           });
 
 
@@ -12651,7 +12651,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
             }
           }
           var evalMatch=critiqueContent.match(/---评估报告---\s*([\s\S]*)/);
-          var evalReport=evalMatch?evalMatch[1].trim():critiqueContent.substring(0,2000);
+          var evalReport=evalMatch?evalMatch[1].trim():critiqueContent;
           critique.block.textContent=' 审查报告'+iterLabelSuffix+'\\n\\n'+(evalReport||'(审查完成，未发现问题)');
           _evalHistory += '\\n---第'+(evalIter+1)+'轮审查---\\n'+evalReport;
 
@@ -12674,7 +12674,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
           for(var _ri=0; _ri<_preUserMessages.length; _ri++){revisionMessages.push(_preUserMessages[_ri]);}
           revisionMessages.push({
             role:'user',
-            content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent.substring(0,8000)+_toolCallSummary+'\\n\\n[审查报告]\\n'+evalReport
+            content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent+_toolCallSummary+'\\n\\n[审查报告]\\n'+evalReport
           });
 
 
@@ -13587,18 +13587,37 @@ async function resetSystem(){
       daily_token_limit:222000000,
       reserve_ratio:0.5,
       environment_variables:{},
-    custom_api_enabled:true,
-    mcp_enabled:true,
-    mcp_default_url:'',
-    email_enabled:false,
-    smtp_host:'smtp.gmail.com',
-    smtp_port:587,
-    smtp_user:'',
-    smtp_pass:'',
-    smtp_relay_url:'',
-    geo_enabled:true,
       evolution_enabled:true,
       debug_level:'info',
+      reasoning_effort:'max',
+      max_tokens:384000,
+      deep_thinking:true,
+      break_armor_enabled:false,
+      compression_aggressiveness:50,
+      self_critique_rounds:1,
+      tavily_enabled:true,
+      custom_api_enabled:true,
+      mcp_enabled:true,
+      mcp_default_url:'',
+      email_enabled:false,
+      smtp_host:'smtp.gmail.com',
+      smtp_port:587,
+      smtp_user:'',
+      smtp_pass:'',
+      smtp_relay_url:'',
+      geo_enabled:true,
+      sql_enabled:true,
+      notify_enabled:false,
+      mcp_connections:[],
+      user_functions:[],
+      user_func_enabled:true,
+      speech_enabled:true,
+      calendar_enabled:true,
+      calendar_auto_wake:false,
+      calendar_wake_prompt:'',
+      calendar_wake_interval:30,
+      stt_endpoint:'',
+      pipeline_enabled:true,
       mcts_fast_token_budget:22200000,
       mcts_standard_token_budget:44400000,
       pipeline_token_budget:111000000
