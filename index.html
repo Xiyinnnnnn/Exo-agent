@@ -4394,7 +4394,7 @@ function importExtConfig(){
   _applyExtConfig(json);
 }
 
-function _applyExtConfig(json){
+async function _applyExtConfig(json){
   try{
     var cfg=JSON.parse(json);
     if(cfg.mcp_connections&&Array.isArray(cfg.mcp_connections))settings.mcp_connections=cfg.mcp_connections;
@@ -4404,7 +4404,8 @@ function _applyExtConfig(json){
     if(cfg.mcp_enabled!==undefined){settings.mcp_enabled=!!cfg.mcp_enabled;var cb3=document.getElementById('settingMcpEnabled');if(cb3)cb3.checked=settings.mcp_enabled;}
     _renderMcpConnections();
     _renderUserFunctions();
-    showToast(' 配置已应用: '+(settings.mcp_connections||[]).length+' MCP, '+(settings.user_functions||[]).length+' 函数','success');
+    await saveSettings();
+    showToast(' 配置已应用并保存: '+(settings.mcp_connections||[]).length+' MCP, '+(settings.user_functions||[]).length+' 函数','success');
   }catch(e){showToast('JSON解析失败: '+e.message,'error');}
 }
 
@@ -14920,7 +14921,9 @@ async function exportAllData(){
   try{
     showToast('正在导出数据...','info');
     var allFiles=await idbTransaction('files','readonly',function(store){return store.getAll();});
-    var exportData={version:1,export_date:new Date().toISOString(),files:{}};
+    var allConvs=await idbTransaction('conversations','readonly',function(store){return store.getAll();});
+    var allMsgs=await idbTransaction('messages','readonly',function(store){return store.getAll();});
+    var exportData={version:2,export_date:new Date().toISOString(),files:{},conversations:allConvs,messages:allMsgs};
     for(var ei=0;ei<allFiles.length;ei++){
       var f=allFiles[ei];
       if(f.path==='/config/settings.json'){
@@ -14976,8 +14979,24 @@ async function importAllData(jsonData){
           await createFile(path,content);
         }
       }
+      // 导入对话历史（如果备份中有）
+      if(importData.conversations&&Array.isArray(importData.conversations)){
+        var db2=await getDB();
+        var tx2=db2.transaction(['conversations','messages'],'readwrite');
+        // 清空旧的
+        var allOld=await new Promise(function(res,rej){var r=tx2.objectStore('conversations').getAll();r.onsuccess=function(){res(r.result);};r.onerror=rej;});
+        for(var oi=0;oi<allOld.length;oi++)tx2.objectStore('conversations').delete(allOld[oi].id);
+        if(importData.messages&&Array.isArray(importData.messages)){
+          var allOldMsgs=await new Promise(function(res,rej){var r=tx2.objectStore('messages').getAll();r.onsuccess=function(){res(r.result);};r.onerror=rej;});
+          for(var mi=0;mi<allOldMsgs.length;mi++)tx2.objectStore('messages').delete(allOldMsgs[mi].id);
+          for(var mi=0;mi<importData.messages.length;mi++)tx2.objectStore('messages').put(importData.messages[mi]);
+        }
+        for(var ci=0;ci<importData.conversations.length;ci++)tx2.objectStore('conversations').put(importData.conversations[ci]);
+        await new Promise(function(res,rej){tx2.oncomplete=res;tx2.onerror=rej;});
+      }
       clearInterval(lockRenewalTimer);releaseFileLock('main_thread');
       await loadSettings();
+      await loadConversationsFromDB();
       await refreshSkillCache();
       await loadDailyUsage();
       updateBudgetDisplay();
