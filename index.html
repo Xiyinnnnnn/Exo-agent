@@ -13443,16 +13443,46 @@ async function processFlowTurn(userText, cs, taskId){
 
   try{
     if(session.phase==='aligning'){
+      session._projectId=session._projectId||'proj_'+Date.now()+'_'+Math.random().toString(36).substr(2,6);
       if(!session.supervisorMessages){
-        var supSystem = buildSupervisorSystemPrompt(session, null);
-        session.supervisorMessages = [
-          {role:'system',content:supSystem},
-          {role:'user',content:'用户任务: '+session.task+'\n\n对齐阶段。你的工作:\n1. 分析需求。需要确认的向用户提问。\n2. 需求清晰后，**必须调用 flow_align_done** (criteria=验收标准列表4~8条)。\n   调用后立即进入执行阶段，你本轮输出结束。\n\n直接对用户说话。'}
-        ];
+        // 调用 reqalign 做结构化需求分析
+        var _alignRaw;try{_alignRaw=await toolReqalign({project_id:session._projectId,action:'analyze',user_request:session.task});}catch(ex){_alignRaw='分析出错: '+ex.message;}
+        // 立即做一次收敛检查——如果用户需求本身已经足够清晰，跳过对话直接锁定
+        var _ccResult;try{_ccResult=await toolReqalign({project_id:session._projectId,action:'check_convergence',user_answers:{auto_initial:'初次分析，用户请求已包含完整上下文'}});}catch(ex){_ccResult='';}
+        var _shouldSkip=_ccResult.indexOf('已收敛')>=0||_ccResult.indexOf('converged')>=0||_ccResult.indexOf('ready_for_spec')>=0;
+        if(_shouldSkip){
+          // 需求已足够清晰，跳过对话直接进入执行阶段
+          await toolReqalign({project_id:session._projectId,action:'generate_confirmation',
+            confirmation_text:'# 需求确认书\n\n## 用户原始需求\n'+session.task+'\n\n## 分析结果\n需求清晰明确，无需要澄清的点。'});
+          await toolReqalign({project_id:session._projectId,action:'lock'});
+          var _supSystem0=buildSupervisorSystemPrompt(session,null);
+          session.supervisorMessages=[
+            {role:'system',content:_supSystem0},
+            {role:'user',content:'用户任务: '+session.task+'\n\n✅ 需求分析结果: 需求已足够清晰，已自动锁定。\n请根据以下方向生成4-8条可量化的验收标准，然后调用 flow_align_done 进入执行阶段:\n1. 功能完整性 2. 正确性 3. 可用性 4. 性能 5. 代码质量\n\n直接调用 flow_align_done，不要提问。'}
+          ];
+        }else{
+          // 有模糊点，将 reqalign 的分析结果交给 supervisor，让它逐条提问
+          var _supSystem1=buildSupervisorSystemPrompt(session,null);
+          session.supervisorMessages=[
+            {role:'system',content:_supSystem1},
+            {role:'user',content:'用户任务: '+session.task+'\n\n对齐阶段。以下为需求分析结果，将需要确认的问题逐条向用户提问:\n'+_alignRaw+'\n\n需求清晰后调用 flow_align_done (criteria=验收标准列表4~8条，每条可量化)。'}
+          ];
+        }
       }else{
         if(!window._skipAddUser)_addUserMessageToFlow(userText, messagesDiv);
-        session.supervisorMessages[0].content = buildSupervisorSystemPrompt(session, null);
-        session.supervisorMessages.push({role:'user',content:'用户回复: '+userText});
+        // 用户回复后，交给 reqalign 做收敛检查，结果作为 supervisor 的参考
+        var _cvRaw;try{_cvRaw=await toolReqalign({project_id:session._projectId,action:'check_convergence',user_answers:{user_response:userText}});}catch(ex){_cvRaw='';}
+        var _converged=_cvRaw.indexOf('已收敛')>=0||_cvRaw.indexOf('converged')>=0||_cvRaw.indexOf('ready_for_spec')>=0;
+        session.supervisorMessages[0].content=buildSupervisorSystemPrompt(session,null);
+        if(_converged){
+          // 需求已收敛，锁定+通知 supervisor 调用 flow_align_done
+          await toolReqalign({project_id:session._projectId,action:'generate_confirmation',
+            confirmation_text:'# 需求确认书\n\n## 用户原始需求\n'+session.task+'\n\n## 对齐过程\n用户已确认所有需求点。'});
+          await toolReqalign({project_id:session._projectId,action:'lock'});
+          session.supervisorMessages.push({role:'user',content:'用户回复: '+userText+'\n\n✅ 需求已收敛并自动锁定。调用 flow_align_done (criteria=验收标准列表4~8条，每条可量化) 进入执行阶段。'});
+        }else{
+          session.supervisorMessages.push({role:'user',content:'用户回复: '+userText+'\n\n仍有待澄清的点，继续追问。\n\n参考:\n'+_cvRaw});
+        }
       }
 
       var supTools = getActiveTools('supervisor');
