@@ -8897,6 +8897,12 @@ function getToolsDescription(role){
   return result;
 }
 
+async function _withTimeout(promise,ms,label){
+  var timer;
+  var timeout=new Promise(function(_,rej){timer=setTimeout(function(){rej(new Error('工具执行超时('+ms/1000+'s): '+label));},ms);});
+  try{return await Promise.race([promise,timeout]);}finally{clearTimeout(timer);}
+}
+
 async function executeTool(toolCall,artifacts){
   var toolName=toolCall.function.name;
   var toolDef=TOOL_REGISTRY[toolName];
@@ -10856,7 +10862,7 @@ async function _execEvalNode(nodeDef,state,def,runId,nodeId){
     try{
       // ★ 强制结构化评分：四个维度独立打分
       var ep='## 评分规则\n'+rule.prompt+'\n\n## 评分标准(0-1)\n- 0.0-0.3: 严重不符,有错误或完全偏离\n- 0.4-0.6: 部分符合,但有明显缺陷\n- 0.7-0.8: 基本符合,小问题\n- 0.9-1.0: 完全符合,高质量\n\n## 待评估内容\n'+_evalContent.substring(0,4000)+'\n\n## 输出\n必须输出JSON,score必须是真实评分,不能总是给0.7: {"score":0.42,"passed":false,"issues":["具体问题1"],"suggestion":"改进建议"}';
-      var er=await _subAgentLLM('你是极严格的评估员。99%的产出有缺陷,真实评分应在0.3-0.7之间。只输出JSON。',ep,[],0.1,0.5,2,nodeId+'_eval',runId);
+      var er=await _subAgentLLM('你是公正的评估员。根据产出质量给出真实评分(0-1)。只输出JSON。',ep,[],0.1,0.5,2,nodeId+'_eval',runId);
       var sc=null,passed=false,issues=[];
       try{var ej=JSON.parse(er.content);sc=ej.score;passed=ej.passed;issues=ej.issues||[];}catch(e){
         var m2=er.content.match(/"score"\s*:\s*([0-9.]+)/);if(m2)sc=parseFloat(m2[1]);
@@ -12208,18 +12214,24 @@ async function _persistActiveSkillIds(){
     }
   }catch(e){debugLogger.warn('持久化activeSkillIds失败: '+e.message);}
 }
-
+var _searchCache=new Map();
 async function executeTaskWorkerTool(toolName,args){
   switch(toolName){
     case 'search':{
       if(!settings.tavily_enabled)throw new Error('Tavily 联网搜索已在设置中关闭。如需使用请前往设置面板开启。');
       var query=args.query||'';
       if(!query)throw new Error('search 需要 query 参数');
+      var _cacheKey=query+'|'+(args.max_results||5)+'|'+(args.include_raw_content?'1':'0');
+      var _cached=_searchCache.get(_cacheKey);
+      if(_cached&&(Date.now()-_cached.ts<300000))return _cached.data;
       var apiKeys=(settings.tavily_api_keys&&settings.tavily_api_keys.length>0)?settings.tavily_api_keys:(settings.tavily_api_key?[settings.tavily_api_key]:[]);
       var resp=await sendToTaskWorker('search',{query:query,max_results:args.max_results||5,search_depth:args.search_depth||'advanced',include_raw_content:args.include_raw_content||false,include_domains:args.include_domains||[],exclude_domains:args.exclude_domains||[],apiKeys:apiKeys});
       if(!resp||!resp.success)throw new Error(resp?resp.error:'搜索执行失败');
+      if(_searchCache.size>=50){var _ek=_searchCache.keys().next().value;_searchCache.delete(_ek);}
+      _searchCache.set(_cacheKey,{ts:Date.now(),data:resp.data});
       return resp.data;
     }
+
     case 'fuzzy_search':return await toolFuzzySearch(args);
     case 'ocr':{
       var imgContent=args.image_base64;
@@ -13021,7 +13033,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
 
           var critiqueMessages=[{
             role:'system',
-            content:'你是严厉的答案审查官。你的职责是找出草稿答案的问题并进行事实核查。\\n\\n审查铁律:\\n- 必须找出至少2个具体问题。草稿优秀时在\"轻微问题\"中给优化建议\\n- 每个问题必须引用草稿原文作为证据\\n- 禁止\"整体良好\"\"基本正确\"等模糊措辞\\n- 如果草稿包含代码/数据/可验证结论，你必须调用工具进行事实核查（如code_runner运行代码验证、search查找权威数据对比）\\n- 评分必须苛刻\\n\\n严格按此格式输出:\\n\\n---评估报告---\\n\\n###  严重问题\\n1. [描述] — 证据:[原文] — 修正方向:[建议]\\n(无则写\"无严重问题\")\\n\\n###  轻微问题\\n1. [描述] — 证据:[原文] — 优化:[建议]\\n\\n### 五维评分(1-10)\\n准确度:X 完整性:X 逻辑性:X 清晰度:X 简洁度:X\\n\\n注意:只输出评估报告。禁止输出修正后的答案。'
+            content:'你是严厉的答案审查官。你的职责是找出草稿答案的问题并进行事实核查。\\n\\n审查铁律:\\n- 找出所有存在的问题（如有），没有则据实报告\\n- 每个问题必须引用草稿原文作为证据\\n- 禁止\"整体良好\"\"基本正确\"等模糊措辞\\n- 如果草稿包含代码/数据/可验证结论，你必须调用工具进行事实核查（如code_runner运行代码验证、search查找权威数据对比）\\n- 评分必须真实，不是必须苛刻\\n\\n严格按此格式输出:\\n\\n---评估报告---\\n\\n###  严重问题\\n1. [描述] — 证据:[原文] — 修正方向:[建议]\\n(无则写\"无严重问题\")\\n\\n###  轻微问题\\n1. [描述] — 证据:[原文] — 优化:[建议]\\n\\n### 五维评分(1-10)\\n准确度:X 完整性:X 逻辑性:X 清晰度:X 简洁度:X\\n\\n注意:只输出评估报告。禁止输出修正后的答案。'
           }];
           for(var _ci=0; _ci<_preUserMessages.length; _ci++){critiqueMessages.push(_preUserMessages[_ci]);}
           var _evalHistoryCtx = _evalHistory ? '\\n\\n[前序评估历史]\\n'+_evalHistory : '';
@@ -13510,7 +13522,7 @@ async function processFlowTurn(userText, cs, taskId){
           );
           var _critiqueContent = '';
           var _critLastEl = _critBlock.block;
-          var critMsgs = [{role:'system',content:'你是审查师。审查监工的对齐决策（验收标准+任务分解）。找出：逻辑漏洞、遗漏边界、标准不可验证、过度乐观。用filesystem/code_runner验证。'},{role:'user',content:'审查以下对齐决策：\n'+_supCurrentContent}];
+          var critMsgs = [{role:'system',content:'你是审查师。审查监工的对齐决策（验收标准+任务分解）。检查是否存在：逻辑漏洞、遗漏边界、标准不可验证、过度乐观。无则据实报告。用filesystem/code_runner验证。'},{role:'user',content:'审查以下对齐决策：\n'+_supCurrentContent}];
           for(var _cr=0;;_cr++){
             if(cs.stopRequested)throw new Error('用户已中止');
             var _critSC='',_critSR='',_critST={};
@@ -16854,9 +16866,18 @@ async function saveCurrentMessagesToState(convId){
 }
 
 // 渲染侧边栏会话列表
+var _embedCache=new Map();
+var _convSearchTimer=null;
 function renderConversationList(){
   var list=document.getElementById('conversationList');
   if(!list)return;
+  if(!document.getElementById('convSearchInput')){
+    var _si=document.createElement('input');_si.id='convSearchInput';_si.placeholder='搜索对话...';
+    _si.style.cssText='display:block;width:calc(100% - 24px);margin:8px 12px 4px;padding:6px 10px;border:1px solid var(--color-border);border-radius:6px;font-size:13px;outline:none';
+    _si.addEventListener('input',function(){_filterConversationList(this.value);});
+    var _sb=document.getElementById('conversationSidebar');
+    if(_sb&&_sb.firstChild)_sb.insertBefore(_si,_sb.firstChild.nextSibling);
+  }
   var entries=conversationDB.entries||[];
   entries.sort(function(a,b){return b.createdAt-a.createdAt;});
   if(entries.length===0){
@@ -16876,7 +16897,6 @@ function renderConversationList(){
     div.addEventListener('click',function(id){return function(ev){if(ev.target.classList.contains('conv-delete-btn'))return;if(id===currentConversationId){closeSidebar();return;}switchConversation(id).then(function(){closeSidebar();});};}(e.id));
     list.appendChild(div);
   }
-  // 绑定删除按钮
   var delBtns=list.querySelectorAll('.conv-delete-btn');
   for(var db=0;db<delBtns.length;db++){
     delBtns[db].addEventListener('click',function(ev){
@@ -16885,6 +16905,100 @@ function renderConversationList(){
     });
   }
 }
+
+function _cosineSimilarity(a,b){
+  if(!a||!b||a.length!==b.length)return 0;
+  var dot=0,na=0,nb=0;
+  for(var i=0;i<a.length;i++){dot+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i];}
+  var den=Math.sqrt(na)*Math.sqrt(nb);
+  return den?dot/den:0;
+}
+
+async function _filterConversationList(query){
+  if(_convSearchTimer)clearTimeout(_convSearchTimer);
+  _convSearchTimer=setTimeout(async function(){
+    var entries=conversationDB.entries||[];
+    if(!query||!query.trim()){renderConversationList();return;}
+    var q=query.trim().toLowerCase();
+    var _PLAIN=/<[^>]*>/g;
+    // 从 IndexedDB 加载所有对话的消息正文
+    var _msgMap={};
+    try{
+      var _db=await getDB();
+      var _allMsgs=await idbTransaction('messages','readonly',function(s){return s.getAll();});
+      for(var _ai=0;_ai<_allMsgs.length;_ai++){
+        var _md=_allMsgs[_ai];if(!_md||!_md.id)continue;
+        var _convId=_md.id;
+        // 兼容两种格式：新版 branches 结构，旧版 items 数组
+        var _items=null;
+        if(_md.branches&&_md.currentBranchId){
+          var _curBr=_md.branches[_md.currentBranchId];
+          _items=(_curBr&&_curBr.items)||[];
+        }else if(_md.items&&Array.isArray(_md.items)){
+          _items=_md.items;
+        }
+        if(!_items||!_items.length)continue;
+        var _st='';
+        for(var _si=0;_si<Math.min(15,_items.length);_si++){
+          var _it=_items[_si];if(!_it||!_it.content)continue;
+          var _txt=_it.role==='user'?_it.content:(_it.content.replace(_PLAIN,' '));
+          _st+=(_txt.replace(/\s+/g,' ').substring(0,300)+' ');
+        }
+        if(_st.trim())_msgMap[_convId]=_st.trim();
+      }
+    }catch(ex){}
+    // 关键词匹配：标题+正文
+    var keywordMatches=entries.filter(function(e){
+      if((e.title||'').toLowerCase().indexOf(q)>=0)return true;
+      return (_msgMap[e.id]||'').toLowerCase().indexOf(q)>=0;
+    });
+    // 语义搜索（embed 缓存）
+    var embedResp;
+    try{
+      var _cached=_embedCache.get(q);embedResp=_cached||await sendToTaskWorker('embed',{text:q});
+      if(!_cached&&embedResp&&embedResp.success&&embedResp.embedding){
+        if(_embedCache.size>=200){var _ek=_embedCache.keys().next().value;_embedCache.delete(_ek);}
+        _embedCache.set(q,embedResp);
+      }
+    }catch(ex){}
+    if(embedResp&&embedResp.success&&embedResp.embedding){
+      var scored=entries.map(function(e){
+        var s=0;
+        if((e.title||'').toLowerCase().indexOf(q)>=0)s+=0.25;
+        if((_msgMap[e.id]||'').toLowerCase().indexOf(q)>=0)s+=0.15;
+        if(e._embedding)s+=_cosineSimilarity(embedResp.embedding,e._embedding)*0.6;
+        return{entry:e,score:s};
+      });
+      scored.sort(function(a,b){return b.score-a.score;});
+      _renderFilteredConversations(scored.map(function(x){return x.entry;}),q);
+      return;
+    }
+    _renderFilteredConversations(keywordMatches,q);
+  },300);
+}
+
+function _renderFilteredConversations(entries,q){
+  var list=document.getElementById('conversationList');if(!list)return;
+  if(entries.length===0){list.innerHTML='<div style="text-align:center;color:var(--color-text-secondary);padding:20px;font-size:13px">未找到匹配 «'+q.replace(/</g,'&lt;')+'» 的对话</div>';return;}
+  list.innerHTML='';
+  for(var ei=0;ei<entries.length;ei++){
+    var e=entries[ei],isActive=e.id===currentConversationId;
+    var div=document.createElement('div');
+    var bgCs=_ensureConvState(e.id);var isBgProcessing=bgCs&&bgCs.isProcessing;
+    div.className='conversation-item'+(isActive?' active':'')+(isBgProcessing?' bg-processing':'');
+    var statusBadge=isBgProcessing?' ':'';
+    var title=(e.title||'未命名对话').replace(/</g,'&lt;');
+    if(q){var regex=new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi');title=title.replace(regex,'<mark style="background:#fff3b0;padding:0 2px;border-radius:2px">$1</mark>');}
+    div.innerHTML='<span class="conv-title">'+title+statusBadge+'</span><span class="conv-time">'+formatTime(e.createdAt)+'</span><button class="conv-delete-btn" data-id="'+e.id+'"></button>';
+    div.addEventListener('click',function(id){return function(ev){if(ev.target.classList.contains('conv-delete-btn'))return;if(id===currentConversationId){closeSidebar();return;}switchConversation(id).then(function(){closeSidebar();});};}(e.id));
+    list.appendChild(div);
+  }
+  var delBtns=list.querySelectorAll('.conv-delete-btn');
+  for(var db=0;db<delBtns.length;db++){
+    delBtns[db].addEventListener('click',function(ev){ev.stopPropagation();deleteConversation(this.getAttribute('data-id'));});
+  }
+}
+
 
 function formatTime(ts){
   if(!ts)return'';
