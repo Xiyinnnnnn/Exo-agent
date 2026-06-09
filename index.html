@@ -295,13 +295,11 @@ body{
 }
 .conversation-item .conv-time{font-size:11px;color:var(--color-text-secondary);flex-shrink:0}
 .conversation-item .conv-delete-btn{
-  width:28px;height:28px;min-width:28px;border:none;background:none;
-  border-radius:4px;cursor:pointer;color:var(--color-text-secondary);
-  display:flex;align-items:center;justify-content:center;font-size:16px;opacity:0;
-  transition:opacity .15s,background .15s;
+  width:auto;height:auto;min-width:auto;padding:2px 6px;border:none;
+  background:var(--color-danger);color:#fff;border-radius:4px;
+  cursor:pointer;font-size:10px;line-height:1.4;flex-shrink:0;
 }
-.conversation-item:hover .conv-delete-btn{opacity:1}
-.conversation-item .conv-delete-btn:hover{background:#fde8e8;color:var(--color-danger)}
+.conversation-item .conv-delete-btn:hover{opacity:0.85}
 .sidebar-overlay{
   display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);
   z-index:89;touch-action:manipulation;
@@ -5076,7 +5074,7 @@ function renderMessage(role,content,artifacts,messageId){
   msgDiv.appendChild(contentDiv);
   var tsDiv=document.createElement('div');
   tsDiv.className='message-timestamp';
-  tsDiv.textContent=new Date().toLocaleTimeString();
+  tsDiv.setAttribute('data-ts',Date.now());tsDiv.textContent=_timeAgo(Date.now());
   msgDiv.appendChild(tsDiv);
   if(role==='agent'&&messageId){
     var fbDiv=document.createElement('div');
@@ -5094,7 +5092,10 @@ function renderMessage(role,content,artifacts,messageId){
     msgDiv.appendChild(fbDiv);
   }
   return msgDiv;
-}
+  }
+
+function _timeAgo(ts){var d=Math.floor((Date.now()-ts)/1000);if(d<10)return'刚刚';if(d<60)return d+'秒前';if(d<3600)return Math.floor(d/60)+'分钟前';if(d<86400)return Math.floor(d/3600)+'小时前';return Math.floor(d/86400)+'天前';}
+setInterval(function(){var _al=document.querySelectorAll('.message-timestamp[data-ts]');for(var _i=0;_i<_al.length;_i++){var _e=_al[_i];_e.textContent=_timeAgo(parseInt(_e.getAttribute('data-ts')));}},30000);
 
 async function handleFeedback(messageId,type){
   showToast(type==='like'?'感谢您的肯定 Good':'感谢您的反馈，我会继续改进 Bad','info',2000);
@@ -14400,7 +14401,7 @@ function _addFlowCompletionBubble(summary, messagesDiv){
 
   var tsDiv=document.createElement('div');
   tsDiv.className='message-timestamp';
-  tsDiv.textContent=new Date().toLocaleTimeString();
+  tsDiv.setAttribute('data-ts',Date.now());tsDiv.textContent=_timeAgo(Date.now());
   msgDiv.appendChild(tsDiv);
 
   messagesDiv.appendChild(msgDiv);
@@ -14528,7 +14529,7 @@ function addUserMessage(text){
   msgDiv.appendChild(contentDiv);
   var tsDiv=document.createElement('div');
   tsDiv.className='message-timestamp';
-  tsDiv.textContent=new Date().toLocaleTimeString();
+  tsDiv.setAttribute('data-ts',Date.now());tsDiv.textContent=_timeAgo(Date.now());
   msgDiv.appendChild(tsDiv);
   _addMsgActions(msgDiv,true);
   messagesDiv.appendChild(msgDiv);
@@ -14547,7 +14548,7 @@ function addAgentMessageContainer(messageId){
   msgDiv.appendChild(contentDiv);
   var tsDiv=document.createElement('div');
   tsDiv.className='message-timestamp';
-  tsDiv.textContent=new Date().toLocaleTimeString();
+  tsDiv.setAttribute('data-ts',Date.now());tsDiv.textContent=_timeAgo(Date.now());
   msgDiv.appendChild(tsDiv);
   // 反馈按钮
   var fbDiv=document.createElement('div');
@@ -16752,11 +16753,15 @@ async function switchConversation(convId,forceSwitch){
       }else{
         for(var mi=0;mi<branchItems.length;mi++){
           var m=branchItems[mi];
-          if(m.role==='user')addUserMessage(m.content);
+          if(m.role==='user'){var _div=document.createElement('div');_div.className='message user';_div.innerHTML='<div class="message-content">'+sanitizeArtifactHTML(m.content||'')+'</div>';var _tsD=document.createElement('div');_tsD.className='message-timestamp';_tsD.setAttribute('data-ts',m.createdAt||Date.now());_tsD.textContent=_timeAgo(m.createdAt||Date.now());_div.appendChild(_tsD);_addMsgActions(_div,true);msgList.appendChild(_div);}
           else if(m.role==='assistant'||m.role==='agent'){
             var div=document.createElement('div');
             div.className='message agent';
             div.innerHTML=sanitizeArtifactHTML(m.content||'');
+            // 恢复时间戳：更新已存在的，不新增
+            var _oldTs=div.querySelector('.message-timestamp');
+            if(_oldTs){_oldTs.setAttribute('data-ts',m.createdAt||Date.now());_oldTs.textContent=_timeAgo(m.createdAt||Date.now());}
+            else{var _tsN=document.createElement('div');_tsN.className='message-timestamp';_tsN.setAttribute('data-ts',m.createdAt||Date.now());_tsN.textContent=_timeAgo(m.createdAt||Date.now());div.appendChild(_tsN);}
             var cd=div.querySelector('.message-content');
             if(!cd){msgList.appendChild(div);continue;}
             var dlBtns=cd.querySelectorAll('[data-filename]');
@@ -16797,7 +16802,8 @@ function _collectBubbles(msgList){
     var isUser=b.classList.contains('user');
     var cd=b.querySelector('.message-content');
     if(!cd)continue;
-    var entry={role:isUser?'user':'assistant',id:crypto.randomUUID()};
+    var _tsEl=b.querySelector('.message-timestamp[data-ts]');var _createdAt=_tsEl?parseInt(_tsEl.getAttribute('data-ts')):Date.now();
+    var entry={role:isUser?'user':'assistant',id:crypto.randomUUID(),createdAt:_createdAt};
     var actionsEl=b.querySelector('.msg-actions');
     if(actionsEl)actionsEl.remove();
     var copyBtns=b.querySelectorAll('.code-copy-btn');
@@ -16893,7 +16899,7 @@ function renderConversationList(){
     var isBgProcessing=bgCs&&bgCs.isProcessing;
     div.className='conversation-item'+(isActive?' active':'')+(isBgProcessing?' bg-processing':'');
     var statusBadge=isBgProcessing?' ':'';
-    div.innerHTML='<span class="conv-title">'+(e.title||'未命名对话').replace(/</g,'&lt;')+statusBadge+'</span><span class="conv-time">'+formatTime(e.createdAt)+'</span><button class="conv-delete-btn" data-id="'+e.id+'"></button>';
+    div.innerHTML='<span class="conv-title">'+(e.title||'未命名对话').replace(/</g,'&lt;')+statusBadge+'</span><span class="conv-time">'+formatTime(e.createdAt)+'</span><button class="conv-delete-btn" data-id="'+e.id+'">删除</button>';
     div.addEventListener('click',function(id){return function(ev){if(ev.target.classList.contains('conv-delete-btn'))return;if(id===currentConversationId){closeSidebar();return;}switchConversation(id).then(function(){closeSidebar();});};}(e.id));
     list.appendChild(div);
   }
@@ -16989,7 +16995,7 @@ function _renderFilteredConversations(entries,q){
     var statusBadge=isBgProcessing?' ':'';
     var title=(e.title||'未命名对话').replace(/</g,'&lt;');
     if(q){var regex=new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi');title=title.replace(regex,'<mark style="background:#fff3b0;padding:0 2px;border-radius:2px">$1</mark>');}
-    div.innerHTML='<span class="conv-title">'+title+statusBadge+'</span><span class="conv-time">'+formatTime(e.createdAt)+'</span><button class="conv-delete-btn" data-id="'+e.id+'"></button>';
+    div.innerHTML='<span class="conv-title">'+title+statusBadge+'</span><span class="conv-time">'+formatTime(e.createdAt)+'</span><button class="conv-delete-btn" data-id="'+e.id+'">删除</button>';
     div.addEventListener('click',function(id){return function(ev){if(ev.target.classList.contains('conv-delete-btn'))return;if(id===currentConversationId){closeSidebar();return;}switchConversation(id).then(function(){closeSidebar();});};}(e.id));
     list.appendChild(div);
   }
