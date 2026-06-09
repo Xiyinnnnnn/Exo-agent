@@ -1287,7 +1287,7 @@ var TOOL_REGISTRY={
     parameters:{type:'object',properties:{headers:{type:'array',items:{type:'string'}},rows:{type:'array',items:{type:'array',items:{type:'string'}}},download_format:{type:'string',enum:['csv','xlsx',null]}},required:['headers','rows']}},
   'word_generator':{name:'word_generator',description:'生成Word(.docx)。content用Markdown。',executor:'main_thread',
     parameters:{type:'object',properties:{title:{type:'string'},content:{type:'string',description:'Markdown'},filename:{type:'string',description:'不含扩展名'}},required:['title','content']}},
-  'fuzzy_search':{name:'fuzzy_search',description:'模糊搜索文件内容(Fuse.js)。可限定file或path。',executor:'task_worker',
+  'fuzzy_search':{name:'fuzzy_search',description:'文件内模糊搜索(Fuse.js)。搜VFS内文件内容，非网络。可限定file或path。',executor:'task_worker',
     parameters:{type:'object',properties:{query:{type:'string'},file:{type:'string'},path:{type:'string',default:'/'},limit:{type:'number',default:10}},required:['query']}},
   'mcts_plan':{name:'mcts_plan',description:'MCTS多步规划。mode:fast(150sims)/standard(600sims,thinking)。',executor:'main_thread',
     parameters:{type:'object',properties:{problem:{type:'string'},goal:{type:'string'},constraints:{type:'string'},mode:{type:'string',enum:['fast','standard'],default:'fast'}},required:['problem','goal']}},
@@ -8933,7 +8933,7 @@ async function executeTool(toolCall,artifacts){
     return {role:'tool',tool_call_id:toolCall.id,content:JSON.stringify(result)};
   }catch(e){
     debugLogger.error(' 工具失败: '+toolName+' | '+e.message);
-    return {role:'tool',tool_call_id:toolCall.id,content:'工具执行错误: '+e.message};
+    return {role:'tool',tool_call_id:toolCall.id,content:'工具执行错误: '+e.message+'\n\n 不确定用法请查 `help "'+toolName+'"` 获取完整文档。'};
   }
 }
 
