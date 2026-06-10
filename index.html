@@ -7025,109 +7025,136 @@ async function callLLM(messages,tools,stream,source){
   return data;
 }
 
-// 流式LLM调用 — API成功后单一递增
 async function streamChatCompletion(messages,tools,onChunk,source){
   source=source||'user';
-  var cs=_ensureConvState(currentConversationId);
-  var req=_buildLLMRequest(messages,tools,true,source);
-  var response;
-  var lastFetchError=null;
-  for(var fetchAttempt=0;fetchAttempt<3;fetchAttempt++){
+  var attempt=0;
+
+  while(true){
+    var cs=_ensureConvState(currentConversationId);
     if(cs&&cs.stopRequested){throw new Error('用户已中止');}
-    var controller=new AbortController();
-    activeLLMController=controller;
-    if(cs)cs.llmController=controller;
-    var timeoutId=setTimeout(function(){controller.abort();},1800000); // 30分钟
-    try{
-      response=await fetch(req.baseUrl+'/v1/chat/completions',{
-        method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
-        body:JSON.stringify(req.body),signal:controller.signal
-      });
-      clearTimeout(timeoutId);
-      // 【关键】不在此处清null，保留controller供外部中止检测
-      break;
-    }catch(e){
-      clearTimeout(timeoutId);
-      lastFetchError=e;
-      if(e.name==='AbortError'){
-        activeLLMController=null;
-        throw new Error('用户已中止');
-      }
-      if(e instanceof TypeError&&fetchAttempt<2){
-        await new Promise(function(r){return setTimeout(r,600);});
-        continue;
-      }
-      activeLLMController=null;
-      throw e;
+
+    if(attempt>0){
+      var delay=Math.min(attempt*1000,5000);
+      debugLogger.warn('流式调用网络中断，第 '+attempt+' 次全量重试，等待'+delay+'ms');
+      await new Promise(function(r){setTimeout(r,delay);});
     }
-  }
-  if(!response)throw lastFetchError||new Error('API请求失败');
-  activeLLMController=null; // fetch阶段结束，释放controller
-  if(!response.ok){
-    var errText=await response.text();
-    throw new Error('API请求失败 ('+response.status+'): '+errText);
-  }
-  // 唯一递增点
-  await budgetManager.recordCall(source);
-  
-  var reader=response.body.getReader();
-  activeStreamReader=reader; // 【关键】存储reader引用，允许外部cancel
-  var decoder=new TextDecoder();
-  var buffer='';
-  var streamTimeoutId;
-  var finishReason=null; // 【新增】追踪 API 的 finish_reason，用于检测截断
-  var totalStreamContent=''; // ★ 累积流式内容用于Token统计
-  var streamUsage=null; // ★ 从流中捕获的API usage信息
-  try{
-    while(true){
-      streamTimeoutId=setTimeout(function(){reader.cancel();},1800000);
-      var readResult=await reader.read();
-      clearTimeout(streamTimeoutId);
-      if(readResult.done)break;
-      buffer+=decoder.decode(readResult.value,{stream:true});
-      var lines=buffer.split('\n');
-      buffer=lines.pop()||'';
-      for(var i=0;i<lines.length;i++){
-        var trimmed=lines[i].trim();
-        if(!trimmed||!trimmed.startsWith('data:'))continue;
-        var data=trimmed.slice(5).trim();
-        if(data==='[DONE]'){
-          activeStreamReader=null;
-          // ★ 统计流式Token消耗（优先使用API usage）
-          recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
-          _tagMessageTokens(messages, streamUsage);
-          return finishReason;
+    attempt++;
+
+    var req=_buildLLMRequest(messages,tools,true,source);
+    var response;
+    var lastFetchError=null;
+    for(var fetchAttempt=0;fetchAttempt<5;fetchAttempt++){
+      if(cs&&cs.stopRequested){throw new Error('用户已中止');}
+      var controller=new AbortController();
+      activeLLMController=controller;
+      if(cs)cs.llmController=controller;
+      var timeoutId=setTimeout(function(){controller.abort();},1800000);
+      try{
+        response=await fetch(req.baseUrl+'/v1/chat/completions',{
+          method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
+          body:JSON.stringify(req.body),signal:controller.signal
+        });
+        clearTimeout(timeoutId);
+        break;
+      }catch(e){
+        clearTimeout(timeoutId);
+        lastFetchError=e;
+        if(e.name==='AbortError'){
+          activeLLMController=null;
+          throw new Error('用户已中止');
         }
-        try{
-          var parsed=JSON.parse(data);
-          // ★ 捕获流中的usage信息（DeepSeek在最后一个chunk中返回usage）
-          if(parsed.usage&&typeof parsed.usage.total_tokens==='number'){
-            streamUsage=parsed.usage;
-          }
-          // 【新增】捕获 finish_reason
-          if(parsed.choices&&parsed.choices[0]&&parsed.choices[0].finish_reason){
-            finishReason=parsed.choices[0].finish_reason;
-          }
-          // ★ 累积流式内容（含thinking）
-          var delta2=parsed.choices&&parsed.choices[0]?parsed.choices[0].delta:null;
-          if(delta2){
-            if(delta2.content)totalStreamContent+=delta2.content;
-            if(delta2.reasoning_content)totalStreamContent+=delta2.reasoning_content;
-          }
-          await onChunk(parsed);
-        }catch(e){}
+        if(e instanceof TypeError&&fetchAttempt<4){
+          await new Promise(function(r){return setTimeout(r,600);});
+          continue;
+        }
+        break;
       }
     }
-    activeStreamReader=null;
-    // ★ 正常结束时统计Token消耗（优先使用API usage）
-    recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
-    _tagMessageTokens(messages, streamUsage);
-    debugLogger.info(' 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length+(streamUsage?' | usage:精确':' | usage:估算'));
-    return finishReason;
-  }finally{
-    if(streamTimeoutId)clearTimeout(streamTimeoutId);
-    activeStreamReader=null;
-    try{reader.cancel();}catch(e){}
+    if(!response){
+      activeLLMController=null;
+      if(lastFetchError instanceof TypeError)continue;
+      throw lastFetchError||new Error('API请求失败');
+    }
+    activeLLMController=null;
+    if(!response.ok){
+      var errText=await response.text();
+      throw new Error('API请求失败 ('+response.status+'): '+errText);
+    }
+    if(attempt===1){
+      await budgetManager.recordCall(source);
+    }
+
+    var reader=response.body.getReader();
+    activeStreamReader=reader;
+    var decoder=new TextDecoder();
+    var buffer='';
+    var streamTimeoutId;
+    var finishReason=null;
+    var totalStreamContent='';
+    var streamUsage=null;
+    var streamError=null;
+    try{
+      while(true){
+        streamTimeoutId=setTimeout(function(){reader.cancel();},1800000);
+        var readResult;
+        try{
+          readResult=await reader.read();
+        }catch(readErr){
+          clearTimeout(streamTimeoutId);
+          streamError=readErr;
+          break;
+        }
+        clearTimeout(streamTimeoutId);
+        if(readResult.done)break;
+        buffer+=decoder.decode(readResult.value,{stream:true});
+        var lines=buffer.split('\n');
+        buffer=lines.pop()||'';
+        for(var i=0;i<lines.length;i++){
+          var trimmed=lines[i].trim();
+          if(!trimmed||!trimmed.startsWith('data:'))continue;
+          var data=trimmed.slice(5).trim();
+          if(data==='[DONE]'){
+            activeStreamReader=null;
+            recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
+            _tagMessageTokens(messages, streamUsage);
+            return finishReason;
+          }
+          try{
+            var parsed=JSON.parse(data);
+            if(parsed.usage&&typeof parsed.usage.total_tokens==='number'){
+              streamUsage=parsed.usage;
+            }
+            if(parsed.choices&&parsed.choices[0]&&parsed.choices[0].finish_reason){
+              finishReason=parsed.choices[0].finish_reason;
+            }
+            var delta2=parsed.choices&&parsed.choices[0]?parsed.choices[0].delta:null;
+            if(delta2){
+              if(delta2.content)totalStreamContent+=delta2.content;
+              if(delta2.reasoning_content)totalStreamContent+=delta2.reasoning_content;
+            }
+            await onChunk(parsed);
+          }catch(e){}
+        }
+      }
+      if(!streamError){
+        activeStreamReader=null;
+        recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
+        _tagMessageTokens(messages, streamUsage);
+        debugLogger.info(' 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length+(streamUsage?' | usage:精确':' | usage:估算'));
+        return finishReason;
+      }
+    }finally{
+      if(streamTimeoutId)clearTimeout(streamTimeoutId);
+      activeStreamReader=null;
+      try{reader.cancel();}catch(e){}
+      try{reader.releaseLock();}catch(e){}
+    }
+
+    if(streamError instanceof TypeError){
+      debugLogger.warn(' 流读取中断('+(totalStreamContent?totalStreamContent.length+'字已收':'空收')+')，将重试');
+      continue;
+    }
+    throw streamError;
   }
 }
 
