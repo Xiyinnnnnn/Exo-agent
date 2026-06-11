@@ -12743,7 +12743,7 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
     }
     var _critiqueMessages = [{
       role: 'system',
-      content: '你是逐行审查官。审查Agent思考链和工具结果，协助纠正偏差。\\n\\n准则:\\n- 只报告证据充分的问题，没有则报告"可用"\\n- 问题必须引用原文为证据\\n- 涉及代码/数据/可验证结论时调用工具核查\\n- 不确定时调用工具验证，不要猜\\n\\n最终只输出一行判定。例:\\n可用\\n存疑 - 仅2条结果可能不全 - 放宽查询复检\\n不可用 - code_runner报路径不存在 - 改用read_file读取\\n\\n禁止在判定前后加任何解释。禁止修正答案。推理放在思考中。'
+      content: '你是逐行审查官。审查当前Agent的思考链、本轮输出和工具结果，协助纠正偏差。\n\n准则:\n- 主动调用工具核查，不依赖记忆和猜测\n- 核查思考是否与用户意图对齐，无偏离或遗漏\n- 核查输出是否事实忠实、无偏见\n- 只报告证据充分的问题，每条引用原文为证据\n- 无问题报告"可用"\n\n输出格式：第一行状态判定，后续行可简述问题及修正方向。例:\n可用\n存疑 - 仅2条结果可能不全 → 放宽查询复检\n不可用 - code_runner报路径不存在 → 改用read_file\n\n禁止修正答案。推理放在思考中。'
     }, {
       role: 'user',
       content: '[Agent思考]\\n' + (streamReasoning || '(无)') + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults
@@ -12764,8 +12764,8 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
       _cThinkToggle.setAttribute('data-collapse-label', '[v] 审查思考 (第' + (_cr + 1) + '轮)');
       _cThinkToggle.setAttribute('data-expand-label', '[>] 审查思考 (第' + (_cr + 1) + '轮)');
       if (_contentDiv) {
-        _contentDiv.parentNode.insertBefore(_cThinkToggle, _contentDiv);
-        _contentDiv.parentNode.insertBefore(_cThinkBlock, _contentDiv);
+        _contentDiv.parentNode.insertBefore(_cThinkToggle, _critique.toggle);
+        _contentDiv.parentNode.insertBefore(_cThinkBlock, _critique.toggle);
       }
       _critiqueLastEl = _cThinkBlock;
 
@@ -13264,8 +13264,8 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
             critThinkToggle.setAttribute('data-target','critique-thinking-'+agentMessageId+iterSuffix+'-r'+critRound);
             critThinkToggle.setAttribute('data-collapse-label','[v] 审查思考'+iterLabelSuffix+' (第'+(critRound+1)+'轮)');
             critThinkToggle.setAttribute('data-expand-label','[>] 审查思考'+iterLabelSuffix+' (第'+(critRound+1)+'轮)');
-            contentDiv.parentNode.insertBefore(critThinkToggle,contentDiv);
-            contentDiv.parentNode.insertBefore(critThinkBlock,contentDiv);
+            contentDiv.parentNode.insertBefore(critThinkToggle,critique.toggle);
+            contentDiv.parentNode.insertBefore(critThinkBlock,critique.toggle);
             _critiqueLastEl=critThinkBlock;
 
             var critFinishReason=await streamChatCompletion(critiqueMessages,activeTools,
@@ -13393,8 +13393,8 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
             revThinkToggle.setAttribute('data-target','revision-thinking-'+agentMessageId+iterSuffix+'-r'+revRound);
             revThinkToggle.setAttribute('data-collapse-label','[v] 修正思考'+iterLabelSuffix+' (第'+(revRound+1)+'轮)');
             revThinkToggle.setAttribute('data-expand-label','[>] 修正思考'+iterLabelSuffix+' (第'+(revRound+1)+'轮)');
-            contentDiv.parentNode.insertBefore(revThinkToggle,contentDiv);
-            contentDiv.parentNode.insertBefore(revThinkBlock,contentDiv);
+            contentDiv.parentNode.insertBefore(revThinkToggle,revision.toggle);
+            contentDiv.parentNode.insertBefore(revThinkBlock,revision.toggle);
             _revisionLastEl=revThinkBlock;
 
             var revFinishReason=await streamChatCompletion(revisionMessages,activeTools,
