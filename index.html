@@ -7040,6 +7040,8 @@ async function streamChatCompletion(messages,tools,onChunk,source){
     }
     attempt++;
 
+    var _msgs = await _compressOldMessages(messages,1048565);
+    if(_msgs){messages.length=0;Array.prototype.push.apply(messages,_msgs);}
     var req=_buildLLMRequest(messages,tools,true,source);
     var response;
     var lastFetchError=null;
