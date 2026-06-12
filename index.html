@@ -2914,6 +2914,16 @@ var _longTermMemory={facts:[],updatedAt:0};
 var _memoryIndexPath='/memory/memory-index.json';
 
 // ===== 长对话压缩 =====
+function _estimateTokens(str){
+  if(!str)return 0;
+  var cn=0,en=0;
+  for(var i=0;i<str.length;i++){
+    var c=str.charCodeAt(i);
+    if((c>=0x4e00&&c<=0x9fff)||(c>=0x3400&&c<=0x4dbf)||(c>=0xf900&&c<=0xfaff)){cn++;}
+    else if(c>=0x20&&c<=0x7e){en++;}
+  }
+  return Math.ceil(cn*0.6+en*0.3);
+}
 async function _compressOldMessages(messages,modelMaxTokens){
   var _MODEL_CTX=1048565;
   // ★ 用每条消息上的 _tokens 标签（API精确分配），回退到字符估算
@@ -2921,7 +2931,7 @@ async function _compressOldMessages(messages,modelMaxTokens){
   var perMsg=[];
   for(var i=0;i<messages.length;i++){
     var m=messages[i];
-    var _charEst=Math.ceil(((m.content||'').length+(m.reasoning_content||'').length)*0.4);
+    var _charEst=_estimateTokens((m.content||'')+(m.reasoning_content||''));
     var est=Math.max((m._tokens||0),_charEst);
     perMsg.push(est);
     totalEst+=est;
@@ -2929,6 +2939,7 @@ async function _compressOldMessages(messages,modelMaxTokens){
   // ★ 压缩积极度→触发阈值：0=宽松(664K), 100=保守(524K), 默认50=适中(594K)
   var aggressiveness=settings.compression_aggressiveness!=null?settings.compression_aggressiveness:50;
   var limit=Math.floor(_MODEL_CTX*(0.5+(100-aggressiveness)/100*0.134));
+  debugLogger.warn(' 压缩检查: est='+totalEst+' limit='+limit+' 条数='+messages.length);
   if(totalEst<=limit)return null;
   if(messages.length<=2)return null;
 
@@ -2982,7 +2993,8 @@ async function _compressOldMessages(messages,modelMaxTokens){
     '4.【助手回复】：保留结论与下一步计划。\n'+
     '5.【系统消息】：保留关键设定。\n'+
     '输出纯文本，不超过600字。';
-  var _compMaxTokens=Math.min(384,Math.ceil(rawText.length*0.4)+100);
+  var _compInputEst=_estimateTokens(systemPrompt+rawText);
+  var _compMaxTokens=Math.min(settings.max_tokens||384000,Math.max(4000,1048565-_compInputEst-200));
 
   try{
     var msgs=[{role:'system',content:systemPrompt},{role:'user',content:'请压缩以下对话历史：\n\n'+rawText}];
@@ -2995,24 +3007,36 @@ async function _compressOldMessages(messages,modelMaxTokens){
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
       body:JSON.stringify(req.body)
     });
-    if(!fetchResp.ok)return null;
+    if(!fetchResp.ok){debugLogger.warn('压缩LLM请求失败: HTTP '+fetchResp.status);return null;}
     var data=await fetchResp.json();
-    var summary=(data.choices&&data.choices[0]&&data.choices[0].message.content)||'';
+    var summary=(data.choices&&data.choices[0]&&(data.choices[0].message.content||data.choices[0].message.reasoning_content))||'';
     recordDailyTokenUsage([{role:'system',content:'[压缩]'},{role:'user',content:rawText.substring(0,200)}], summary||'', data.usage||null);
-    if(!summary.trim())return null;
-    var compressed=[{role:'system',content:'[对话历史摘要] '+summary.trim()}];
-    for(var k=0;k<toKeep.length;k++){compressed.push(toKeep[k]);}
+    if(!summary.trim()){debugLogger.warn('压缩LLM返回空摘要');return null;}
+    var compressed=[{role:'system',content:summary.trim()}];
+    for(var k=0;k<toKeep.length;k++){
+      if(toKeep[k].role==='tool'){
+        var _hasCaller=false;
+        for(var _tp=k-1;_tp>=0;_tp--){if(toKeep[_tp].role==='assistant'&&toKeep[_tp].tool_calls){_hasCaller=true;break;}}
+        if(!_hasCaller)continue;
+      }
+      var _clean={role:toKeep[k].role,content:toKeep[k].content||''};
+      if(toKeep[k].tool_call_id)_clean.tool_call_id=toKeep[k].tool_call_id;
+      if(toKeep[k].name)_clean.name=toKeep[k].name;
+      if(toKeep[k].tool_calls)_clean.tool_calls=toKeep[k].tool_calls;
+      if(toKeep[k]._tokens)_clean._tokens=toKeep[k]._tokens;
+      compressed.push(_clean);
+    }
 
     // ★ 极端回退：摘要+保留仍超限 → 丢弃最旧消息直到安全
-    var _compEst=Math.ceil(summary.length*0.4);
+    var _compEst=_estimateTokens(summary);
     for(var k2=0;k2<toKeep.length;k2++){
-      _compEst+=(toKeep[k2]._tokens||Math.ceil((toKeep[k2].content||'').length*0.4));
+      _compEst+=(toKeep[k2]._tokens||_estimateTokens(toKeep[k2].content||''));
     }
     if(_compEst>limit){
       var _dropCount=0;
       while(_compEst>limit&&compressed.length>2){
         var _dropped=compressed.splice(1,1)[0];
-        _compEst-=(_dropped._tokens||Math.ceil((_dropped.content||'').length*0.4));
+        _compEst-=(_dropped._tokens||_estimateTokens(_dropped.content||''));
         _dropCount++;
       }
       if(_dropCount>0)debugLogger.warn(' 极端回退: 压缩后仍超限，丢弃最旧'+_dropCount+'条 | est:'+_compEst+'/'+limit);
@@ -6950,7 +6974,7 @@ function _buildLLMRequest(messages,tools,stream,source){
     var _safeMsgTokens=_MODEL_MAX-_desiredMax-200;
     var _estMsgTotal=0;
     for(var _mi=0;_mi<cleanedMessages.length;_mi++){
-      _estMsgTotal+=(cleanedMessages[_mi]._tokens||Math.ceil(((cleanedMessages[_mi].content||'').length+(cleanedMessages[_mi].reasoning_content||'').length)*0.4));
+      _estMsgTotal+=(cleanedMessages[_mi]._tokens||_estimateTokens((cleanedMessages[_mi].content||'')+(cleanedMessages[_mi].reasoning_content||'')));
     }
     // 第一层：精炼所有超长工具结果（>1000字符），替换为引导性语句
     if(_estMsgTotal>_safeMsgTokens){
@@ -6972,13 +6996,13 @@ function _buildLLMRequest(messages,tools,stream,source){
           else if(_tname==='precise_time'){_guide+=_tname+'结果 | 可重新调用';}
           else{_guide+=_tname+'结果('+(_cl2/1000).toFixed(0)+'K字符)'+(_paths.length>0?' | 路径:'+_paths.join(', '):'')+' | 可重新调用获取完整内容';}
           cleanedMessages[_mi2].content=_guide;
-          cleanedMessages[_mi2]._tokens=Math.ceil(_guide.length*0.4);
+          cleanedMessages[_mi2]._tokens=_estimateTokens(_guide);
           messages[_mi2]._tokens=cleanedMessages[_mi2]._tokens;
           debugLogger.warn(' 兜底精炼: '+_tname+'('+(_cl2/1000).toFixed(0)+'K)→引导语句');
         }
       }
       _estMsgTotal=0;
-      for(var _mii=0;_mii<cleanedMessages.length;_mii++){_estMsgTotal+=(cleanedMessages[_mii]._tokens||Math.ceil(((cleanedMessages[_mii].content||'').length)*0.4));}
+      for(var _mii=0;_mii<cleanedMessages.length;_mii++){_estMsgTotal+=(cleanedMessages[_mii]._tokens||_estimateTokens(cleanedMessages[_mii].content||''));}
     }
     // 第二层：仍超限 → 丢弃最旧非system非user消息
     while(_estMsgTotal>_safeMsgTokens&&cleanedMessages.length>3){
@@ -6986,7 +7010,7 @@ function _buildLLMRequest(messages,tools,stream,source){
       while(_dropIdx<cleanedMessages.length&&cleanedMessages[_dropIdx].role==='user'){_dropIdx++;}
       if(_dropIdx>=cleanedMessages.length)break;
       var _dropped=cleanedMessages.splice(_dropIdx,1)[0];
-      _estMsgTotal-=(_dropped._tokens||Math.ceil(((_dropped.content||'').length+(_dropped.reasoning_content||'').length)*0.4));
+      _estMsgTotal-=(_dropped._tokens||_estimateTokens((_dropped.content||'')+(_dropped.reasoning_content||'')));
       debugLogger.warn(' 极端丢弃: 丢弃1条旧消息('+_dropped.role+') | 剩余est:'+_estMsgTotal+'/'+_safeMsgTokens);
     }
     // 【修复】有工具调用时自动翻倍；384K兜底，杜绝多轮工具调用中token耗尽被截断
@@ -7050,6 +7074,8 @@ async function streamChatCompletion(messages,tools,onChunk,source){
     }
     attempt++;
 
+    var _msgs = await _compressOldMessages(messages,1048565);
+    if(_msgs){messages.length=0;Array.prototype.push.apply(messages,_msgs);showToast('上下文已自动压缩','success',2000);}
     var req=_buildLLMRequest(messages,tools,true,source);
     var response;
     var lastFetchError=null;
@@ -12940,6 +12966,11 @@ async function processUserMessage(userText,taskId){
       }
     }
 
+    if(window._persistentMessages&&window._persistentMessages[currentConversationId]){
+      messages=window._persistentMessages[currentConversationId].slice();
+      messages[0]={role:'system',content:systemPrompt};
+    }
+      
   }catch(e){debugLogger.warn('上下文构建异常: '+e.message);}
   debugLogger.info(' 处理消息 | '+messages.length+'条上下文 | '+userText.length+'字符输入');
   // 长对话自动压缩（由压缩阈值滑条控制，与上下文条数无关）
@@ -13633,6 +13664,8 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
     currentTaskId=null;
     taskStartTime=null;
 
+    if(!window._persistentMessages)window._persistentMessages={};
+    window._persistentMessages[currentConversationId]=messages.slice();
     updateSendButton();
     messagesDiv.scrollTop=messagesDiv.scrollHeight;
     debugLogger.info('对话处理完成'+(processingError?'（有错误）':'')+', 状态已重置');
@@ -14439,7 +14472,7 @@ function buildSupervisorStatusCard(session, mainCtx){
     for(var mi=0;mi<mainCtx.messages.length;mi++){
       var m=mainCtx.messages[mi];
       if(m._tokens&&m._tokens>0)mainTokenCount+=m._tokens;
-      else mainTokenCount+=Math.ceil(((m.content||'').length+(m.reasoning_content||'').length)*0.4);
+      else mainTokenCount+=_estimateTokens((m.content||'')+(m.reasoning_content||''));
     }
   }
 
@@ -14810,7 +14843,7 @@ function updateThinkingBlock(msgDiv, thinkingText) {
     var toggleEl = document.createElement('div');
     toggleEl.className = 'thinking-toggle';
     toggleEl.id = 'thinking-toggle-' + msgDiv._msgId + '-r' + round;
-    toggleEl.textContent = '[v] 思考过程' + (round > 0 ? ' (第' + (round+1) + '轮)' : '');
+    toggleEl.textContent = '[v] 思考过程';
     toggleEl.setAttribute('data-target', blockId);
     contentDiv.parentNode.insertBefore(toggleEl, thinkingBlock);
   }
@@ -14818,7 +14851,7 @@ function updateThinkingBlock(msgDiv, thinkingText) {
   thinkingBlock.textContent = thinkingText;
   // 同步toggle文字 — 在wrapper内查找
   var toggle = wrapper.querySelector('[id="thinking-toggle-' + msgDiv._msgId + '-r' + round + '"]');
-  if (toggle) toggle.textContent = '[v] 思考过程' + (round > 0 ? ' (第' + (round+1) + '轮)' : '');
+  if (toggle) toggle.textContent = '[v] 思考过程';
 }
 
 function toggleThinking() {
