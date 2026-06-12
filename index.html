@@ -12743,7 +12743,7 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
     }
     var _critiqueMessages = [{
       role: 'system',
-      content: '你是逐行审查官。审查当前Agent的思考链、本轮输出和工具结果，协助纠正偏差。\n\n准则:\n- 主动调用工具核查，不依赖记忆和猜测\n- 核查思考是否与用户意图对齐，无偏离或遗漏\n- 核查输出是否事实忠实、无偏见\n- 只报告证据充分的问题，每条引用原文为证据\n- 无问题报告"可用"\n\n输出格式：第一行状态判定，后续行可简述问题及修正方向。例:\n可用\n存疑 - 仅2条结果可能不全 → 放宽查询复检\n不可用 - code_runner报路径不存在 → 改用read_file\n\n禁止修正答案。推理放在思考中。'
+      content: '你是逐行审查官。审查当前Agent的思考链、本轮输出和工具结果，协助纠正偏差。\n\n准则:\n- 对可验证的事实断言调用工具核查，核查后必须输出判定，不得循环调用\n- 核查思考是否与用户意图对齐，无偏离或遗漏\n- 核查输出是否事实忠实、无偏见\n- 只报告证据充分的问题，每条引用原文为证据\n- 无问题报告"可用"\n\n输出格式：第一行状态判定，后续行可简述问题及修正方向。例:\n可用\n存疑 - 仅2条结果可能不全 → 放宽查询复检\n不可用 - code_runner报路径不存在 → 改用read_file\n\n禁止修正答案。推理放在思考中。'
     }, {
       role: 'user',
       content: '[Agent思考]\\n' + (streamReasoning || '(无)') + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults
