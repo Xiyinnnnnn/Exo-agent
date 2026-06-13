@@ -12742,7 +12742,7 @@ async function searchSimilarExperiences(query,limit){
 // ================================================================
 
 // ===== In-Line 逐行审查（工具全部执行完毕后，思考链+全部工具结果一次性审查） =====
-async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent) {
+async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText) {
   if (!pendingToolCalls || pendingToolCalls.length === 0) return null;
 
   var _cacheKey = pendingToolCalls.map(function(tc){return tc.function.name;}).join(',') + '|' +
@@ -12762,7 +12762,7 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
 
   var _allToolResults = '';
   for (var _ti = 0; _ti < pendingToolCalls.length; _ti++) {
-    _allToolResults += '[工具' + (_ti + 1) + ': ' + pendingToolCalls[_ti].function.name + ']\\n';
+    _allToolResults += '[工具: ' + pendingToolCalls[_ti].function.name + ']\\n';
     _allToolResults += '参数: ' + pendingToolCalls[_ti].function.arguments + '\\n';
     _allToolResults += '结果: ' + (toolResults[_ti] ? (toolResults[_ti].content || '(无)') : '(失败)') + '\\n\\n';
   }
@@ -12779,10 +12779,10 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
     }
     var _critiqueMessages = [{
       role: 'system',
-      content: '你是逐行审查官。审查当前Agent的思考链、本轮输出和工具结果，协助纠正偏差。\n\n准则:\n- 对可验证的事实断言调用工具核查，核查后必须输出判定，不得循环调用\n- 核查思考是否与用户意图对齐，无偏离或遗漏\n- 核查输出是否事实忠实、无偏见\n- 只报告证据充分的问题，每条引用原文为证据\n- 无问题报告"可用"\n\n输出格式：第一行状态判定，后续行可简述问题及修正方向。例:\n可用\n存疑 - 仅2条结果可能不全 → 放宽查询复检\n不可用 - code_runner报路径不存在 → 改用read_file\n\n禁止修正答案。推理放在思考中。'
+      content: '你是逐行审查官。仅审查下方主Agent的思考链、本轮输出和工具结果，不回答用户问题。\n\n准则:\n- 先读[用户问题]确认用户意图，再核查Agent思考是否与之对齐，无偏离或遗漏\n- 对可验证的事实断言调用工具核查，核查后必须输出判定，不得循环调用\n- 核查输出是否事实忠实、无偏见\n- 只报告证据充分的问题，每条引用原文为证据\n- 无问题报告"可用"\n\n输出格式：第一行状态判定，后续行可简述问题及修正方向。例:\n可用\n存疑 - 仅2条结果可能不全 → 放宽查询复检\n不可用 - code_runner报路径不存在 → 改用read_file\n\n禁止修正答案。推理放在思考中。'
     }, {
       role: 'user',
-      content: '[Agent思考]\\n' + (streamReasoning || '(无)') + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults
+      content: '[用户问题]\\n' + (userText || '(无)') + '\\n\\n[Agent思考]\\n' + (streamReasoning || '(无)') + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults
     }];
 
     for (var _cr = 0; ; _cr++) {
@@ -13083,10 +13083,10 @@ async function processUserMessage(userText,taskId){
       if(contentDiv.classList.contains('streaming-cursor')){
         contentDiv.classList.remove('streaming-cursor');
       }
-      var toolNames=pendingToolCalls.map(function(tc){return tc.function.name;}).join(', ');
+      var _toolCountMap={};pendingToolCalls.forEach(function(tc){_toolCountMap[tc.function.name]=(_toolCountMap[tc.function.name]||0)+1;});var toolNames=Object.keys(_toolCountMap).map(function(k){return _toolCountMap[k]>1?k+' ×'+_toolCountMap[k]:k;}).join(', ');
       var progressNote=document.createElement('div');
       progressNote.style.cssText='font-size:12px;color:var(--color-text-secondary);margin:4px 0;font-style:italic';
-      progressNote.textContent=' 正在执行: '+toolNames+'...';
+      progressNote.textContent=' 正在执行: '+toolNames;
       contentDiv.appendChild(progressNote);
 
       // 添加助手消息（含工具调用），保留reasoning_content
@@ -13107,7 +13107,7 @@ async function processUserMessage(userText,taskId){
           });
         })(pendingToolCalls[pt],pt));
       }
-      progressNote.textContent=' 正在执行: '+pendingToolCalls.map(function(tc,_i){return tc.function.name+' ('+(_i+1)+'/'+pendingToolCalls.length+')';}).join(', ')+'...';
+      progressNote.textContent=' 正在执行: '+toolNames;
       var _execResults=await Promise.all(_execPromises);
       _execResults.sort(function(a,b){return a.idx-b.idx;});
 
@@ -13135,7 +13135,7 @@ async function processUserMessage(userText,taskId){
 
       // ★ In-Line 审查 — 工具结果入栈后，思考链+全部工具结果一起审查
       if((settings.honesty_intensity||0) >= 2){
-        var _ilcNote=await _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent);
+        var _ilcNote=await _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText);
         if(_ilcNote){
           messages.push({role:'user',content:'[审查报告] '+_ilcNote});
         }
