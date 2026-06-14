@@ -12742,7 +12742,7 @@ async function searchSimilarExperiences(query,limit){
 // ================================================================
 
 // ===== In-Line 逐行审查（工具全部执行完毕后，思考链+全部工具结果一次性审查） =====
-async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText) {
+async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText, preUserMessages) {
   if (!pendingToolCalls || pendingToolCalls.length === 0) return null;
 
   var _cacheKey = pendingToolCalls.map(function(tc){return tc.function.name;}).join(',') + '|' +
@@ -12778,12 +12778,18 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
       _critiqueLastEl = _critiqueBlock;
     }
     var _critiqueMessages = [{
-      role: 'system',
-      content: '你是逐行审查官。仅审查下方主Agent的思考链、本轮输出和工具结果，不回答用户问题。\n\n准则:\n- 先读[用户问题]确认用户意图，再核查Agent思考是否与之对齐，无偏离或遗漏\n- 对可验证的事实断言调用工具核查，核查后必须输出判定，不得循环调用\n- 核查输出是否事实忠实、无偏见\n- 只报告证据充分的问题，每条引用原文为证据\n- 无问题报告"可用"\n\n输出格式：第一行状态判定，后续行可简述问题及修正方向。例:\n可用\n存疑 - 仅2条结果可能不全 → 放宽查询复检\n不可用 - code_runner报路径不存在 → 改用read_file\n\n禁止修正答案。推理放在思考中。'
-    }, {
-      role: 'user',
-      content: '[用户问题]\\n' + (userText || '(无)') + '\\n\\n[Agent思考]\\n' + (streamReasoning || '(无)') + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults
-    }];
+  role: 'system',
+  content: '你是逐行审查官。仅审查下方主Agent的思考链、本轮输出和工具结果，不回答用户问题。\n\n准则:\n- 先读[用户问题]确认用户意图，再核查Agent思考是否与之对齐，无偏离或遗漏\n- 对可验证的事实断言调用工具核查，核查后必须输出判定，不得循环调用\n- 核查输出是否事实忠实、无偏见\n- 只报告证据充分的问题，每条引用原文为证据\n- 无问题报告"可用"\n\n输出格式：第一行状态判定，后续行可简述问题及修正方向。例:\n可用\n存疑 - 仅2条结果可能不全 → 放宽查询复检\n不可用 - code_runner报路径不存在 → 改用read_file\n\n禁止修正答案。推理放在思考中。'
+}];
+for(var _pci=0;_pci<(preUserMessages||[]).length;_pci++){_critiqueMessages.push(preUserMessages[_pci]);}
+var _filteredReasoning=(streamReasoning||'(无)')
+  .replace(/我们的/g,'Agent们的').replace(/我们/g,'Agent们')
+  .replace(/我的/g,'Agent的').replace(/我/g,'Agent');
+_critiqueMessages.push({
+  role: 'user',
+  content: '[用户问题]\\n' + (userText || '(无)') + '\\n\\n[Agent思考]\\n' + _filteredReasoning + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults
+});
+
 
     for (var _cr = 0; ; _cr++) {
       if (typeof cs !== 'undefined' && cs.stopRequested) break;
@@ -13135,7 +13141,7 @@ async function processUserMessage(userText,taskId){
 
       // ★ In-Line 审查 — 工具结果入栈后，思考链+全部工具结果一起审查
       if((settings.honesty_intensity||0) >= 2){
-        var _ilcNote=await _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText);
+        var _ilcNote=await _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText, _preUserMessages);
         if(_ilcNote){
           messages.push({role:'user',content:'[审查报告] '+_ilcNote});
         }
