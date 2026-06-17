@@ -58,9 +58,10 @@ body{
 /* ===== 聊天区 ===== */
 .chat-container{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
 .messages-list{
-  flex:1;overflow-y:auto;padding:16px;scroll-behavior:smooth;
+  flex:1;overflow-y:auto;padding:16px;scroll-behavior:auto;
   display:flex;flex-direction:column;gap:16px;
 }
+.messages-list.smooth-scroll{scroll-behavior:smooth}
 .welcome-message{
   text-align:center;padding:40px 20px;color:var(--color-text-secondary);line-height:1.8;
 }
@@ -13122,6 +13123,38 @@ async function processUserMessage(userText,taskId){
       var streamReasoning='';
       var streamToolCalls={};
       var hasStreamContent=false;
+      // ★ RAF节流：每帧最多一次渲染+一次滚动，仅近底时自动跟底
+      var _renderPending=false,_scrollPending=false,_latestAgentContent='';
+      function _isNearBottom(el){return el.scrollHeight-el.scrollTop-el.clientHeight<120;}
+      function _scheduleStreamRender(){
+        if(_renderPending)return;_renderPending=true;
+        requestAnimationFrame(function(){
+          _renderPending=false;
+          var body2=contentDiv.querySelector('.msg-body');
+          if(body2)body2.innerHTML=renderMarkdown(_latestAgentContent);
+          else contentDiv.innerHTML=renderMarkdown(_latestAgentContent);
+          _injectCodeCopyButtons(contentDiv);
+          if(contentDiv.classList.contains('streaming-cursor')){
+            contentDiv.classList.remove('streaming-cursor');
+          }
+          if(!_scrollPending&&_isNearBottom(messagesDiv)){
+            _scrollPending=true;
+            requestAnimationFrame(function(){
+              _scrollPending=false;
+              if(_isNearBottom(messagesDiv))messagesDiv.scrollTop=messagesDiv.scrollHeight;
+            });
+          }
+        });
+      }
+      function _scheduleStreamScroll(){
+        if(!_scrollPending&&_isNearBottom(messagesDiv)){
+          _scrollPending=true;
+          requestAnimationFrame(function(){
+            _scrollPending=false;
+            if(_isNearBottom(messagesDiv))messagesDiv.scrollTop=messagesDiv.scrollHeight;
+          });
+        }
+      }
 
       // 【核心修复】每一轮都传 tools，不再限制 round===0
       // 这样 LLM 在收到工具结果后可以继续调用工具（如先 search 再 code_runner）
@@ -13133,20 +13166,14 @@ async function processUserMessage(userText,taskId){
           if(delta&&delta.reasoning_content){
             streamReasoning+=delta.reasoning_content;
             updateThinkingBlock(agentMsgDiv, streamReasoning);
-            messagesDiv.scrollTop=messagesDiv.scrollHeight;
+            _scheduleStreamScroll();
           }
           if(delta&&delta.content){
             hasStreamContent=true;
             streamContent+=delta.content;
             agentContent+=delta.content;
-            var body2=contentDiv.querySelector('.msg-body');
-            if(body2)body2.innerHTML=renderMarkdown(agentContent);
-            else contentDiv.innerHTML=renderMarkdown(agentContent);
-            _injectCodeCopyButtons(contentDiv);
-            if(contentDiv.classList.contains('streaming-cursor')){
-              contentDiv.classList.remove('streaming-cursor');
-            }
-            messagesDiv.scrollTop=messagesDiv.scrollHeight;
+            _latestAgentContent=agentContent;
+            _scheduleStreamRender();
           }
           // 工具调用 — 流式累积
           if(delta&&delta.tool_calls){
@@ -13535,6 +13562,19 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
             contentDiv.parentNode.insertBefore(revThinkBlock,revision.toggle);
             _revisionLastEl=revThinkBlock;
 
+            // ★ RAF节流
+            var _revRenderPending=false,_revLatestContent='';
+            function _scheduleRevRender(){
+              if(_revRenderPending)return;_revRenderPending=true;
+              requestAnimationFrame(function(){
+                _revRenderPending=false;
+                var bodyR=contentDiv.querySelector('.msg-body');
+                if(bodyR)bodyR.innerHTML=renderMarkdown(_revLatestContent);
+                else contentDiv.innerHTML=renderMarkdown(_revLatestContent);
+                _injectCodeCopyButtons(contentDiv);
+                revision.block.textContent=' 修正中'+iterLabelSuffix+'...\n\n'+_revLatestContent.substring(0,2000)+(_revLatestContent.length>2000?'\n...(持续输出中)':'');
+              });
+            }
             var revFinishReason=await streamChatCompletion(revisionMessages,activeTools,
               function(chunk){
                 var delta=chunk.choices?chunk.choices[0].delta:null;
@@ -13545,13 +13585,10 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
                 if(delta&&delta.content){
                   revStreamContent+=delta.content;
                   agentContent+=delta.content;
-                  var bodyR=contentDiv.querySelector('.msg-body');
-                  if(bodyR)bodyR.innerHTML=renderMarkdown(agentContent);
-                  else contentDiv.innerHTML=renderMarkdown(agentContent);
-                  _injectCodeCopyButtons(contentDiv);
-                  revision.block.textContent=' 修正中'+iterLabelSuffix+'...\\n\\n'+agentContent.substring(0,2000)+(agentContent.length>2000?'\\n...(持续输出中)':'');
-
+                  _revLatestContent=agentContent;
+                  _scheduleRevRender();
                 }
+
                 if(delta&&delta.tool_calls){
                   for(var t=0;t<delta.tool_calls.length;t++){
                     var tc=delta.tool_calls[t];
@@ -14027,6 +14064,26 @@ async function streamChatCompletionForFlow(messages, activeTools, cs, messagesDi
       var streamContent='',streamReasoning='',streamTools={};
       if(agentMsgDiv)agentMsgDiv._currentRound=round;
       agentMsgDiv._currentRound = round;
+      // ★ RAF节流
+      var _fwRenderPending=false,_fwLatestContent='',_fwScrollPending=false;
+      function _fwIsNearBottom(){var el=messagesDiv;return el&&el.scrollHeight-el.scrollTop-el.clientHeight<120;}
+      function _scheduleFwRender(){
+        if(_fwRenderPending)return;_fwRenderPending=true;
+        requestAnimationFrame(function(){
+          _fwRenderPending=false;
+          if(contentDiv){
+            var body=contentDiv.querySelector('.msg-body');
+            if(body)body.innerHTML=renderMarkdown(_fwLatestContent);
+            else contentDiv.innerHTML=renderMarkdown(_fwLatestContent);
+            _injectCodeCopyButtons(contentDiv);
+            contentDiv.classList.remove('streaming-cursor');
+          }
+          if(!_fwScrollPending&&_fwIsNearBottom()){
+            _fwScrollPending=true;
+            requestAnimationFrame(function(){_fwScrollPending=false;if(_fwIsNearBottom())messagesDiv.scrollTop=messagesDiv.scrollHeight;});
+          }
+        });
+      }
 
       var finishReason = await streamChatCompletion(
         messages,activeTools,
@@ -14038,13 +14095,8 @@ async function streamChatCompletionForFlow(messages, activeTools, cs, messagesDi
           }
           if(delta&&delta.content){
             streamContent+=delta.content;agentContent+=delta.content;
-            if(contentDiv){
-              var body=contentDiv.querySelector('.msg-body');
-              if(body)body.innerHTML=renderMarkdown(agentContent);
-              else contentDiv.innerHTML=renderMarkdown(agentContent);
-              _injectCodeCopyButtons(contentDiv);
-              contentDiv.classList.remove('streaming-cursor');
-            }
+            _fwLatestContent=agentContent;
+            _scheduleFwRender();
           }
           if(delta&&delta.tool_calls){
             for(var t=0;t<delta.tool_calls.length;t++){
@@ -14125,6 +14177,26 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
 
       var streamContent='',streamReasoning='',streamTools={};
       if(agentMsgDiv)agentMsgDiv._currentRound=round;
+      // ★ RAF节流
+      var _fsRenderPending=false,_fsLatestContent='',_fsScrollPending=false;
+      function _fsIsNearBottom(){var el=messagesDiv;return el&&el.scrollHeight-el.scrollTop-el.clientHeight<120;}
+      function _scheduleFsRender(){
+        if(_fsRenderPending)return;_fsRenderPending=true;
+        requestAnimationFrame(function(){
+          _fsRenderPending=false;
+          if(contentDiv){
+            var body=contentDiv.querySelector('.msg-body');
+            if(body)body.innerHTML=renderMarkdown(_fsLatestContent);
+            else contentDiv.innerHTML=renderMarkdown(_fsLatestContent);
+            _injectCodeCopyButtons(contentDiv);
+            contentDiv.classList.remove('streaming-cursor');
+          }
+          if(!_fsScrollPending&&_fsIsNearBottom()){
+            _fsScrollPending=true;
+            requestAnimationFrame(function(){_fsScrollPending=false;if(_fsIsNearBottom())messagesDiv.scrollTop=messagesDiv.scrollHeight;});
+          }
+        });
+      }
 
       var finishReason = await streamChatCompletion(
         messages,activeTools,
@@ -14136,13 +14208,8 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
           }
           if(delta&&delta.content){
             streamContent+=delta.content;agentContent+=delta.content;
-            if(contentDiv){
-              var body=contentDiv.querySelector('.msg-body');
-              if(body)body.innerHTML=renderMarkdown(agentContent);
-              else contentDiv.innerHTML=renderMarkdown(agentContent);
-              _injectCodeCopyButtons(contentDiv);
-              contentDiv.classList.remove('streaming-cursor');
-            }
+            _fsLatestContent=agentContent;
+            _scheduleFsRender();
           }
           if(delta&&delta.tool_calls){
             for(var t=0;t<delta.tool_calls.length;t++){
