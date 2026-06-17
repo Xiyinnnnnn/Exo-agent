@@ -2628,26 +2628,26 @@ flow_context_new summary="已完成v1: engine.js+handler.js。测试15/15通过�
 var LOG_LEVELS={ERROR:0,WARN:1,INFO:2,DEBUG:3};
 
 var EXTERNAL_LIBRARIES={
-  'markdown-it':{url:'https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js',global:'markdownit',required:true,loadOnStart:true},
-  'katex':{url:'https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js',css:'https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css',global:'katex',required:false,loadOnStart:false},
-  'highlight':{url:'https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js',css:'https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github.min.css',global:'hljs',required:false,loadOnStart:false},
-  'mermaid':{url:'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js',global:'mermaid',required:false,loadOnStart:false},
-  'echarts':{url:'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js',global:'echarts',required:false,loadOnStart:false},
-  'xlsx':{url:'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js',fallback:'https://cdn.jsdelivr.net/npm/xlsx@0.20.1/dist/xlsx.full.min.js',global:'XLSX',required:false,loadOnStart:false},
-  'docx':{url:'https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js',fallback:'https://unpkg.com/docx@8.5.0/build/index.umd.js',global:'docx',altGlobals:['Docx'],required:false,loadOnStart:false},
-  'fuse':{url:'https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js',global:'Fuse',required:false,loadOnStart:false},
-  'pako':{url:'https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js',global:'pako',required:false,loadOnStart:false},
-  'ajv':{url:'https://cdn.jsdelivr.net/npm/ajv@8/dist/ajv.min.js',global:'ajv7',required:false,loadOnStart:false},
-  'yaml':{url:'https://cdn.jsdelivr.net/npm/yaml@2/dist/index.min.js',global:'YAML',required:false,loadOnStart:false},
-  'mathjs':{url:'https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js',fallback:'https://cdn.jsdelivr.net/npm/mathjs@12.4.3/dist/math.min.js',global:'math',altGlobals:['mathjs'],required:false,loadOnStart:false},
-  'pdfjs':{url:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',global:'pdfjsLib',required:false,loadOnStart:false},
-  'mammoth':{url:'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js',global:'mammoth',required:false,loadOnStart:false},
-  'pptxjs':{url:'https://cdn.jsdelivr.net/npm/pptxjs@3.0.0/dist/pptxjs.min.js',global:'pptxJs',required:false,loadOnStart:false},
-  'jszip':{url:'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',global:'JSZip',required:false,loadOnStart:false},
-  'tesseract':{url:'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js',global:'Tesseract',required:false,loadOnStart:false},
-  'sqljs':{url:'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.min.js',global:'initSqlJs',required:false,loadOnStart:false},
-  'mespeak':{url:'https://www.masswerk.at/mespeak/mespeak.full.js',fallback:'https://cdn.jsdelivr.net/gh/masswerk/mespeak@2.0.5/lib/mespeak.full.min.js',global:'meSpeak',required:false,loadOnStart:false},
-  'html2pdf':{url:'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js',global:'html2pdf',required:false,loadOnStart:false}
+  'markdown-it':{urls:['https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js','https://unpkg.com/markdown-it@14/dist/markdown-it.min.js','https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js'],global:'markdownit',required:true,loadOnStart:true},
+  'katex':{urls:['https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js','https://unpkg.com/katex@0.16/dist/katex.min.js','https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js'],cssUrls:['https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css','https://unpkg.com/katex@0.16/dist/katex.min.css','https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css'],global:'katex',required:false,loadOnStart:false},
+  'highlight':{urls:['https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js','https://unpkg.com/@highlightjs/cdn-assets@11.9.0/highlight.min.js','https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'],cssUrls:['https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github.min.css','https://unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/github.min.css','https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css'],global:'hljs',required:false,loadOnStart:false},
+  'mermaid':{urls:['https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js','https://unpkg.com/mermaid@10/dist/mermaid.min.js','https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js'],global:'mermaid',required:false,loadOnStart:false},
+  'echarts':{urls:['https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js','https://unpkg.com/echarts@5/dist/echarts.min.js','https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js'],global:'echarts',required:false,loadOnStart:false},
+  'xlsx':{urls:['https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js','https://cdn.jsdelivr.net/npm/xlsx@0.20.1/dist/xlsx.full.min.js','https://unpkg.com/xlsx@0.20.1/dist/xlsx.full.min.js'],global:'XLSX',required:false,loadOnStart:false},
+  'docx':{urls:['https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js','https://unpkg.com/docx@8.5.0/build/index.umd.min.js','https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js'],global:'docx',altGlobals:['Docx'],required:false,loadOnStart:false},
+  'fuse':{urls:['https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js','https://unpkg.com/fuse.js@7.0.0/dist/fuse.min.js','https://cdnjs.cloudflare.com/ajax/libs/fuse.js/7.0.0/fuse.min.js'],global:'Fuse',required:false,loadOnStart:false},
+  'pako':{urls:['https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js','https://unpkg.com/pako@2/dist/pako.min.js','https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js'],global:'pako',required:false,loadOnStart:false},
+  'ajv':{urls:['https://cdn.jsdelivr.net/npm/ajv@8/dist/ajv.min.js','https://unpkg.com/ajv@8/dist/ajv.min.js','https://cdn.jsdelivr.net/npm/ajv@8.17.1/dist/ajv.min.js'],global:'ajv7',required:false,loadOnStart:false},
+  'yaml':{urls:['https://cdn.jsdelivr.net/npm/yaml@2/dist/index.min.js','https://unpkg.com/yaml@2/dist/index.min.js','https://cdn.jsdelivr.net/npm/yaml@2.7.0/dist/index.min.js'],global:'YAML',required:false,loadOnStart:false},
+  'mathjs':{urls:['https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js','https://cdn.jsdelivr.net/npm/mathjs@12.4.3/dist/math.min.js','https://unpkg.com/mathjs@12.4.3/dist/math.min.js'],global:'math',altGlobals:['mathjs'],required:false,loadOnStart:false},
+  'pdfjs':{urls:['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js','https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js','https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js'],global:'pdfjsLib',required:false,loadOnStart:false},
+  'mammoth':{urls:['https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js','https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js','https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js'],global:'mammoth',required:false,loadOnStart:false},
+  'pptxjs':{urls:['https://cdn.jsdelivr.net/npm/pptxjs@3.0.0/dist/pptxjs.min.js','https://unpkg.com/pptxjs@3.0.0/dist/pptxjs.min.js','https://cdn.jsdelivr.net/npm/pptxjs@3.0.0/dist/pptxjs.min.js'],global:'pptxJs',required:false,loadOnStart:false},
+  'jszip':{urls:['https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js','https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js','https://unpkg.com/jszip@3.10.1/dist/jszip.min.js'],global:'JSZip',required:false,loadOnStart:false},
+  'tesseract':{urls:['https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js','https://unpkg.com/tesseract.js@5/dist/tesseract.min.js','https://cdn.jsdelivr.net/npm/tesseract.js@5.1.5/dist/tesseract.min.js'],global:'Tesseract',required:false,loadOnStart:false},
+  'sqljs':{urls:['https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.min.js','https://unpkg.com/sql.js@1.10.3/dist/sql-wasm.min.js','https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.min.js'],global:'initSqlJs',required:false,loadOnStart:false},
+  'mespeak':{urls:['https://www.masswerk.at/mespeak/mespeak.full.js','https://cdn.jsdelivr.net/gh/masswerk/mespeak@2.0.5/lib/mespeak.full.min.js','https://unpkg.com/mespeak@2.0.5/lib/mespeak.full.min.js'],global:'meSpeak',required:false,loadOnStart:false},
+  'html2pdf':{urls:['https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js','https://unpkg.com/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js','https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js'],global:'html2pdf',required:false,loadOnStart:false}
 };
 
 // ===== 文件解析器注册表 =====
@@ -3324,6 +3324,8 @@ var taskWorkerManager=null;
 var fileLock={owner:null,expiresAt:0,reason:''};
 var _ajvInstance=null;
 var LIBRARY_LOAD_PROMISES={};
+var LIBRARY_FAILED_AT={};
+var LIBRARY_RETRY_COOLDOWN=30000;
 var mdRenderer=null;
 var heartbeatIntervalId=null;
 var healthCheckIntervalId=null;
@@ -4981,50 +4983,88 @@ var errorHandler={
 // 第14部分：外部库加载
 // ================================================================
 
+async function _loadCSSWithFallback(libName,cssUrls){
+  for(var ci=0;ci<cssUrls.length;ci++){
+    var cssUrl=cssUrls[ci];
+    if(document.querySelector('link[href="'+cssUrl+'"]'))return;
+    try{
+      await new Promise(function(res,rej){
+        var link=document.createElement('link');
+        link.rel='stylesheet';link.href=cssUrl;
+        link.onload=res;link.onerror=function(){rej(new Error('CSS加载失败: '+cssUrl));};
+        document.head.appendChild(link);
+      });
+      return;
+    }catch(e){if(ci===cssUrls.length-1)throw e;}
+  }
+}
+
 async function loadLibrary(libName){
   var lib=EXTERNAL_LIBRARIES[libName];
   if(!lib)throw new Error('Unknown library: '+libName);
   if(LIBRARY_LOAD_PROMISES[libName]==='loaded')return;
   if(LIBRARY_LOAD_PROMISES[libName] instanceof Promise)return LIBRARY_LOAD_PROMISES[libName];
-  if(lib.global&&window[lib.global]){LIBRARY_LOAD_PROMISES[libName]='loaded';return;}
-  var loadPromise=new Promise(function(resolve,reject){
-    (async function(){
-      try{
-        if(lib.css&&!document.querySelector('link[href="'+lib.css+'"]')){
-          var link=document.createElement('link');link.rel='stylesheet';link.href=lib.css;document.head.appendChild(link);
-        }
-        // 尝试多URL加载
-        var urlsToTry=[lib.url];
-        if(lib.fallback)urlsToTry.push(lib.fallback);
-        var loadedGlobal=null;
-        for(var ui=0;ui<urlsToTry.length;ui++){
-          var url=urlsToTry[ui];
-          if(document.querySelector('script[src="'+url+'"]')){loadedGlobal=true;break;}
+  var allGlobals=[lib.global].concat(lib.altGlobals||[]);
+  for(var gi=0;gi<allGlobals.length;gi++){
+    if(allGlobals[gi]&&window[allGlobals[gi]]){
+      LIBRARY_LOAD_PROMISES[libName]='loaded';LIBRARY_FAILED_AT[libName]=0;return;
+    }
+  }
+  if(LIBRARY_LOAD_PROMISES[libName]==='failed'){
+    var lastFail=LIBRARY_FAILED_AT[libName]||0;
+    var elapsed=Date.now()-lastFail;
+    if(elapsed<LIBRARY_RETRY_COOLDOWN){
+      throw new Error('Library '+libName+' 加载失败（冷却中，'+Math.ceil((LIBRARY_RETRY_COOLDOWN-elapsed)/1000)+'秒后可重试）');
+    }
+    delete LIBRARY_LOAD_PROMISES[libName];
+    debugLogger.info('库 '+libName+' 冷却过期，允许重新加载');
+  }
+  var loadPromise=(async function(){
+    try{
+      var cssList=lib.cssUrls||(lib.css?[lib.css]:[]);
+      if(cssList.length>0){await _loadCSSWithFallback(libName,cssList);}
+      var jsUrls=lib.urls||(lib.url?[lib.url].concat(lib.fallback||[]):[]);
+      if(!jsUrls||jsUrls.length===0)throw new Error('Library '+libName+' 没有配置任何URL');
+      var loadedGlobal=null;
+      for(var retryRound=0;retryRound<3;retryRound++){
+        for(var ui=0;ui<jsUrls.length;ui++){
+          var url=jsUrls[ui];
+          if(document.querySelector('script[src="'+url+'"]')){
+            for(var gi2=0;gi2<allGlobals.length;gi2++){if(allGlobals[gi2]&&window[allGlobals[gi2]]){loadedGlobal=allGlobals[gi2];break;}}
+            if(loadedGlobal)break;
+          }
           try{
             await new Promise(function(res,rej){
               var script=document.createElement('script');script.src=url;
-              script.onload=res;script.onerror=function(){rej(new Error('Failed to load '+libName+' from '+url));};
+              script.crossOrigin='anonymous';
+              script.onload=res;script.onerror=function(){if(script.parentNode)script.parentNode.removeChild(script);rej(new Error('网络错误: '+url));};
               document.head.appendChild(script);
             });
-          }catch(e){if(ui===urlsToTry.length-1)throw e;continue;}
-          var attempts=0;
-          var globalsToCheck=[lib.global].concat(lib.altGlobals||[]);
-          while(attempts<50){
-            for(var gi=0;gi<globalsToCheck.length;gi++){
-              if(window[globalsToCheck[gi]]){loadedGlobal=globalsToCheck[gi];break;}
+            var attempts=0;
+            while(attempts<50){
+              for(var gi3=0;gi3<allGlobals.length;gi3++){if(allGlobals[gi3]&&window[allGlobals[gi3]]){loadedGlobal=allGlobals[gi3];break;}}
+              if(loadedGlobal)break;
+              await new Promise(function(r){setTimeout(r,100);});attempts++;
             }
             if(loadedGlobal)break;
-            await new Promise(function(r){return setTimeout(r,100);});attempts++;
-          }
-          if(loadedGlobal)break;
+          }catch(e){}
         }
-        if(!loadedGlobal)throw new Error('Library '+libName+' loaded but global not found (tried: '+[lib.global].concat(lib.altGlobals||[]).join(', ')+')');
-        LIBRARY_LOAD_PROMISES[libName]='loaded';
-        debugLogger.info('库已加载: '+libName);
-        resolve();
-      }catch(error){LIBRARY_LOAD_PROMISES[libName]='failed';reject(error);}
-    })();
-  });
+        if(loadedGlobal)break;
+        if(retryRound<2){
+          var delay=Math.pow(2,retryRound)*1000;
+          debugLogger.warn('库 '+libName+' 第'+(retryRound+1)+'轮全部源失败，'+delay+'ms后第'+(retryRound+2)+'轮重试...');
+          await new Promise(function(r){setTimeout(r,delay);});
+        }
+      }
+      if(!loadedGlobal)throw new Error('Library '+libName+' 所有源均失败（已重试3轮），期望全局: '+allGlobals.filter(Boolean).join(', '));
+      LIBRARY_LOAD_PROMISES[libName]='loaded';LIBRARY_FAILED_AT[libName]=0;
+      debugLogger.info('✓ 库已加载: '+libName+' (全局: '+loadedGlobal+')');
+    }catch(error){
+      LIBRARY_LOAD_PROMISES[libName]='failed';LIBRARY_FAILED_AT[libName]=Date.now();
+      debugLogger.error('✗ 库 '+libName+' 最终加载失败: '+error.message);
+      throw error;
+    }
+  })();
   LIBRARY_LOAD_PROMISES[libName]=loadPromise;
   return loadPromise;
 }
