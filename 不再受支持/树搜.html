@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MCTS⁺ × LLM — 混合强化树搜索引擎</title>
+<style>
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;
+  --text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--gold:#e3b341;
+  --green:#3fb950;--warn:#d2991d;--danger:#f85149;--purple:#a371f7;
+  --font:13px/1.5 system-ui,'Segoe UI',sans-serif;
+  --radius:6px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:var(--font);height:100vh;overflow:hidden}
+
+#app{display:grid;grid-template-columns:340px 1fr 320px;grid-template-rows:1fr auto;height:100vh;gap:1px;background:var(--border)}
+#left-panel{background:var(--bg2);overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+#center-panel{background:var(--bg);position:relative;overflow:hidden}
+#right-panel{background:var(--bg2);overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+#bottom-panel{grid-column:1/-1;background:var(--bg2);max-height:260px;overflow-y:auto;padding:12px 16px;border-top:1px solid var(--border);display:none}
+
+#tree-canvas{width:100%;height:100%;display:block;cursor:grab}
+#tree-canvas:active{cursor:grabbing}
+.canvas-overlay{position:absolute;top:8px;left:8px;background:rgba(22,27,34,.94);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;font-size:11px;color:var(--text2);pointer-events:none;z-index:5;display:flex;gap:14px;flex-wrap:wrap}
+.canvas-overlay span{white-space:nowrap}
+.canvas-overlay .ov{color:var(--accent);font-weight:600}
+
+.panel-title{font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:6px}
+.card-header{font-weight:600;font-size:12px;margin-bottom:6px}
+label{font-size:12px;color:var(--text2);display:block;margin-bottom:3px}
+input,textarea,select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:7px 9px;color:var(--text);font:var(--font);resize:vertical}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(88,166,255,.12)}
+textarea{min-height:72px}
+button,.btn{padding:7px 14px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font:var(--font);font-weight:500;transition:all .12s;white-space:nowrap}
+button:hover{background:var(--bg);border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover{background:#4090e0}
+button.gold{background:var(--gold);border-color:var(--gold);color:#000}
+button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+button:disabled{opacity:.35;cursor:not-allowed}
+.btn-row{display:flex;gap:6px;flex-wrap:wrap}
+
+.badge{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600}
+.badge-ok{background:rgba(63,185,80,.15);color:var(--green)}
+.badge-warn{background:rgba(210,153,29,.15);color:var(--warn)}
+.badge-info{background:rgba(88,166,255,.15);color:var(--accent)}
+.badge-err{background:rgba(248,81,73,.15);color:var(--danger)}
+
+.phase-steps{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+.phase-step{padding:3px 10px;border-radius:12px;font-size:11px;background:var(--bg);color:var(--text2);border:1px solid var(--border);transition:all .3s}
+.phase-step.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.phase-step.done{background:rgba(63,185,80,.15);color:var(--green);border-color:var(--green)}
+
+.stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.stat-item{background:var(--bg);border-radius:5px;padding:7px;text-align:center}
+.stat-value{font-size:17px;font-weight:700;color:var(--accent)}
+.stat-label{font-size:10px;color:var(--text2)}
+
+.log-stream{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:8px;max-height:220px;overflow-y:auto;font-family:'Cascadia Code',Consolas,monospace;font-size:11px;line-height:1.45}
+.log-entry{padding:1px 0;border-bottom:1px solid rgba(48,54,61,.35)}
+.log-entry .ts{color:var(--text2);margin-right:5px}
+.log-entry.mcts{color:var(--accent)}
+.log-entry.expand{color:var(--green)}
+.log-entry.dead{color:var(--danger)}
+.log-entry.backprop{color:var(--purple)}
+.log-entry.adv{color:var(--gold)}
+.log-entry.conv{color:var(--warn)}
+.log-entry.info{color:var(--text2)}
+.log-entry.err{color:var(--danger);background:rgba(248,81,73,.08)}
+
+.progress-bar{height:4px;background:var(--bg);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;background:var(--accent);transition:width .2s;border-radius:2px}
+
+.report-path{background:var(--bg);border-radius:5px;padding:10px;margin-bottom:6px;border-left:3px solid var(--accent)}
+.report-path.best{border-left-color:var(--gold)}
+.report-path.fragile{border-left-color:var(--danger)}
+.path-step{display:flex;align-items:flex-start;gap:6px;padding:3px 0;font-size:12px}
+.path-idx{color:var(--text2);font-weight:600;min-width:20px}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:500px;width:90%;max-height:85vh;overflow-y:auto}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+@media(max-width:768px){
+  body{overflow:hidden;position:fixed;inset:0}
+  #app{grid-template-columns:1fr;grid-template-rows:1fr auto}
+  #left-panel,#right-panel{position:fixed;top:0;width:85vw;max-width:340px;height:100vh;z-index:30;transform:translateX(-100%);transition:transform .3s}
+  #right-panel{right:0;transform:translateX(100%)}
+  #left-panel.mob-open{transform:translateX(0)}
+  #right-panel.mob-open{transform:translateX(0)}
+  #mob-nav{display:flex!important;position:fixed;bottom:0;left:0;right:0;height:44px;background:var(--bg2);border-top:1px solid var(--border);z-index:40;gap:4px;padding:4px 8px}
+  #mob-nav button{flex:1;font-size:11px;padding:4px;border-radius:4px;background:var(--bg3);border:1px solid var(--border);color:var(--text)}
+  #mob-nav button.active{background:var(--accent);color:#fff}
+  #center-panel{height:calc(100vh - 44px)}
+  #bottom-panel{position:fixed;bottom:44px;left:0;right:0;z-index:35;max-height:55vh;overflow-y:auto;transform:translateY(102%);transition:transform .3s;display:block!important;border-top:2px solid var(--accent);box-shadow:0 -4px 16px rgba(0,0,0,.4)}
+  #bottom-panel.mob-open{transform:translateY(0)}
+}
+</style>
+</head>
+<body>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settings-modal" style="display:none">
+  <div class="modal">
+    <h3 style="margin-bottom:12px">⚙️ API 设置</h3>
+    <div style="margin-bottom:10px"><label>API Key</label><input type="password" id="api-key-input" placeholder="sk-..."></div>
+    <div style="margin-bottom:10px"><label>Base URL</label><input type="text" id="base-url-input" value="https://api.deepseek.com"></div>
+    <div style="margin-bottom:10px"><label>默认模型</label><select id="default-model-select"><option value="deepseek-v4-pro" selected>deepseek-v4-pro (深度推理)</option><option value="deepseek-v4-flash">deepseek-v4-flash (快速)</option></select></div>
+    <div style="margin-bottom:10px"><label>思考模式</label><select id="thinking-select"><option value="enabled" selected>启用</option><option value="disabled">禁用</option></select></div>
+    <div style="margin-bottom:10px"><label>思考强度</label><select id="effort-select"><option value="high" selected>high</option><option value="max">max</option></select></div>
+    <div class="btn-row"><button onclick="App.saveSettings()" class="primary">保存</button><button onclick="App.closeSettings()">取消</button></div>
+  </div>
+</div>
+
+<div id="mob-nav" style="display:none">
+  <button onclick="UI.toggleMobile('left')">📋 面板</button>
+  <button onclick="UI.toggleMobile('report')">📑 报告</button>
+  <button onclick="UI.toggleMobile('right')">📊 日志</button>
+</div>
+
+<div id="app">
+  <!-- LEFT PANEL -->
+  <div id="left-panel">
+    <div class="panel-title">🌳 MCTS⁺ × LLM</div>
+    <div class="phase-steps" id="phase-steps">
+      <span class="phase-step active" data-p="IDLE">① 输入</span>
+      <span class="phase-step" data-p="ANALYZING">② 分析</span>
+      <span class="phase-step" data-p="CONSTRAINTS">③ 约束</span>
+      <span class="phase-step" data-p="READY">④ 参数</span>
+      <span class="phase-step" data-p="RUNNING">⑤ 搜索</span>
+      <span class="phase-step" data-p="COMPLETED">⑥ 报告</span>
+    </div>
+    <div class="card"><div class="card-header" id="form-header">📝 输入问题</div><div id="form-body"></div></div>
+    <div class="card" id="search-card" style="display:none"><div class="card-header">🎮 搜索控制</div><div class="btn-row"><button onclick="App.centerTree()">🎯 居中最佳路径</button><button onclick="CanvasRenderer.zoomFit()">🔍 缩放适配</button></div></div>
+    <div class="btn-row" id="action-buttons"></div>
+  </div>
+
+  <!-- CENTER (Canvas) -->
+  <div id="center-panel">
+    <canvas id="tree-canvas"></canvas>
+    <div class="canvas-overlay" id="canvas-overlay" style="pointer-events:auto;cursor:pointer" onclick="App.centerTree()" title="点击居中最佳路径"><span>就绪 (点击居中)</span></div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div id="right-panel">
+    <div class="panel-title">📋 实时日志</div>
+    <div class="log-stream" id="log-stream"><div class="log-entry"><span class="ts">--:--:--</span>系统就绪，请配置 API Key</div></div>
+    <div class="stats-grid" style="margin-top:8px" id="stats-grid">
+      <div class="stat-item"><div class="stat-value" id="s-sims">0</div><div class="stat-label">模拟次数</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-nodes">0</div><div class="stat-label">节点数</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-depth">0</div><div class="stat-label">最大深度</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-best">-</div><div class="stat-label">最优值</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-regret">-</div><div class="stat-label">后悔值比</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-calls">0</div><div class="stat-label">API调用</div></div>
+    </div>
+    <div class="card" style="margin-top:8px" id="history-card"><div class="card-header">💾 历史会话</div><div id="history-list" style="max-height:150px;overflow-y:auto;font-size:11px"><span style="color:var(--text2)">加载中...</span></div></div>
+    <div class="btn-row" style="margin-top:6px">
+      <button onclick="App.openSettings()">⚙️ 设置</button>
+      <button id="btn-pause" onclick="App.togglePause()" disabled>⏯️ 暂停</button>
+      <button id="btn-stop" onclick="App.stopSearch()" class="danger" disabled>⏹️ 停止</button>
+    </div>
+  </div>
+
+  <!-- BOTTOM (Report) -->
+  <div id="bottom-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between"><div class="panel-title">📑 搜索结果报告</div><button onclick="document.getElementById('bottom-panel').style.display='none'" style="background:transparent;border:none;color:var(--text2);cursor:pointer;font-size:16px">✕</button></div>
+    <div id="report-content"></div>
+  </div>
+</div>
+
+<script>
+// ==========================================================================
+// SECTION 0: 配置 & 工具
+// ==========================================================================
+const CFG={
+  API_KEY:'',API_BASE_URL:'https://api.deepseek.com',DEFAULT_MODEL:'deepseek-v4-pro',
+  THINKING:'enabled',EFFORT:'high',MAX_TOKENS:4096,MAX_TOKENS_LARGE:8192,
+  // MCTS 参数
+  UCB_C:1.414,          // UCB1探索常数 (理论推荐√2)
+  PHI:0.08,             // 信息素加成系数
+  VL_WEIGHT:0.5,        // 虚拟损失权重
+  DEATH_PENALTY:0.1,    // 死亡惩罚因子
+  Q_LOCAL:0.08,         // 局部信息素沉积率
+  Q_GLOBAL:0.3,         // 全局信息素沉积率
+  MIN_PHEROMONE:0.001,  // 保底信息素
+  MAX_PHEROMONE:5.0,    // 信息素上限
+  CYCLE_SIMILARITY:0.75,
+  RESOURCE_THRESHOLD:100,
+  ADVERSARIAL_INTERVAL:80, // 每N次模拟对抗
+  CONVERGE_CHECK_INTERVAL:50,
+  REGRET_RATIO_THRESHOLD:0.05,
+  VALUE_STDDEV_THRESHOLD:0.02,
+  MIN_ROOT_VISITS:30,
+  // 强度等级
+  LEVELS:{
+    1:{sims:120,maxDepth:3,evapRate:0.02,concur:5,tokenBudget:15000},
+    2:{sims:300,maxDepth:4,evapRate:0.03,concur:8,tokenBudget:35000},
+    3:{sims:600,maxDepth:5,evapRate:0.05,concur:10,tokenBudget:70000},
+    4:{sims:1200,maxDepth:6,evapRate:0.08,concur:15,tokenBudget:150000},
+    5:{sims:2500,maxDepth:7,evapRate:0.10,concur:25,tokenBudget:300000},
+    6:{sims:4000,maxDepth:8,evapRate:0.12,concur:40,tokenBudget:500000},
+    7:{sims:6000,maxDepth:10,evapRate:0.15,concur:60,tokenBudget:800000},
+    8:{sims:10000,maxDepth:13,evapRate:0.20,concur:100,tokenBudget:1300000},
+    9:{sims:18000,maxDepth:16,evapRate:0.25,concur:150,tokenBudget:2500000},
+    10:{sims:35000,maxDepth:22,evapRate:0.30,concur:200,tokenBudget:5500000}
+  }
+};
+function uid(){return crypto.randomUUID?crypto.randomUUID():'xxxx-xxxx-4xxx-yxxx-xxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:r&0x3|0x8).toString(16)})}
+function dc(o){return JSON.parse(JSON.stringify(o))}
+function ts(){const d=new Date();return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`}
+
+// ==========================================================================
+// SECTION 1: 全局状态
+// ==========================================================================
+const S={
+  phase:'IDLE',problem:'',constraints:[],knowledgeBase:'',analysis:null,
+  level:5,cfg:CFG.LEVELS[5],answeredCtx:[],constraintRound:0,followupQs:[],
+  // 树
+  rootNodeId:null,nodes:new Map(),edges:new Map(),
+  // 模拟统计 + 每条路径的完整追踪
+  simCount:0,completedSims:0,pathHistory:[],
+  pathTraces:[], // ★ {edgeIds:[],nodes:[],score,death,adversarial} 完整推理链
+  bestPathId:null,bestPathValue:-Infinity,
+  // 收敛
+  converged:false,convergenceData:{regretRatio:1,valueStddev:1,minRootVisits:0},
+  // 并发
+  activeSims:0,maxConcurrent:CFG.LEVELS[5].concur,
+  latencyWindow:[],
+  // 对抗
+  lastAdversarial:0,adversarialResults:[],
+  // 统计
+  stats:{apiCalls:0,totalTokens:0,maxDepth:0,deaths:{},startedAt:null,endedAt:null},
+  // 控制
+  running:false,paused:false,aborter:null,pausePromise:null,pauseResolve:null,
+  lastError:null,errorPhase:null,
+  animFrame:0,animTimer:null,
+  // 画布控制
+  canvasAutoCenter:true,canvasPanOX:0,canvasPanOY:0
+};
+
+// ==========================================================================
+// SECTION 2: 节点与边的数据结构 (增强版)
+// ==========================================================================
+// Node: {id,state,depth,parentId,children:Edge[],createdAt,expandedAt,
+//        visits,totalValue,virtualVisits,virtualValue,advWeakness,advResults[]}
+// Edge: {id,fromId,toId,action,reasoning,visits,totalValue,
+//        pheromone,heuristic,advScore}
+const Tree={
+  createRoot(stateDesc){
+    const n={id:uid(),state:stateDesc,depth:0,parentId:null,children:[],
+      createdAt:Date.now(),expandedAt:null,
+      visits:0,totalValue:0,virtualVisits:0,virtualValue:0,
+      advWeakness:null,advResults:[]};
+    S.nodes.set(n.id,n);S.rootNodeId=n.id;return n;
+  },
+  createChild(parentId,stateDesc,actionDesc,reasoning='',probHint=0.3){
+    const p=S.nodes.get(parentId);if(!p)return null;
+    const n={id:uid(),state:stateDesc,depth:p.depth+1,parentId,
+      children:[],createdAt:Date.now(),expandedAt:null,
+      visits:0,totalValue:0,virtualVisits:0,virtualValue:0,
+      advWeakness:null,advResults:[]};
+    const e={id:uid(),fromId:parentId,toId:n.id,
+      action:actionDesc,reasoning,
+      visits:0,totalValue:0,
+      pheromone:0.1,heuristic:probHint,
+      advScore:null};
+    S.nodes.set(n.id,n);S.edges.set(e.id,e);p.children.push(e);return {node:n,edge:e};
+  },
+  getNodeChain(nodeId){
+    const c=[];let cur=nodeId;
+    while(cur){const n=S.nodes.get(cur);if(!n)break;c.unshift(n);cur=n.parentId;}
+    return c;
+  },
+  getAncestorStates(nodeId,maxN=8){
+    const ss=[];let cur=S.nodes.get(nodeId);
+    while(cur&&cur.parentId&&ss.length<maxN){
+      const p=S.nodes.get(cur.parentId);if(p)ss.push(p.state);cur=p;
+    }
+    return ss;
+  }
+};
+
+// ==========================================================================
+// SECTION 3: MCTS 内核 — UCB1 + 回溯传播 + 虚拟损失
+// ==========================================================================
+const MCTS={
+  /** UCB1 选择公式：W/N + C*sqrt(ln(P)/N) + φ*τ */
+  selectEdge(nodeId){
+    const node=S.nodes.get(nodeId);
+    if(!node||node.children.length===0)return null;
+    const edges=node.children;
+    const totalVisits=node.visits+node.virtualVisits;
+    if(totalVisits===0)return edges[Math.floor(Math.random()*edges.length)];
+
+    let bestEdge=null,bestValue=-Infinity;
+    for(const e of edges){
+      const N=e.visits+e.virtualVisits||0.001;
+      const W=e.totalValue-(e.virtualVisits>0?CFG.VL_WEIGHT*e.virtualVisits:0);
+      const exploit=W/N;
+      const explore=CFG.UCB_C*Math.sqrt(Math.log(totalVisits)/N);
+      const pheromone=CFG.PHI*e.pheromone;
+      const ucb1=exploit+explore+pheromone;
+      if(ucb1>bestValue){bestValue=ucb1;bestEdge=e;}
+    }
+    return bestEdge;
+  },
+
+  /** 标记虚拟损失 */
+  markVL(edgeId){
+    const e=S.edges.get(edgeId);if(!e)return;
+    e.virtualVisits=(e.virtualVisits||0)+1;
+    const n=S.nodes.get(e.fromId);if(n)n.virtualVisits=(n.virtualVisits||0)+1;
+  },
+
+  /** 移除虚拟损失 */
+  unmarkVL(edgeId){
+    const e=S.edges.get(edgeId);if(!e)return;
+    e.virtualVisits=Math.max(0,(e.virtualVisits||0)-1);
+    const n=S.nodes.get(e.fromId);if(n)n.virtualVisits=Math.max(0,(n.virtualVisits||0)-1);
+  },
+
+  /** 回溯传播 — 全链路 */
+  backpropagate(edgeIds,value,pathNodeIds){
+    for(let i=edgeIds.length-1;i>=0;i--){
+      const e=S.edges.get(edgeIds[i]);if(!e)continue;
+      e.visits++;e.totalValue+=value;
+      e.pheromone=Math.min(CFG.MAX_PHEROMONE,e.pheromone+CFG.Q_LOCAL*value);
+      const n=S.nodes.get(e.toId);if(n){n.visits++;n.totalValue+=value;}
+    }
+    // 全局沉积
+    if(value>0.5){
+      for(const eid of edgeIds){
+        const e=S.edges.get(eid);
+        if(e)e.pheromone=Math.min(CFG.MAX_PHEROMONE,e.pheromone+CFG.Q_GLOBAL*value);
+      }
+    }
+    // 更新最优路径
+    if(value>S.bestPathValue){
+      S.bestPathValue=value;S.bestPathId=edgeIds[edgeIds.length-1]||null;
+    }
+  },
+
+  /** 信息素蒸发 */
+  evaporate(){
+    const rho=S.cfg.evapRate;
+    for(const e of S.edges.values()){
+      e.pheromone=Math.max(CFG.MIN_PHEROMONE,e.pheromone*(1-rho));
+    }
+  },
+
+  /** 3重收敛检测 */
+  checkConvergence(){
+    const root=S.nodes.get(S.rootNodeId);if(!root||root.children.length<2)return false;
+
+    // 检测1: 后悔值比
+    const sorted=[...root.children].sort((a,b)=>(b.visits||0)-(a.visits||0));
+    const bestV=sorted[0]?.visits||0;
+    const secondV=sorted[1]?.visits||1;
+    const regretRatio=secondV/Math.max(1,bestV);
+    S.convergenceData.regretRatio=regretRatio;
+
+    // 检测2: 估值稳定
+    const recent=S.pathHistory.slice(-100);
+    let valueStddev=1;
+    if(recent.length>=20){
+      const mean=recent.reduce((a,b)=>a+b,0)/recent.length;
+      valueStddev=Math.sqrt(recent.reduce((s,v)=>(s+(v-mean)**2),0)/recent.length);
+    }
+    S.convergenceData.valueStddev=valueStddev;
+
+    // 检测3: 根子节点充分探索
+    const minVisits=Math.min(...root.children.map(e=>e.visits||0));
+    S.convergenceData.minRootVisits=minVisits;
+
+    return regretRatio<CFG.REGRET_RATIO_THRESHOLD
+      && valueStddev<CFG.VALUE_STDDEV_THRESHOLD
+      && minVisits>=CFG.MIN_ROOT_VISITS
+      && S.simCount>200;
+  }
+};
+
+// ==========================================================================
+// SECTION 4: 并发控制器 (自适应)
+// ==========================================================================
+const Concurrency={
+  queue:[],
+  async acquire(){
+    if(S.activeSims<S.maxConcurrent){S.activeSims++;return}
+    return new Promise(r=>this.queue.push(r));
+  },
+  release(){
+    if(this.queue.length>0){const r=this.queue.shift();r();return}
+    S.activeSims=Math.max(0,S.activeSims-1);
+  },
+  updateConcurrency(){
+    const w=S.latencyWindow;if(w.length<5)return;
+    const avgLat=w.reduce((a,b)=>a+b,0)/w.length;
+    const errors=w.filter(l=>l<0).length; // 负数表示错误
+    if(avgLat<800&&errors<1){S.maxConcurrent=Math.min(200,Math.floor(S.maxConcurrent*1.25))}
+    else if(avgLat>3500||errors>2){S.maxConcurrent=Math.max(3,Math.floor(S.maxConcurrent*0.6))}
+  },
+  recordLatency(ms,isError){S.latencyWindow.push(isError?-1:ms);if(S.latencyWindow.length>30)S.latencyWindow.shift();this.updateConcurrency()}
+};
+
+// ==========================================================================
+// SECTION 5: LLM 调用层 (6个角色)
+// ==========================================================================
+const LLM={
+  async call({systemPrompt,userPrompt,temperature=0.7,maxTokens=CFG.MAX_TOKENS,controller=null}){
+    if(!CFG.API_KEY)throw new Error('请先配置API Key');
+    await Concurrency.acquire();
+    const t0=Date.now();
+    try{
+      const body={model:S.cfg._model||CFG.DEFAULT_MODEL,
+        messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}],
+        temperature,max_tokens:maxTokens,response_format:{type:'json_object'}};
+      if(CFG.THINKING==='enabled'){body.thinking={type:'enabled'};body.reasoning_effort=CFG.EFFORT}
+      else body.thinking={type:'disabled'};
+
+      const resp=await fetch(`${CFG.API_BASE_URL}/v1/chat/completions`,{
+        method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${CFG.API_KEY}`},
+        body:JSON.stringify(body),signal:controller?.signal});
+      const dt=Date.now()-t0;
+      if(!resp.ok){Concurrency.recordLatency(dt,true);throw new Error(`API ${resp.status}: ${(await resp.text()).slice(0,150)}`)}
+      const data=await resp.json();
+      const content=data.choices?.[0]?.message?.content||'';
+      S.stats.apiCalls++;S.stats.totalTokens+=(data.usage?.total_tokens||0);
+      Concurrency.recordLatency(dt,false);
+
+      let parsed;try{parsed=JSON.parse(content)}catch(e){
+        const m=content.match(/\{[\s\S]*\}|$$[\s\S]*$$/);
+        if(m)parsed=JSON.parse(m[0]);else throw new Error(`非JSON: ${content.slice(0,150)}`);
+      }
+      return parsed;
+    }finally{Concurrency.release()}
+  },
+  async callRetry(params,maxR=3){
+    let lastErr;
+    for(let i=0;i<=maxR;i++){
+      try{return await this.call(params)}catch(e){
+        lastErr=e;if(e.name==='AbortError')throw e;
+        if(i<maxR){const d=Math.min(1000*2**i,30000);App.log(`🔄 重试${i+1}/${maxR} ${d}ms`,'info');await new Promise(r=>setTimeout(r,d));}
+      }
+    }
+    throw lastErr;
+  },
+
+  /** 角色1: 问题分析器 */
+  async analyzeProblem(p){
+    return await this.callRetry({
+      systemPrompt:'你是决策分析专家。分析用户问题，输出JSON: {domain,key_variables:[{name,description,type}],unknowns:[],information_gaps_severity:"high/medium/low",suggested_constraints:[{field,question,type:"text/number/select",options:[]}]}',
+      userPrompt:`分析问题：${p}`,temperature:0.7,maxTokens:CFG.MAX_TOKENS_LARGE});
+  },
+
+  /** 角色2: 收敛度评估器 */
+  async checkConvergence(problem,constraints,kb){
+    return await this.callRetry({
+      systemPrompt:'你是信息完备性评估专家。输出JSON: {convergence_score:0-1,strengths:[],weaknesses:[],followup_questions:[],can_proceed:bool}',
+      userPrompt:`问题：${problem}\n约束：${JSON.stringify(constraints)}\n知识库：${kb||'(空)'}`,
+      temperature:0.3});
+  },
+
+  /** 角色3: 节点扩展器 */
+  async expandNode(state,constraints,kb,depth,maxDepth){
+    return await this.callRetry({
+      systemPrompt:`你是决策路径生成器。输出JSON: {next_steps:[{state,action,reasoning,probability_hint:0-1}]}。probability_hint和为1。2-4个候选。深度已达上限或自然终止则返回空数组。`,
+      userPrompt:`当前状态：${state}\n深度：${depth}/${maxDepth}\n约束：${JSON.stringify(constraints)}\n知识库：${kb||'(空)'}`,
+      temperature:0.8,maxTokens:CFG.MAX_TOKENS_LARGE});
+  },
+
+  /** 角色4: 语义评估器 (六维) */
+  async evaluate(state,pathContext,constraints){
+    return await this.callRetry({
+      systemPrompt:`你是决策步骤评估器。输出JSON: {logical_consistency:0-1,constraint_compliance:0-1,value_progression:0-1,risk_assessment:0-1,robustness:0-1,resource_cost:0-100,composite_score:0-1,death_risk:"none/low/medium/high",death_type:null}。death_type: null/"CONTRADICTION"/"CONSTRAINT_VIOLATION"/"RESOURCE_EXHAUSTION"/"CYCLE"/"DEPTH_LIMIT"。composite_score = 0.25*logical + 0.30*compliance + 0.20*progression + 0.15*(1-risk) + 0.10*robustness。`,
+      userPrompt:`当前状态：${state}\n已完成路径：${pathContext}\n约束：${JSON.stringify(constraints)}`,
+      temperature:0.2});
+  },
+
+  /** 角色5: 循环检测器 */
+  async checkCycle(targetState,ancestorStates){
+    if(!ancestorStates||ancestorStates.length===0)return {similarity:0,is_cycle:false};
+    return await this.callRetry({
+      systemPrompt:'判断当前状态是否与祖先状态形成语义循环。输出JSON: {similarity:0-1,is_cycle:bool,matched_ancestor:"",reasoning:""}。>=0.75判为循环。',
+      userPrompt:`目标状态：${targetState}\n祖先状态：\n${ancestorStates.map((s,i)=>`[${i}] ${s}`).join('\n')}`,
+      temperature:0.3});
+  },
+
+  /** 角色6: 对抗攻击器 */
+  async adversarialAttack(pathDesc,problem,constraints){
+    return await this.callRetry({
+      systemPrompt:`你是对抗测试引擎。你的任务是尝试推翻给定的推理路径。攻击方向：1)前提否定 2)外部冲击 3)约束极端化。输出JSON: {attack_success:bool,point_of_failure:"失败节点描述",confidence:0-1,attack_vector:"premise_negation/external_shock/constraint_amplify",weakened_premise:"被削弱的前提"}`,
+      userPrompt:`问题：${problem}\n路径：${pathDesc}\n约束：${JSON.stringify(constraints)}\n请尝试攻击这条路径。`,
+      temperature:0.9,maxTokens:CFG.MAX_TOKENS_LARGE});
+  }
+};
+
+// ==========================================================================
+// SECTION 6: 死亡检测器 (6种)
+// ==========================================================================
+const DeathDetector={
+  evaluate(evalResult,node,cumulativeCost){
+    // 类型1: CONTRADICTION
+    if(evalResult.death_type==='CONTRADICTION'&&evalResult.death_risk==='high')
+      return {dead:true,type:'CONTRADICTION',penalty:CFG.DEATH_PENALTY};
+    // 类型2: CONSTRAINT_VIOLATION
+    if(evalResult.constraint_compliance<0.3&&evalResult.death_risk==='high')
+      return {dead:true,type:'CONSTRAINT_VIOLATION',penalty:CFG.DEATH_PENALTY};
+    // 类型3: RESOURCE_EXHAUSTION
+    if((evalResult.resource_cost||0)+cumulativeCost>CFG.RESOURCE_THRESHOLD)
+      return {dead:true,type:'RESOURCE_EXHAUSTION',penalty:CFG.DEATH_PENALTY};
+    // 类型4: DEPTH_LIMIT (外部判断)
+    // 类型5: CYCLE (外部判断)
+    // 类型6: ADVERSARIAL (外部触发)
+    return {dead:false,type:null,penalty:1.0};
+  }
+};
+
+// ==========================================================================
+// SECTION 7: 主模拟循环
+// ==========================================================================
+async function runSimulation(){
+  if(S.paused){if(S.pausePromise)await S.pausePromise;if(!S.running)return}
+  if(!S.running||S.converged)return;
+  S.activeSims++;
+
+  // ① SELECTION: UCB1从根下行
+  const pathEdges=[],pathNodes=[S.rootNodeId];
+  let node=S.nodes.get(S.rootNodeId);
+  let cumulativeCost=0;
+
+  while(node&&node.expandedAt!==null&&node.children.length>0&&node.depth<S.cfg.maxDepth){
+    const edge=MCTS.selectEdge(node.id);
+    if(!edge)break;
+    MCTS.markVL(edge.id);
+    pathEdges.push(edge.id);
+    node=S.nodes.get(edge.toId);
+    if(!node)break;
+    pathNodes.push(node.id);
+    cumulativeCost+= (node._cost||0);
+  }
+
+  if(!node){cleanupVL(pathEdges);S.activeSims--;return;}
+
+  let value=0;
+
+  // ② EXPANSION: 叶节点未展开
+  if(node.expandedAt===null&&node.depth<S.cfg.maxDepth){
+    try{
+      const result=await LLM.expandNode(node.state,S.constraints,S.knowledgeBase,node.depth,S.cfg.maxDepth);
+      if(result.next_steps&&result.next_steps.length>0){
+        for(const step of result.next_steps){
+          Tree.createChild(node.id,step.state,step.action,step.reasoning,step.probability_hint||0.3);
+        }
+        App.log(`🌿 展开节点 → ${result.next_steps.length}个子节点`,'expand');
+      }
+      node.expandedAt=Date.now();
+      App.renderCanvas();
+    }catch(e){
+      if(e.name==='AbortError'){cleanupVL(pathEdges);S.activeSims--;return;}
+      App.log(`⚠️ 展开失败: ${e.message}`,'err');
+    }
+  }
+
+  // ③ EVALUATION: LLM语义评分
+  const pathCtx=pathEdges.map(eid=>{
+    const e=S.edges.get(eid);if(!e)return'?';
+    const t=S.nodes.get(e.toId);return `${e.action} → ${t?.state?.slice(0,30)||'?'}`;
+  }).join(' | ');
+
+  try{
+    const evalResult=await LLM.evaluate(node.state,pathCtx,S.constraints);
+    let rawValue=evalResult.composite_score||0.5;
+    const death=DeathDetector.evaluate(evalResult,node,cumulativeCost);
+
+    // ④ CYCLE检测 (哈希预筛 + LLM)
+    if(!death.dead&&pathEdges.length>=2){
+      const ancestors=Tree.getAncestorStates(node.id,6);
+      if(ancestors.length>=2){
+        // 快速预筛: 检查是否有祖先状态包含当前状态的关键词
+        const curWords=node.state.toLowerCase().split(/\s+/).filter(w=>w.length>2).slice(0,8);
+        const hasOverlap=ancestors.some(a=>curWords.some(w=>a.toLowerCase().includes(w)));
+        if(hasOverlap){
+          try{
+            const cycle=await LLM.checkCycle(node.state,ancestors);
+            if(cycle.is_cycle&&cycle.similarity>=CFG.CYCLE_SIMILARITY){
+              death.dead=true;death.type='CYCLE';death.penalty=CFG.DEATH_PENALTY;
+              App.log(`🔁 循环检测命中 → ${cycle.reasoning?.slice(0,50)}`,'dead');
+            }
+          }catch(e){/* 循环检测失败不阻断 */}
+        }
+      }
+    }
+
+    if(death.dead){
+      value=rawValue*death.penalty;
+      S.stats.deaths[death.type]=(S.stats.deaths[death.type]||0)+1;
+      App.log(`💀 死亡: ${death.type} | 原始值${rawValue.toFixed(2)}→惩罚后${value.toFixed(3)}`,'dead');
+    }else{
+      value=rawValue;
+    }
+    if(node.depth>S.stats.maxDepth)S.stats.maxDepth=node.depth;
+    // ★ 保存完整推理链 (最多100条)
+    S.pathTraces.push({
+      edgeIds:[...pathEdges],nodeIds:[...pathNodes],score:value,rawScore:rawValue,
+      death:death.dead?death.type:null,adversarial:false,idx:S.simCount
+    });
+    if(S.pathTraces.length>100)S.pathTraces.shift();
+  }catch(e){
+    if(e.name==='AbortError'){cleanupVL(pathEdges);S.activeSims--;return;}
+    value=0.3;
+    App.log(`⚠️ 评估失败: ${e.message}`,'err');
+  }
+
+  // ④ BACKPROPAGATION
+  MCTS.backpropagate(pathEdges,value,pathNodes);
+
+  // 清理虚拟损失
+  cleanupVL(pathEdges);
+
+  // 记录
+  S.pathHistory.push(value);
+  if(S.pathHistory.length>500)S.pathHistory.shift();
+  S.completedSims++;
+  S.simCount++;
+
+  // ⑤ 周期: 蒸发
+  if(S.simCount%80===0){MCTS.evaporate();App.log(`💨 信息素蒸发 (ρ=${S.cfg.evapRate})`,'info');}
+
+  // ⑥ 周期: 对抗攻击
+  if(S.simCount%CFG.ADVERSARIAL_INTERVAL===0&&S.simCount>100){
+    await runAdversarialAttack();
+  }
+
+  // ⑦ 收敛检测
+  if(S.simCount%CFG.CONVERGE_CHECK_INTERVAL===0){
+    if(MCTS.checkConvergence()){
+      S.converged=true;S.running=false;
+      App.log(`🎯 收敛! 后悔值比=${S.convergenceData.regretRatio.toFixed(4)} 值std=${S.convergenceData.valueStddev.toFixed(4)}`,'conv');
+    }
+  }
+
+  S.activeSims--;
+  App.updateStats();
+  App.renderCanvas();
+  App.checkpoint();
+}
+
+function cleanupVL(edgeIds){for(const eid of edgeIds)MCTS.unmarkVL(eid);}
+
+// ==========================================================================
+// SECTION 8: 对抗攻击
+// ==========================================================================
+async function runAdversarialAttack(){
+  const root=S.nodes.get(S.rootNodeId);if(!root||root.children.length===0)return;
+  // 找top3路径
+  const candidates=[];
+  const collect=(nodeId,pathE,pathV)=>{
+    const n=S.nodes.get(nodeId);if(!n)return;
+    if(n.children.length===0){candidates.push({edges:[...pathE],value:pathV.reduce((a,b)=>a+b,0)/Math.max(1,pathV.length)});return}
+    const sorted=[...n.children].sort((a,b)=>(b.totalValue/Math.max(1,b.visits))-(a.totalValue/Math.max(1,a.visits)));
+    for(let i=0;i<Math.min(3,sorted.length);i++){
+      const e=sorted[i];const t=S.nodes.get(e.toId);
+      if(t)collect(t.id,[...pathE,e.id],[...pathV,e.totalValue/Math.max(1,e.visits)]);
+    }
+  };
+  collect(S.rootNodeId,[],[]);
+  candidates.sort((a,b)=>b.value-a.value);
+  const top3=candidates.slice(0,3);
+
+  for(const cand of top3){
+    const desc=cand.edges.map(eid=>{
+      const e=S.edges.get(eid);if(!e)return'?';
+      const t=S.nodes.get(e.toId);return `${e.action} → ${t?.state?.slice(0,30)||'?'}`;
+    }).join(' | ');
+    try{
+      const attack=await LLM.adversarialAttack(desc,S.problem,S.constraints);
+      S.adversarialResults.push({pathDesc:desc,attack,timestamp:Date.now()});
+      App.log(`⚔️ 对抗攻击: ${attack.attack_success?'❌失败':'✅存活'} | ${attack.attack_vector} | 置信度${attack.confidence?.toFixed(2)}`,'adv');
+      if(attack.attack_success){
+        // 降低路径置信度
+        for(const eid of cand.edges){
+          const e=S.edges.get(eid);if(e)e.advScore=(e.advScore||1.0)*0.7;
+        }
+      }
+      if(S.adversarialResults.length>50)S.adversarialResults.shift();
+    }catch(e){App.log(`⚠️ 对抗攻击失败: ${e.message}`,'err');}
+  }
+  S.lastAdversarial=S.simCount;
+}
+
+// ==========================================================================
+// SECTION 9: 搜索主循环
+// ==========================================================================
+async function searchLoop(){
+  S.running=true;S.paused=false;S.converged=false;
+  S.aborter=new AbortController();
+  S.simCount=0;S.completedSims=0;S.pathHistory=[];S.pathTraces=[];S.adversarialResults=[];
+  S.stats={apiCalls:0,totalTokens:0,maxDepth:0,deaths:{},startedAt:Date.now(),endedAt:null};
+  S.latencyWindow=[];S.activeSims=0;
+  S.maxConcurrent=S.cfg.concur;
+  S.canvasAutoCenter=true;
+
+  S.nodes.clear();S.edges.clear();
+  Tree.createRoot(S.problem);
+
+  document.getElementById('btn-pause').disabled=false;
+  document.getElementById('btn-stop').disabled=false;
+  document.getElementById('search-card').style.display='block';
+  App.log('🚀 MCTS⁺ 搜索启动!','mcts');
+  App.log(`  UCB_C=${CFG.UCB_C} φ=${CFG.PHI} 最大并发=${S.maxConcurrent} 预算=${S.cfg.sims}次`,'info');
+
+  const loopEnd=S.cfg.sims;
+  let lastPauseLog=false;
+  while(S.simCount<loopEnd&&!S.converged){
+    if(S.paused){
+      if(!lastPauseLog){App.log('⏸️ 搜索暂停中...','conv');lastPauseLog=true}
+      await new Promise(r=>{S.pauseResolve=r});
+      if(!S.running)break;
+      lastPauseLog=false;
+      App.log('▶️ 搜索恢复','conv');
+    }
+    if(!S.running)break;
+    while(S.activeSims<S.maxConcurrent&&S.simCount<loopEnd&&S.running&&!S.converged&&!S.paused){
+      runSimulation();
+    }
+    await new Promise(r=>setTimeout(r,50));
+  }
+
+  S.running=false;
+  document.getElementById('btn-pause').disabled=true;
+  document.getElementById('btn-stop').disabled=true;
+  document.getElementById('search-card').style.display='none';
+  S.stats.endedAt=Date.now();
+
+  if(S.converged)App.log('✅ MCTS⁺ 收敛终止','conv');
+  else App.log('⏹️ 搜索结束 (达到最大模拟次数)','info');
+
+  await finalize();
+}
+
+
+async function finalize(){
+  S.phase='COMPLETED';
+  App.updatePhaseUI();
+  App.renderReport();
+  App.updateStats();
+  // 自动居中
+  setTimeout(()=>App.centerTree(),300);
+  // 移动端自动弹出报告面板
+  if(window.innerWidth<=768){setTimeout(()=>{document.getElementById('bottom-panel').classList.add('mob-open')},500)}
+  // 保存到IndexedDB
+  try{await Persistence.saveSession();App.log('💾 会话已保存到IndexedDB','info')}catch(e){}
+  // 清除运行时快照
+  localStorage.removeItem('mcts_runtime');
+}
+
+
+// ==========================================================================
+// SECTION 10: UI 控制器
+// ==========================================================================
+const App={
+  init(){
+    this.loadSettings();
+    CanvasRenderer.init();
+    this.renderIdleForm();this.updatePhaseUI();
+    setInterval(()=>this.checkpoint(),15000);
+    this.tryRestore();this.loadHistoryList();
+  },
+
+  // Settings
+  openSettings(){document.getElementById('api-key-input').value=CFG.API_KEY;document.getElementById('base-url-input').value=CFG.API_BASE_URL;document.getElementById('default-model-select').value=CFG.DEFAULT_MODEL;document.getElementById('thinking-select').value=CFG.THINKING;document.getElementById('effort-select').value=CFG.EFFORT;document.getElementById('settings-modal').style.display='flex'},
+  closeSettings(){document.getElementById('settings-modal').style.display='none'},
+  saveSettings(){
+    CFG.API_KEY=document.getElementById('api-key-input').value.trim();
+    CFG.API_BASE_URL=document.getElementById('base-url-input').value.trim();
+    CFG.DEFAULT_MODEL=document.getElementById('default-model-select').value;
+    CFG.THINKING=document.getElementById('thinking-select').value;
+    CFG.EFFORT=document.getElementById('effort-select').value;
+    localStorage.setItem('mcts_settings',JSON.stringify({apiKey:CFG.API_KEY,baseUrl:CFG.API_BASE_URL,model:CFG.DEFAULT_MODEL,thinking:CFG.THINKING,effort:CFG.EFFORT}));
+    this.log('⚙️ 设置已保存','info');this.closeSettings();
+  },
+  loadSettings(){
+    try{const s=JSON.parse(localStorage.getItem('mcts_settings'));if(s){CFG.API_KEY=s.apiKey||'';CFG.API_BASE_URL=s.baseUrl||'https://api.deepseek.com';CFG.DEFAULT_MODEL=s.model||'deepseek-v4-pro';CFG.THINKING=s.thinking||'enabled';CFG.EFFORT=s.effort||'high'}}catch(e){}
+  },
+
+  // Phase UI
+  updatePhaseUI(){
+    const steps=document.querySelectorAll('.phase-step');
+    const phases=['IDLE','ANALYZING','CONSTRAINTS','READY','RUNNING','COMPLETED'];
+    const eff=(S.phase==='PAUSED')?'RUNNING':S.phase;
+    const idx=phases.indexOf(eff);
+    steps.forEach((el,i)=>{
+      el.classList.remove('active','done');
+      if(i<idx)el.classList.add('done');
+      if(i===idx){if(S.phase==='PAUSED')el.textContent='⏸ 暂停';el.classList.add('active')}
+    });
+  },
+
+  // Form helpers
+  setForm(hdr,bdy,btns){
+    document.getElementById('form-header').textContent=hdr;
+    document.getElementById('form-body').innerHTML=bdy;
+    const c=document.getElementById('action-buttons');c.innerHTML='';
+    for(const b of(btns||[]))c.innerHTML+=`<button class="${b.cls||''}" onclick="${b.fn||''}">${b.txt}</button>`;
+  },
+
+  renderIdleForm(){
+    this.setForm('📝 输入决策问题',`<label>描述您面临的问题</label><textarea id="problem-input" placeholder="例如：我该不该跳槽到AI行业？35岁，深圳，5年传统制造业管理经验..."></textarea>`, [{txt:'➡️ 开始分析',cls:'primary',fn:'App.submitProblem()'},{txt:'⚙️ 设置',fn:'App.openSettings()'}]);
+  },
+
+  async submitProblem(){
+    const inp=document.getElementById('problem-input');if(!inp||!inp.value.trim())return;
+    if(!CFG.API_KEY){this.openSettings();return}
+    S.problem=inp.value.trim();S.constraints=[];S.knowledgeBase='';S.analysis=null;
+    S.answeredCtx=[];S.constraintRound=0;S.followupQs=[];
+    S.phase='ANALYZING';this.updatePhaseUI();
+    try{
+      this.setForm('🔍 分析中...','<div style="text-align:center;padding:20px">⏳<p>LLM分析问题结构...</p></div>',[]);
+      const analysis=await LLM.analyzeProblem(S.problem);
+      S.analysis=analysis;
+      this.log(`✅ 分析完成 | 领域:${analysis.domain} | 信息缺口:${analysis.information_gaps_severity}`,'mcts');
+      S.phase='CONSTRAINTS';this.updatePhaseUI();renderConstraintForm();
+    }catch(e){this.log(`❌ 分析失败: ${e.message}`,'err');this.renderIdleForm();S.phase='IDLE';}
+  },
+
+  // Pause/Resume
+  togglePause(){
+    if(S.phase==='RUNNING'){
+      S.paused=true;S.phase='PAUSED';
+      this.log('⏸️ 搜索暂停 — 等待活跃模拟完成...','conv');this.updatePhaseUI();
+      document.getElementById('btn-pause').textContent='▶️ 继续';
+    }else if(S.phase==='PAUSED'){
+      S.paused=false;S.phase='RUNNING';S.running=true;
+      S.aborter=new AbortController();
+      this.updatePhaseUI();
+      document.getElementById('btn-pause').textContent='⏯️ 暂停';
+      if(S.pauseResolve){S.pauseResolve();S.pauseResolve=null}
+    }
+  },
+
+  async stopSearch(){S.running=false;S.paused=false;if(S.pauseResolve){S.pauseResolve();S.pauseResolve=null}S.aborter?.abort();this.log('⏹️ 用户终止','dead');document.getElementById('btn-pause').disabled=true;document.getElementById('btn-stop').disabled=true;document.getElementById('search-card').style.display='none';S.stats.endedAt=Date.now();await finalize();},
+
+  // Log
+  log(msg,cls='info'){const el=document.getElementById('log-stream');const d=document.createElement('div');d.className=`log-entry ${cls}`;d.innerHTML=`<span class="ts">${ts()}</span>${msg}`;el.appendChild(d);el.scrollTop=el.scrollHeight;while(el.children.length>200)el.removeChild(el.firstChild)},
+
+  // Stats
+  updateStats(){
+    document.getElementById('s-sims').textContent=S.simCount;
+    document.getElementById('s-nodes').textContent=S.nodes.size;
+    document.getElementById('s-depth').textContent=S.stats.maxDepth;
+    document.getElementById('s-best').textContent=S.bestPathValue>-Infinity?S.bestPathValue.toFixed(3):'-';
+    document.getElementById('s-regret').textContent=S.convergenceData.regretRatio.toFixed(3);
+    document.getElementById('s-calls').textContent=S.stats.apiCalls;
+  },
+
+  // Report
+  renderReport(){
+    const panel=document.getElementById('bottom-panel');panel.style.display='block';
+    const c=document.getElementById('report-content');
+    const elapsed=S.stats.endedAt?((S.stats.endedAt-(S.stats.startedAt||Date.now()))/1000).toFixed(0):'?';
+    let html=`<div class="stats-grid" style="margin-bottom:10px">
+      <div class="stat-item"><div class="stat-value">${S.simCount}</div><div class="stat-label">总模拟</div></div>
+      <div class="stat-item"><div class="stat-value">${S.bestPathValue>-Infinity?S.bestPathValue.toFixed(3):'-'}</div><div class="stat-label">最优值</div></div>
+      <div class="stat-item"><div class="stat-value">${S.convergenceData.regretRatio.toFixed(4)}</div><div class="stat-label">后悔值比</div></div>
+      <div class="stat-item"><div class="stat-value">${S.convergenceData.valueStddev.toFixed(4)}</div><div class="stat-label">值标准差</div></div>
+      <div class="stat-item"><div class="stat-value">${S.stats.apiCalls}</div><div class="stat-label">API调用</div></div>
+      <div class="stat-item"><div class="stat-value">${(S.stats.totalTokens/1000).toFixed(0)}K</div><div class="stat-label">Token / ${elapsed}s</div></div></div>`;
+
+    // 最佳路径推理链
+    html+=`<div class="panel-title">🏆 最优路径推理链</div>`;
+    const root=S.nodes.get(S.rootNodeId);
+    if(root&&root.children.length>0){
+      // 从根开始，每层选UCB1最高边
+      let nid=S.rootNodeId;let step=0;
+      while(nid){
+        const n=S.nodes.get(nid);if(!n)break;
+        html+=`<div class="path-step"><span class="path-idx">${step===0?'🎯':step}</span><span><b>${n.state.slice(0,60)}${n.state.length>60?'…':''}</b></span></div>`;
+        if(n.children.length===0)break;
+        let be=null,bv=-Infinity;
+        for(const e of n.children){
+          const N=Math.max(1,e.visits);const v=e.totalValue/N+CFG.UCB_C*Math.sqrt(Math.log(Math.max(1,n.visits))/N)+CFG.PHI*e.pheromone;
+          if(v>bv){bv=v;be=e;}
+        }
+        if(be){
+          html+=`<div class="path-step" style="font-size:11px;color:var(--text2);padding-left:30px">→ <i>${be.action}</i> | 估值${(be.totalValue/Math.max(1,be.visits)).toFixed(3)} | N${be.visits} τ${be.pheromone.toFixed(2)} | ${be.reasoning?.slice(0,50)||''}</div>`;
+          nid=be.toId;step++;
+        }else break;
+      }
+    }
+
+    // 推理链回溯（最近20条）
+    if(S.pathTraces.length>0){
+      html+=`<div class="panel-title" style="margin-top:10px">🔍 推理链回溯 (最近${Math.min(20,S.pathTraces.length)}条)</div>`;
+      const traces=S.pathTraces.slice(-20).reverse();
+      for(const t of traces){
+        const pathDesc=t.edgeIds.map(eid=>{
+          const e=S.edges.get(eid);if(!e)return'?';const tn=S.nodes.get(e.toId);
+          return e.action+(tn?('→'+tn.state.slice(0,15)):'');
+        }).join(' ⏵ ');
+        html+=`<div class="report-path${t.death?' fragile':''}" style="cursor:pointer;padding:6px" onclick="App.showTraceDetail('${t.edgeIds[0]||''}')">
+          <span class="badge ${t.score>0.7?'badge-ok':t.score>0.4?'badge-warn':'badge-err'}">${t.score.toFixed(2)}</span>
+          ${t.death?`<span class="badge badge-err">💀${t.death}</span>`:''}
+          <span style="font-size:11px;color:var(--text2)">#${t.idx} ${pathDesc.slice(0,80)}${pathDesc.length>80?'…':''}</span></div>`;
+      }
+    }
+
+    // 对抗报告
+    if(S.adversarialResults.length>0){
+      html+=`<div class="panel-title" style="margin-top:8px">⚔️ 对抗测试 (${S.adversarialResults.length}次)</div>`;
+      const success=S.adversarialResults.filter(r=>r.attack.attack_success).length;
+      html+=`<div style="font-size:12px;margin-bottom:4px">攻击成功率: ${success}/${S.adversarialResults.length} | 健壮性: <span style="color:${success<2?'var(--green)':'var(--warn)'}">${success<2?'✅ 稳健':'⚠️ 有弱点'}</span></div>`;
+      for(const r of S.adversarialResults.slice(-3)){
+        html+=`<div style="font-size:11px;color:var(--text2);padding:3px 0;border-bottom:1px solid var(--border)">
+          <span class="badge ${r.attack.attack_success?'badge-err':'badge-ok'}">${r.attack.attack_success?'失败':'存活'}</span>
+          ${r.attack.attack_vector} | ${r.attack.weakened_premise?.slice(0,40)||''}</div>`;
+      }
+    }
+
+    // 死亡统计
+    const dkeys=Object.keys(S.stats.deaths);
+    if(dkeys.length>0){
+      html+=`<div class="panel-title" style="margin-top:8px">💀 死亡统计</div><div style="display:flex;gap:6px;flex-wrap:wrap">`;
+      for(const k of dkeys)html+=`<span class="badge badge-err">${k}: ${S.stats.deaths[k]}</span>`;
+      html+=`</div>`;
+    }
+
+    c.innerHTML=html;
+  },
+
+  /** 显示单条推理链详情弹窗 */
+  showTraceDetail(edgeId){
+    const t=S.pathTraces.find(t=>t.edgeIds[0]===edgeId);
+    if(!t)return;
+    let html=`<h3>🔍 推理链 #${t.idx}</h3><div style="font-size:13px;margin-bottom:8px">评分: <b>${t.score.toFixed(3)}</b> ${t.death?'💀'+t.death:''}</div><div class="report-path best" style="max-height:55vh;overflow-y:auto">`;
+    for(let i=0;i<t.edgeIds.length;i++){
+      const e=S.edges.get(t.edgeIds[i]);if(!e)continue;
+      const from=S.nodes.get(e.fromId);const to=S.nodes.get(e.toId);
+      html+=`<div style="margin-bottom:8px;padding:6px;background:var(--bg3);border-radius:4px">
+        <div style="font-size:11px;color:var(--text2)">步骤 ${i+1}</div>
+        <div><b>从:</b> ${from?.state?.slice(0,50)||'?'}</div>
+        <div style="color:var(--accent)"><b>行动:</b> ${e.action}</div>
+        <div style="font-size:11px;color:var(--text2)"><b>推理:</b> ${e.reasoning||'(无)'}</div>
+        <div><b>到:</b> ${to?.state?.slice(0,50)||'?'}</div>
+        <div style="font-size:11px"><span class="badge badge-info">N${e.visits}</span> <span class="badge badge-warn">τ${e.pheromone.toFixed(2)}</span> <span class="badge badge-ok">V${(e.totalValue/Math.max(1,e.visits)).toFixed(3)}</span>${e.advScore?` <span class="badge badge-err">⚡${e.advScore.toFixed(1)}</span>`:''}</div></div>`;
+    }
+    html+=`</div><button onclick="this.parentElement.parentElement.remove()" style="margin-top:8px">关闭</button>`;
+    const modal=document.createElement('div');modal.className='modal-overlay';modal.style.zIndex='300';
+    modal.innerHTML=`<div class="modal" style="max-width:550px">${html}</div>`;
+    modal.addEventListener('click',e=>{if(e.target===modal)modal.remove()});
+    document.body.appendChild(modal);
+  },
+
+  renderCanvas(){CanvasRenderer.render();},
+
+  // Persistence
+  checkpoint(){
+    if(S.phase==='RUNNING'||S.phase==='PAUSED'){
+      try{localStorage.setItem('mcts_runtime',JSON.stringify({
+        phase:S.phase,problem:S.problem,constraints:S.constraints,knowledgeBase:S.knowledgeBase,
+        level:S.level,simCount:S.simCount,pathHistory:S.pathHistory,
+        bestPathValue:S.bestPathValue,convergenceData:S.convergenceData,
+        nodes:Array.from(S.nodes.entries()),edges:Array.from(S.edges.entries()),
+        rootNodeId:S.rootNodeId,stats:S.stats,adversarialResults:S.adversarialResults,
+        analysis:S.analysis
+      }))}catch(e){}
+    }
+  },
+  tryRestore(){
+    try{
+      const saved=JSON.parse(localStorage.getItem('mcts_runtime'));
+      if(saved&&(saved.phase==='RUNNING'||saved.phase==='PAUSED')){
+        S.phase=saved.phase;S.problem=saved.problem;S.constraints=saved.constraints||[];S.knowledgeBase=saved.knowledgeBase||'';
+        S.level=saved.level||5;S.cfg=CFG.LEVELS[S.level];S.simCount=saved.simCount||0;
+        S.pathHistory=saved.pathHistory||[];S.bestPathValue=saved.bestPathValue||-Infinity;
+        S.convergenceData=saved.convergenceData||{regretRatio:1,valueStddev:1,minRootVisits:0};
+        if(saved.nodes)S.nodes=new Map(saved.nodes);if(saved.edges)S.edges=new Map(saved.edges);
+        S.rootNodeId=saved.rootNodeId;S.stats=saved.stats||S.stats;S.adversarialResults=saved.adversarialResults||[];
+        S.analysis=saved.analysis||null;S.maxConcurrent=S.cfg.concur;
+        this.updatePhaseUI();this.updateStats();CanvasRenderer.render();
+        this.log('📂 已恢复未完成的搜索','conv');
+      }
+    }catch(e){}
+  },
+
+  async loadHistoryList(){
+    try{
+      const sessions=await Persistence.getSessions(20);
+      const el=document.getElementById('history-list');
+      if(!el)return;
+      if(sessions.length===0){el.innerHTML='<span style="color:var(--text2)">暂无历史会话</span>';return}
+      el.innerHTML=sessions.map(s=>{
+        const dt=new Date(s.timestamp).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+        const desc=(s.problem||'').slice(0,25)+(s.problem?.length>25?'…':'');
+        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="App.loadHistorySession(${s.id})" title="${(s.problem||'').replace(/"/g,'&quot;')}">
+            <span style="font-size:10px;color:var(--text2)">#${s.id} ${dt}</span>
+            <div style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${desc}</div>
+            <span class="badge ${s.converged?'badge-ok':'badge-info'}">${s.converged?'收敛':'终止'}</span>
+          </div>
+          <button onclick="App.deleteHistorySession(${s.id})" style="background:transparent;border:none;color:var(--danger);cursor:pointer;font-size:14px;padding:2px 6px" title="删除">✕</button></div>`;
+      }).join('');
+    }catch(e){}
+  },
+
+  async loadHistorySession(id){
+    const sessions=await Persistence.getSessions(20);const s=sessions.find(s=>s.id===id);
+    if(!s){App.log('⚠️ 会话未找到','err');return}
+    S.phase='COMPLETED';S.problem=s.problem||'';S.constraints=s.constraints||[];S.knowledgeBase=s.knowledgeBase||'';
+    S.level=s.level||5;S.cfg=s.cfg||CFG.LEVELS[5];S.simCount=s.simCount||0;
+    S.bestPathValue=s.bestPathValue||-Infinity;S.convergenceData=s.convergenceData||{regretRatio:1,valueStddev:1};
+    S.converged=s.converged||false;S.rootNodeId=s.rootNodeId;S.stats=s.stats||{};
+    S.adversarialResults=s.adversarialResults||[];
+    if(s.nodes)S.nodes=new Map(s.nodes);if(s.edges)S.edges=new Map(s.edges);
+    this.updatePhaseUI();this.renderReport();CanvasRenderer.render();this.updateStats();
+    App.log('📂 已加载会话 #'+id,'conv');
+  },
+
+  async deleteHistorySession(id){
+    if(!confirm('删除此历史会话？'))return;
+    await Persistence.deleteSession(id);
+    App.log('🗑️ 已删除会话 #'+id,'info');
+    this.loadHistoryList();
+  },
+
+  showTraceDetail(edgeId){
+    const t=S.pathTraces.find(t=>t.edgeIds[0]===edgeId);
+    if(!t)return;
+    let html='<h3>🔍 推理链 #'+t.idx+'</h3><div style="font-size:13px;margin-bottom:8px">评分: <b>'+t.score.toFixed(3)+'</b> '+(t.death?'💀'+t.death:'')+'</div><div class="report-path best" style="max-height:55vh;overflow-y:auto">';
+    for(let i=0;i<t.edgeIds.length;i++){
+      const e=S.edges.get(t.edgeIds[i]);if(!e)continue;
+      const from=S.nodes.get(e.fromId);const to=S.nodes.get(e.toId);
+      html+='<div style="margin-bottom:8px;padding:6px;background:var(--bg3);border-radius:4px"><div style="font-size:11px;color:var(--text2)">步骤 '+(i+1)+'</div><div><b>从:</b> '+(from?.state?.slice(0,50)||'?')+'</div><div style="color:var(--accent)"><b>行动:</b> '+e.action+'</div><div style="font-size:11px;color:var(--text2)"><b>推理:</b> '+(e.reasoning||'(无)')+'</div><div><b>到:</b> '+(to?.state?.slice(0,50)||'?')+'</div><div style="font-size:11px"><span class="badge badge-info">N'+e.visits+'</span> <span class="badge badge-warn">τ'+e.pheromone.toFixed(2)+'</span> <span class="badge badge-ok">V'+(e.totalValue/Math.max(1,e.visits)).toFixed(3)+'</span>'+(e.advScore?' <span class="badge badge-err">⚡'+e.advScore.toFixed(1)+'</span>':'')+'</div></div>';
+    }
+    html+='</div><button onclick="this.parentElement.parentElement.remove()" style="margin-top:8px">关闭</button>';
+    const modal=document.createElement('div');modal.className='modal-overlay';modal.style.zIndex='300';
+    modal.innerHTML='<div class="modal" style="max-width:550px">'+html+'</div>';
+    modal.addEventListener('click',function(e){if(e.target===modal)modal.remove()});
+    document.body.appendChild(modal);
+  }
+};
+
+function renderConstraintForm(){
+  const a=S.analysis;if(!a){App.renderIdleForm();return}
+  let html=`<div style="margin-bottom:8px"><span class="badge badge-info">领域:${a.domain||'?'}</span> <span class="badge badge-warn">缺口:${a.information_gaps_severity||'?'}</span>`;
+  if(S.constraintRound>0)html+=` <span class="badge badge-ok">第${S.constraintRound}轮</span>`;
+  html+=`</div>`;
+  if(a.key_variables?.length)for(const v of a.key_variables)html+=`<div style="font-size:11px;color:var(--text2);padding:2px 0">· <b>${v.name}</b>: ${v.description}</div>`;
+  if(a.suggested_constraints?.length){
+    html+=`<label style="margin-top:8px">📋 补充信息 (已答${S.answeredCtx.length}/${a.suggested_constraints.length})</label>`;
+    for(let i=0;i<a.suggested_constraints.length;i++){
+      if(S.answeredCtx.includes(i))continue;
+      const c=a.suggested_constraints[i];
+      html+=`<div style="margin-bottom:6px"><label>${c.question}</label>`;
+      if(c.type==='select'&&c.options){html+=`<select id="c-${i}">`;for(const o of c.options)html+=`<option>${o}</option>`;html+=`</select>`}
+      else if(c.type==='number')html+=`<input type="number" id="c-${i}" placeholder="数值...">`;
+      else html+=`<input type="text" id="c-${i}" placeholder="输入...">`;
+      html+=`</div>`;
+    }
+  }
+  if(S.constraintRound===0){
+    html+=`<label style="margin-top:6px">📚 知识库 (可选)</label><textarea id="kb-input" placeholder="背景知识..."></textarea>`;
+  }
+  App.setForm('📝 补充约束',html,[
+    {txt:'✅ 提交',cls:'primary',fn:'App.submitConstraints()'},{txt:'↩️ 返回',fn:'App.renderIdleForm();S.phase=String.fromCharCode(73,68,76,69);App.updatePhaseUI()'}
+  ]);
+}
+
+App.submitConstraints=async function(){
+  const a=S.analysis;if(!a?.suggested_constraints)return;
+  let added=0;
+  for(let i=0;i<a.suggested_constraints.length;i++){
+    if(S.answeredCtx.includes(i))continue;
+    const el=document.getElementById(`c-${i}`);if(el&&el.value.trim()){
+      S.constraints.push({field:a.suggested_constraints[i].field,question:a.suggested_constraints[i].question,answer:el.value.trim()});
+      S.answeredCtx.push(i);added++;
+    }
+  }
+  const kb=document.getElementById('kb-input');if(kb&&kb.value.trim())S.knowledgeBase=(S.knowledgeBase?S.knowledgeBase+'\n':'')+kb.value.trim();
+  App.log(`📋 +${added}条 (累计${S.constraints.length}条)`,'info');
+  S.constraintRound++;
+  await checkConvergenceAndRoute();
+};
+
+async function checkConvergenceAndRoute(){
+  try{
+    App.setForm('🔍 检查收敛度...','<div style="text-align:center;padding:20px">⏳<p>评估信息完备性...</p></div>',[]);
+    const r=await LLM.checkConvergence(S.problem,S.constraints,S.knowledgeBase);
+    App.log(`📊 收敛度: ${r.convergence_score?.toFixed(2)} | ${r.can_proceed?'✅进入':'⚠️不足'} (第${S.constraintRound}轮)`,'conv');
+    if(r.can_proceed&&r.convergence_score>=0.5){renderReadyForm();return;}
+    if(S.constraintRound>=3){App.log('⚠️ 已3轮，强制进入','warn');renderReadyForm();return;}
+    S.followupQs=r.followup_questions||[];
+    let h='';if(r.weaknesses?.length){h+=`<div class="card" style="border-color:var(--warn)">${r.weaknesses.map(w=>`<div style="font-size:11px;padding:2px 0">· ${w}</div>`).join('')}</div>`}
+    if(S.followupQs.length>0){h+=`<div class="card"><div class="card-header">💬 追问 (剩余${3-S.constraintRound}轮)</div>`;
+      for(let i=0;i<S.followupQs.length;i++)h+=`<div style="margin-bottom:6px"><label>${S.followupQs[i]}</label><input type="text" id="fq-${i}"></div>`;h+=`</div>`}
+    else{h+=`<div style="text-align:center;padding:10px;color:var(--text2)">信息不足但LLM无新问题，可补充知识库或强制进入</div>`}
+    App.setForm('⚠️ 信息不足',h,[{txt:'✅ 提交补充',cls:'primary',fn:'App.submitFollowup()'},{txt:'🚀 强制进入',cls:'danger',fn:'App.forceStart()'}]);
+    S.phase='CONSTRAINTS';App.updatePhaseUI();
+  }catch(e){App.log(`❌ 检查失败: ${e.message}`,'err');}
+}
+
+App.submitFollowup=async function(){
+  let added=0;
+  for(let i=0;i<S.followupQs.length;i++){
+    const el=document.getElementById(`fq-${i}`);if(el&&el.value.trim()){
+      S.constraints.push({field:'fq_r'+S.constraintRound+'_'+i,question:S.followupQs[i],answer:el.value.trim()});added++;
+    }
+  }
+  App.log(`📋 +${added}条追问 (累计${S.constraints.length}条)`,'info');
+  S.constraintRound++;
+  await checkConvergenceAndRoute();
+};
+App.forceStart=function(){renderReadyForm();App.log('⚠️ 强制进入参数配置','warn')};
+
+
+function renderReadyForm(){
+  S.phase='READY';App.updatePhaseUI();
+  const lv=S.level;const cfg=CFG.LEVELS[lv];
+  const descs=['','🟢轻量','🟢轻量','🟢轻量','🟡标准','🟡标准','🟡标准','🟠深度','🟠深度','🟠深度','🔴极限'];
+  App.setForm('⚙️ 搜索参数',`
+    <label>强度等级 (L1-L10)</label><input type="range" id="lv-slider" min="1" max="10" value="${lv}" oninput="document.getElementById('lv-val').textContent=this.value;updateLvPreview()" style="width:100%">
+    <div style="text-align:center;font-weight:700;color:var(--accent);font-size:20px" id="lv-val">${lv}</div>
+    <div style="text-align:center;font-size:11px;color:var(--text2)" id="lv-desc">${descs[lv]||''}</div>
+    <div class="stats-grid" style="margin-top:8px">
+      <div class="stat-item"><div class="stat-value" id="pv-sims">${cfg.sims}</div><div class="stat-label">模拟次数</div></div>
+      <div class="stat-item"><div class="stat-value" id="pv-depth">${cfg.maxDepth}</div><div class="stat-label">最大深度</div></div>
+      <div class="stat-item"><div class="stat-value" id="pv-concur">${cfg.concur}</div><div class="stat-label">最大并发</div></div>
+      <div class="stat-item"><div class="stat-value" id="pv-evap">${(cfg.evapRate*100).toFixed(0)}%</div><div class="stat-label">蒸发率ρ</div></div>
+      <div class="stat-item"><div class="stat-value" id="pv-tokens">${(cfg.tokenBudget/1000).toFixed(0)}K</div><div class="stat-label">Token预算</div></div>
+      <div class="stat-item"><div class="stat-value" id="pv-adv">${lv>=4?`每${CFG.ADVERSARIAL_INTERVAL}次`:'无'}</div><div class="stat-label">对抗攻击</div></div>
+    </div>`,
+    [{txt:'🚀 开始搜索',cls:'primary',fn:'App.startSearch()'},{txt:'↩️ 返回',fn:'S.phase=String.fromCharCode(67,79,78,83,84,82,65,73,78,84,83);App.updatePhaseUI();renderConstraintForm()'}]
+
+  );
+}
+window.updateLvPreview=function(){
+  const slider=document.getElementById('lv-slider');if(!slider)return;
+  const lv=parseInt(slider.value);S.level=lv;S.cfg=CFG.LEVELS[lv];
+  const descs=['','🟢轻量','🟢轻量','🟢轻量','🟡标准','🟡标准','🟡标准','🟠深度','🟠深度','🟠深度','🔴极限'];
+  document.getElementById('lv-desc').textContent=descs[lv]||'';
+  document.getElementById('pv-sims').textContent=S.cfg.sims;
+  document.getElementById('pv-depth').textContent=S.cfg.maxDepth;
+  document.getElementById('pv-concur').textContent=S.cfg.concur;
+  document.getElementById('pv-evap').textContent=(S.cfg.evapRate*100).toFixed(0)+'%';
+  document.getElementById('pv-tokens').textContent=(S.cfg.tokenBudget/1000).toFixed(0)+'K';
+  document.getElementById('pv-adv').textContent=lv>=4?`每${CFG.ADVERSARIAL_INTERVAL}次`:'无';
+};
+
+App.startSearch=async function(){
+  // ★ 确保等级绑定生效
+  S.cfg=CFG.LEVELS[S.level];
+  S.maxConcurrent=S.cfg.concur;
+  S.phase='RUNNING';App.updatePhaseUI();
+  App.setForm('🐜 搜索中...',`<div style="text-align:center;padding:15px">
+    <div style="font-size:36px">🌳</div>
+    <div class="progress-bar" style="margin-top:8px"><div class="progress-fill" id="sim-progress" style="width:0%"></div></div>
+    <div style="font-size:12px;color:var(--text2);margin-top:4px">模拟: <span id="sim-count">0</span>/${S.cfg.sims} | 节点: <span id="sim-nodes">0</span> | 等级: L${S.level}</div>
+  </div>`,[]);
+  document.getElementById('bottom-panel').style.display='none';
+  const iv=setInterval(()=>{
+    const p=document.getElementById('sim-progress');if(p)p.style.width=Math.min(100,(S.simCount/S.cfg.sims*100))+'%';
+    const c=document.getElementById('sim-count');if(c)c.textContent=S.simCount;
+    const n=document.getElementById('sim-nodes');if(n)n.textContent=S.nodes.size;
+    if(S.phase!=='RUNNING'&&S.phase!=='PAUSED')clearInterval(iv);
+  },500);
+  try{await searchLoop()}catch(e){App.log(`❌ 搜索崩溃: ${e.message}`,'err');S.phase='COMPLETED';App.updatePhaseUI();}
+  clearInterval(iv);
+};
+App.centerTree = function(){
+  S.canvasAutoCenter=true;CanvasRenderer.ox=0;CanvasRenderer.oy=0;
+  CanvasRenderer.zoomFit();CanvasRenderer.layout();CanvasRenderer.render();
+  if(S.bestPathValue>-Infinity){
+    const bestNodes=CanvasRenderer.findBestPathNodes();
+    if(bestNodes.length>1){
+      const w=CanvasRenderer.canvas.width/(window.devicePixelRatio||1);
+      const mid=bestNodes[Math.floor(bestNodes.length/2)];
+      CanvasRenderer.ox=w/2-(mid?.x||w/2);
+      CanvasRenderer.layout();CanvasRenderer.render();
+    }
+  }
+  App.log('🎯 视图已居中到最佳路径','info');
+};
+
+
+
+// ==========================================================================
+// Canvas 渲染器
+// ==========================================================================
+const CanvasRenderer={
+  canvas:null,ctx:null,nodePos:new Map(),
+  ox:0,oy:0,scale:1,dragging:false,dsx:0,dsy:0,
+  pinchDist0:0,pinchScale0:1,pinching:false,
+  animFrame:0,animTimer:null,
+
+  init(){
+    this.canvas=document.getElementById('tree-canvas');
+    this.ctx=this.canvas.getContext('2d');
+    this.resize();
+    window.addEventListener('resize',()=>this.resize());
+    this.bindEvents();
+    this.animTimer=setInterval(()=>{this.animFrame++;if(S.phase==='RUNNING')this.render()},400);
+  },
+
+  resize(){
+    const p=this.canvas.parentElement;if(!p)return;
+    const dpr=window.devicePixelRatio||1;
+    this.canvas.width=p.clientWidth*dpr;
+    this.canvas.height=p.clientHeight*dpr;
+    this.canvas.style.width=p.clientWidth+'px';
+    this.canvas.style.height=p.clientHeight+'px';
+    this.ctx.setTransform(dpr,0,0,dpr,0,0);
+    this.render();
+  },
+
+  bindEvents(){
+    const c=this.canvas;
+    c.addEventListener('mousedown',e=>{this.dragging=true;this.dsx=e.clientX-this.ox;this.dsy=e.clientY-this.oy});
+    c.addEventListener('mousemove',e=>{if(this.dragging){this.ox=e.clientX-this.dsx;this.oy=e.clientY-this.dsy;this.render()}});
+    c.addEventListener('mouseup',()=>this.dragging=false);
+    c.addEventListener('mouseleave',()=>this.dragging=false);
+    c.addEventListener('wheel',e=>{e.preventDefault();this.scale*=e.deltaY>0?0.88:1.13;this.scale=Math.max(0.15,Math.min(3.5,this.scale));this.render()});
+    c.addEventListener('touchstart',e=>{
+      if(e.touches.length===2){this.pinching=true;this.dragging=false;const dx=e.touches[0].clientX-e.touches[1].clientX;const dy=e.touches[0].clientY-e.touches[1].clientY;this.pinchDist0=Math.sqrt(dx*dx+dy*dy);this.pinchScale0=this.scale;e.preventDefault()}
+      else if(e.touches.length===1&&!this.pinching){this.dragging=true;this.dsx=e.touches[0].clientX-this.ox;this.dsy=e.touches[0].clientY-this.oy}
+    },{passive:false});
+    c.addEventListener('touchmove',e=>{
+      if(this.pinching&&e.touches.length===2){e.preventDefault();const dx=e.touches[0].clientX-e.touches[1].clientX;const dy=e.touches[0].clientY-e.touches[1].clientY;const d=Math.sqrt(dx*dx+dy*dy);if(this.pinchDist0>0)this.scale=this.pinchScale0*(d/this.pinchDist0);this.scale=Math.max(0.15,Math.min(3.5,this.scale));this.render()}
+      else if(this.dragging&&e.touches.length===1){e.preventDefault();this.ox=e.touches[0].clientX-this.dsx;this.oy=e.touches[0].clientY-this.dsy;this.render()}
+    },{passive:false});
+    c.addEventListener('touchend',e=>{if(e.touches.length===0){this.dragging=false;this.pinching=false}});
+  },
+
+  layout(){
+    this.nodePos.clear();
+    const nodes=Array.from(S.nodes.values());if(nodes.length===0)return;
+    const dg=new Map();for(const n of nodes){if(!dg.has(n.depth))dg.set(n.depth,[]);dg.get(n.depth).push(n)}
+    const w=this.canvas.width/(window.devicePixelRatio||1);const gap=130*this.scale;
+    let targetCX=w/2+this.ox;let targetCY=70+this.oy;
+    if(S.canvasAutoCenter&&S.bestPathValue>-Infinity){
+      const mids=this.findBestPathNodeIds();
+      if(mids.length>0){
+        // 按深度找到它们在 dg 里的预期 x 位置
+        const midDepths=mids.map(id=>S.nodes.get(id)?.depth).filter(d=>d!=null);
+        const midDepth=midDepths.length>1?midDepths[Math.floor(midDepths.length/2)]:midDepths[0];
+        if(midDepth!=null){
+          const grp=dg.get(midDepth)||[];
+          const midIdx=grp.findIndex(n=>mids.includes(n.id));
+          const posX=midIdx>=0?targetCX-(grp.length-1)*180*this.scale/2+midIdx*180*this.scale:targetCX;
+          targetCX=targetCX+(targetCX-posX)*0.6;
+        }
+      }
+    }
+    const cx=targetCX;const cy=targetCY;
+    for(const [depth,grp] of dg){
+      const tw=(grp.length-1)*180*this.scale;const sx=cx-tw/2;
+      grp.forEach((n,i)=>{this.nodePos.set(n.id,{x:sx+i*180*this.scale,y:cy+depth*gap})});
+    }
+  },
+
+  /** 找到最优路径上的所有节点 ID（不依赖 nodePos）*/
+  findBestPathNodeIds(){
+    const result=[];let nid=S.rootNodeId;
+    while(nid){
+      const n=S.nodes.get(nid);if(!n)break;
+      result.push(n.id);
+      if(n.children.length===0)break;
+      let be=null,bv=-Infinity;
+      for(const e of n.children){
+        const N=Math.max(1,e.visits);const v=e.totalValue/N+CFG.UCB_C*Math.sqrt(Math.log(Math.max(1,n.visits))/N)+CFG.PHI*e.pheromone;
+        if(v>bv||(bv<0&&e.visits>0)){bv=v;be=e;}
+      }
+      if(be)nid=be.toId;else break;
+    }
+    return result;
+  },
+
+  /** 缩放适配所有节点 */
+  zoomFit(){
+    const nodes=Array.from(S.nodes.values());if(nodes.length===0){this.scale=1;return}
+    const maxDepth=Math.max(...nodes.map(n=>n.depth),1);
+    const maxPerLayer=Math.max(1,...Array.from(new Set(nodes.map(n=>n.depth))).map(d=>nodes.filter(n=>n.depth===d).length));
+    const w=this.canvas.width/(window.devicePixelRatio||1);const h=this.canvas.height/(window.devicePixelRatio||1);
+    const needW=Math.max(1,maxPerLayer*180);const needH=Math.max(1,maxDepth*130+200);
+    this.scale=Math.min(2.5,Math.max(0.2,w/needW,h/needH));
+    this.ox=0;this.oy=0;this.render();
+  },
+
+  bezPt(p0,p1,p2,t){const mt=1-t;return{x:mt*mt*p0.x+2*mt*t*p1.x+t*t*p2.x,y:mt*mt*p0.y+2*mt*t*p1.y+t*t*p2.y}},
+
+  /** 计算最佳路径 (从根出发，每层选 UCB1 最高边) */
+  getBestPathEdgeIds(){
+    const set=new Set();let nid=S.rootNodeId;
+    while(nid){
+      const n=S.nodes.get(nid);if(!n||n.children.length===0)break;
+      let be=null,bv=-Infinity;
+      for(const e of n.children){
+        const N=Math.max(1,e.visits);const v=e.totalValue/N+CFG.UCB_C*Math.sqrt(Math.log(Math.max(1,n.visits))/N)+CFG.PHI*e.pheromone;
+        if(v>bv){bv=v;be=e;}
+      }
+      if(be){set.add(be.id);nid=be.toId}else break;
+    }
+    return set;
+  },
+
+  render(){
+    const ctx=this.ctx;const w=this.canvas.width/(window.devicePixelRatio||1);const h=this.canvas.height/(window.devicePixelRatio||1);
+    ctx.clearRect(0,0,w,h);
+    // 网格
+    ctx.strokeStyle='rgba(48,54,61,0.25)';ctx.lineWidth=0.5;const gs=40*this.scale;
+    for(let x=0;x<w;x+=gs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}
+    for(let y=0;y<h;y+=gs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
+
+    this.layout();
+    const bestSet=this.getBestPathEdgeIds();
+
+    // ── 边 ──
+    for(const e of S.edges.values()){
+      const fp=this.nodePos.get(e.fromId);const tp=this.nodePos.get(e.toId);
+      if(!fp||!tp)continue;
+      const t=Math.min(1,e.pheromone/2.5);
+      const r=Math.floor(31+t*224);const g=Math.floor(111-t*80);const b=Math.floor(235-t*200);
+      const alpha=0.35+t*0.65;const lw=1+t*8;
+      const isBest=bestSet.has(e.id);
+
+      ctx.strokeStyle=isBest?`rgba(227,179,65,${alpha+0.2})`:`rgba(${r},${g},${b},${alpha})`;
+      ctx.lineWidth=isBest?lw+3:lw;
+      ctx.setLineDash(isBest?[]:[]);
+      ctx.beginPath();const mx=(fp.x+tp.x)/2;const my=Math.min(fp.y,tp.y)+Math.abs(tp.y-fp.y)*0.5+15*this.scale;
+      ctx.moveTo(fp.x,fp.y);ctx.quadraticCurveTo(mx,my,tp.x,tp.y);ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 箭头
+      const ang=Math.atan2(tp.y-my,tp.x-mx);const as=7*this.scale;
+      ctx.fillStyle=ctx.strokeStyle;ctx.beginPath();
+      ctx.moveTo(tp.x,tp.y);ctx.lineTo(tp.x-as*Math.cos(ang-Math.PI/6),tp.y-as*Math.sin(ang-Math.PI/6));
+      ctx.lineTo(tp.x-as*Math.cos(ang+Math.PI/6),tp.y-as*Math.sin(ang+Math.PI/6));ctx.closePath();ctx.fill();
+
+      // UCB1 标签
+      if(e.visits>0){
+        const bt=this.bezPt(fp,{x:mx,y:my},tp,0.5);
+        const uv=e.totalValue/Math.max(1,e.visits);
+        ctx.fillStyle='#8b949e';ctx.font=`${9*this.scale}px monospace`;ctx.textAlign='center';
+        ctx.fillText(`v${e.visits} τ${e.pheromone.toFixed(1)}`,bt.x,bt.y-4*this.scale);
+      }
+      // 对抗标记
+      if(e.advScore&&e.advScore<1){
+        const bt=this.bezPt(fp,{x:mx,y:my},tp,0.65);
+        ctx.fillStyle='rgba(248,81,73,0.85)';ctx.font=`bold ${10*this.scale}px system-ui`;ctx.textAlign='center';
+        ctx.fillText(`⚡${e.advScore.toFixed(1)}`,bt.x,bt.y+14*this.scale);
+      }
+    }
+
+    // ── 活跃模拟 (动画点) ── 单向走完消失
+    if(S.activeSims>0){
+      const now=Date.now();
+      for(const e of S.edges.values()){
+        if((e.virtualVisits||0)<=0)continue;
+        const fp=this.nodePos.get(e.fromId);const tp=this.nodePos.get(e.toId);if(!fp||!tp)continue;
+        const mx=(fp.x+tp.x)/2;const my=Math.min(fp.y,tp.y)+Math.abs(tp.y-fp.y)*0.5+15*this.scale;
+        // 每 2.5 秒完成一次单向旅行，然后重新从起点开始（模拟下一只蚂蚁）
+        const progress=((now%2500)/2500);
+        const pt=this.bezPt(fp,{x:mx,y:my},tp,progress);
+        const alpha=0.5+0.5*Math.sin(progress*Math.PI); // 中点最亮，两端渐隐
+        ctx.fillStyle=`rgba(88,166,255,${alpha})`;ctx.beginPath();ctx.arc(pt.x,pt.y,5*this.scale,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=1.5;ctx.stroke();
+      }
+    }
+
+    // ── 节点 ──
+    for(const n of S.nodes.values()){
+      const p=this.nodePos.get(n.id);if(!p)continue;
+      const isRoot=n.id===S.rootNodeId;
+      const vr=Math.min(1,n.visits/Math.max(1,CFG.MIN_ROOT_VISITS*3));
+      const rad=10+vr*18;
+
+      if(isRoot){ctx.fillStyle='rgba(88,166,255,0.25)';ctx.beginPath();ctx.arc(p.x,p.y,rad+8,0,Math.PI*2);ctx.fill()}
+
+      const ci=Math.floor(35+vr*200);
+      ctx.fillStyle=`rgb(${ci},${180-ci*0.4},255)`;
+      ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;
+      if(n.advWeakness){ctx.strokeStyle='rgba(248,81,73,0.8)';ctx.setLineDash([3,3])}
+      ctx.beginPath();ctx.arc(p.x,p.y,rad,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.setLineDash([]);
+
+      ctx.fillStyle='#c9d1d9';ctx.font=`${11*this.scale}px system-ui`;ctx.textAlign='center';
+      ctx.fillText(n.state.slice(0,20)+(n.state.length>20?'…':''),p.x,p.y+rad+12*this.scale);
+      ctx.fillStyle='#8b949e';ctx.font=`${9*this.scale}px monospace`;
+      ctx.fillText(`N${n.visits} V${(n.totalValue/Math.max(1,n.visits)).toFixed(2)}`,p.x,p.y+rad+24*this.scale);
+    }
+
+    // overlay
+    const ov=document.getElementById('canvas-overlay');
+    if(ov){ov.innerHTML=`<span>模拟 <span class="ov">${S.simCount}</span></span><span>节点 <span class="ov">${S.nodes.size}</span></span><span>边 <span class="ov">${S.edges.size}</span></span><span>最优 <span class="ov">${S.bestPathValue>-Infinity?S.bestPathValue.toFixed(3):'-'}</span></span><span>后悔比 <span class="ov">${S.convergenceData.regretRatio.toFixed(3)}</span></span>${S.converged?'<span style="color:var(--gold)">✅ 已收敛</span>':''}`}
+  }
+};
+
+// ==========================================================================
+// 持久化 (IndexedDB)
+// ==========================================================================
+const Persistence={
+  db:null,
+  async openDB(){
+    if(this.db)return this.db;
+    return new Promise((res,rej)=>{
+      const r=indexedDB.open('MCTSPlus_History',1);
+      r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('sessions'))db.createObjectStore('sessions',{keyPath:'id',autoIncrement:true})};
+      r.onsuccess=e=>{this.db=e.target.result;res(this.db)};
+      r.onerror=()=>rej(r.error);
+    });
+  },
+  async saveSession(){
+    if(!this.db)await this.openDB();
+    const rec={timestamp:Date.now(),problem:S.problem,constraints:dc(S.constraints),
+      knowledgeBase:S.knowledgeBase,level:S.level,cfg:S.cfg,simCount:S.simCount,
+      bestPathValue:S.bestPathValue,convergenceData:dc(S.convergenceData),converged:S.converged,
+      nodes:Array.from(S.nodes.entries()),edges:Array.from(S.edges.entries()),
+      rootNodeId:S.rootNodeId,stats:dc(S.stats),adversarialResults:dc(S.adversarialResults)};
+    return new Promise((res,rej)=>{
+      const tx=this.db.transaction('sessions','readwrite');const s=tx.objectStore('sessions');
+      const r=s.add(rec);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);
+    });
+  },
+  async getSessions(limit=30){
+    if(!this.db)await this.openDB();
+    return new Promise((res,rej)=>{
+      const tx=this.db.transaction('sessions','readonly');const s=tx.objectStore('sessions');
+      const r=s.getAll();r.onsuccess=()=>{const all=r.result||[];all.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));res(all.slice(0,limit))};
+      r.onerror=()=>rej(r.error);
+    });
+  },
+  async deleteSession(id){
+    if(!this.db)await this.openDB();
+    return new Promise((res,rej)=>{const tx=this.db.transaction('sessions','readwrite');const s=tx.objectStore('sessions');const r=s.delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)});
+  }
+};
+
+// ==========================================================================
+// 移动端导航
+// ==========================================================================
+const Mobile={toggle(panel){
+  const l=document.getElementById('left-panel');const r=document.getElementById('right-panel');const b=document.getElementById('bottom-panel');
+  if(panel==='left'){r.classList.remove('mob-open');b.classList.remove('mob-open');l.classList.toggle('mob-open')}
+  else if(panel==='report'){l.classList.remove('mob-open');r.classList.remove('mob-open');b.classList.toggle('mob-open')}
+  else{l.classList.remove('mob-open');b.classList.remove('mob-open');r.classList.toggle('mob-open')}
+},closeAll(){document.getElementById('left-panel').classList.remove('mob-open');document.getElementById('right-panel').classList.remove('mob-open');document.getElementById('bottom-panel').classList.remove('mob-open')}};
+window.UI={toggleMobile:Mobile.toggle,closeMobile:Mobile.closeAll};
+
+// ==========================================================================
+// 快捷键 & 初始化
+// ==========================================================================
+document.addEventListener('DOMContentLoaded',()=>{
+  App.init();
+
+  // 设置弹窗外点击关闭
+  document.getElementById('settings-modal').addEventListener('click',e=>{if(e.target===document.getElementById('settings-modal'))App.closeSettings()});
+
+  // 键盘快捷键
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){App.closeSettings();Mobile.closeAll()}
+    if(e.ctrlKey&&e.key==='d'){e.preventDefault();App.log('🐛 调试: 切换到开发者控制台查看详情','info')}
+    if(e.key===' '&&(S.phase==='RUNNING'||S.phase==='PAUSED')){e.preventDefault();App.togglePause()}
+  });
+});
+
+// 页面卸载自动保存
+window.addEventListener('beforeunload',()=>{if(S.phase==='RUNNING'||S.phase==='PAUSED')App.checkpoint()});
+</script>
+</body>
+</html>
