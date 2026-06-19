@@ -16415,6 +16415,8 @@ function initEventBindings(){
       overlay.style.display='block';
       overlay.classList.add('show');
       settingsDrawer.setAttribute('aria-hidden','false');
+      renderKBList();
+      renderMemList();
     });
     btnCloseSettings.addEventListener('click',closeSettings);
     overlay.addEventListener('click',closeSettings);
