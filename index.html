@@ -2063,7 +2063,13 @@ var _SHARED_GRADE='[GRADE:L1] 简单问答\n'
 +'| L4 | 全链不可用 | L3(降级) | 对齐后明确简单 | L2 |\n'
 +'| L5 | 同类≥3条记忆 | 自动触发 | — | — |\n'
 +'[MUST] 升降级在P1拆解后即判定。不准中途降级交付半成品。\n'
-+'[MUST] 降级时store记录原因。下次同类恢复原级。\n';
++'[MUST] 降级时store记录原因。下次同类恢复原级。\n'
++'\n'
++'[TOOL_RESULT] 所有工具结果以 `---tool:工具名 ok|err|empty Nms Nch 类型---` 开头。\n'
++'  状态: ok=成功 | err=错误(不重试，读错误信息调整参数) | empty=结果为空。\n'
++'  类型: search_results|file_content|file_tree|file_operation|calculation|tool_documentation\n'
++'       |memory_records|document_content|html_artifact|json|table|text。\n'
++'  读取顺序: 状态→类型→内容。大结果(size>30Kch)配合 filesystem read 分段使用。\n';
 
 var _WORKER_GRADE = _SHARED_GRADE
   .replace('≥3步→flow_mode','≥3步→手动拆步自检')
@@ -9670,13 +9676,37 @@ async function _withTimeout(promise,ms,label){
   try{return await Promise.race([promise,timeout]);}finally{clearTimeout(timer);}
 }
 
+// ★ 类型推断（executeTool 上方新增）
+function _toolType(name, result) {
+  if (result && result.length === 0) return 'empty';
+  switch (name) {
+    case 'search': case 'fuzzy_search': case 'geo_search':
+      return 'search_results';
+    case 'filesystem':
+      return result.indexOf('[文件:')===0 ? 'file_content' :
+             result.indexOf('目录树')>=0 ? 'file_tree' : 'file_operation';
+    case 'calculator':     return 'calculation';
+    case 'help':           return 'tool_documentation';
+    case 'semantic_memory': case 'longterm_memory': case 'knowledge_base':
+      return result.indexOf('未找到')>=0 ? 'empty' : 'memory_records';
+    case 'ocr': case 'pdf_read': return 'document_content';
+    case 'chart': case 'diagram': case 'svg_animator': case 'table_generator':
+      return 'html_artifact';
+    case 'sql_db':
+      return result.indexOf('|---')>=0 ? 'table' : 'json';
+    default:
+      return result[0]==='{'||result[0]==='[' ? 'json' :
+             result.indexOf('\n|')>=0 ? 'table' : 'text';
+  }
+}
+
 async function executeTool(toolCall,artifacts){
   var toolName=toolCall.function.name;
   var toolDef=TOOL_REGISTRY[toolName];
-  if(!toolDef)return {role:'tool',tool_call_id:toolCall.id,content:'未知工具: '+toolName};
-  if(toolDef.disabled)return {role:'tool',tool_call_id:toolCall.id,content:'工具已禁用: '+toolName};
+  if(!toolDef)return {role:'tool',tool_call_id:toolCall.id,content:'---tool:unknown err 0ms 0ch unknown---\n未知工具: '+toolName};
+  if(toolDef.disabled)return {role:'tool',tool_call_id:toolCall.id,content:'---tool:'+toolName+' err 0ms 0ch unknown---\n工具已禁用: '+toolName};
+  var _t0=Date.now();
   try{
-    var _t0=Date.now();
     var args=parseToolCallArguments(toolCall);
     var result;
     if(toolDef.executor==='task_worker'){
@@ -9685,22 +9715,39 @@ async function executeTool(toolCall,artifacts){
       result=await _withTimeout(executeMainThreadTool(toolName,args),1800000,toolName);
     }
     var _elapsed=Date.now()-_t0;
-    var _resLen=typeof result==='string'?result.length:JSON.stringify(result||'').length;
     debugLogger.info(' '+toolName+' ('+_elapsed+'ms)');
-    // 产物处理
+
+    var status, typeHint, payload;
+
+    // ── 产物处理（chart/diagram/svg/table 的 HTML） ──
     if(result&&typeof result==='object'&&result.html){
       artifacts.push({html:result.html,type:toolName});
-      return {role:'tool',tool_call_id:toolCall.id,content:result.message||'工具执行完成'};
+      status='ok'; typeHint='html_artifact';
+      payload=result.message||'工具执行完成';
     }
-    if(typeof result==='string'){
-      return {role:'tool',tool_call_id:toolCall.id,content:result};
+    // ── 字符串 ──
+    else if(typeof result==='string'){
+      status=result.length===0?'empty':'ok';
+      typeHint=_toolType(toolName,result);
+      payload=result;
     }
-    return {role:'tool',tool_call_id:toolCall.id,content:JSON.stringify(result)};
+    // ── 对象 → 美化 JSON ──
+    else{
+      status='ok'; typeHint='json';
+      payload=JSON.stringify(result,null,2);
+    }
+
   }catch(e){
     debugLogger.error(' 工具失败: '+toolName+' | '+e.message);
-    return {role:'tool',tool_call_id:toolCall.id,content:'工具执行错误: '+e.message+'\n\n 不确定用法请查 `help "'+toolName+'"` 获取完整文档。'};
+    var _elapsed=Date.now()-_t0;
+    status='err'; typeHint='tool_error';
+    payload=e.message+'\n\n 不确定用法请查 `help "'+toolName+'"` 获取完整文档。';
   }
+
+  var header='---tool:'+toolName+' '+status+' '+_elapsed+'ms '+payload.length+'ch '+typeHint+'---';
+  return {role:'tool',tool_call_id:toolCall.id,content:header+'\n'+payload};
 }
+
 
 async function executeMainThreadTool(toolName,args){
   switch(toolName){
@@ -15073,6 +15120,7 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
           var _fs1 = flowSession();
           if(!_fs1){
             actualResult=JSON.stringify({error:'无活跃心流会话'});
+            actualResult='---tool:flow_align_done err 0ms '+actualResult.length+'ch json---\n'+actualResult;
             messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
             _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           }else{
@@ -15082,6 +15130,7 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
             _fs1.goals.push({id:'g'+(j+1),description:_fs1.criteria[j],score:0,evidence:'未开始',status:'pending',created_at:Date.now()});
           }
           actualResult=JSON.stringify({ok:true,criteria:_fs1.criteria});
+          actualResult='---tool:flow_align_done ok 0ms '+actualResult.length+'ch json---\n'+actualResult;
           messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           _breakOuter=true;
@@ -15091,6 +15140,7 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
           var _fs2 = flowSession();
           var gResult=executeFlowGoal(gArgs,_fs2);
           actualResult=JSON.stringify(gResult);
+          actualResult='---tool:flow_goal '+(gResult.ok!==false?'ok':'err')+' 0ms '+actualResult.length+'ch json---\n'+actualResult;
           messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
         }else if(toolName==='flow_context_new'){
@@ -15098,6 +15148,7 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
           var _fs3 = flowSession();
           if(!_fs3){
             actualResult=JSON.stringify({error:'无活跃心流会话'});
+            actualResult='---tool:flow_context_new err 0ms '+actualResult.length+'ch json---\n'+actualResult;
             messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
             _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           }else{
@@ -15111,6 +15162,7 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
             startIter:_fs3.iteration,status:'active',lastMsgIdx:3
           });
           actualResult=JSON.stringify({ok:true,new_context:_fs3.mainAgentSessions.length});
+          actualResult='---tool:flow_context_new ok 0ms '+actualResult.length+'ch json---\n'+actualResult;
           messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           _breakOuter=true;
@@ -15120,6 +15172,7 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
           var _fs4 = flowSession();
           if(!_fs4){
             actualResult=JSON.stringify({error:'无活跃心流会话'});
+            actualResult='---tool:flow_deliver err 0ms '+actualResult.length+'ch json---\n'+actualResult;
             messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
             _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           }else{
@@ -15127,6 +15180,7 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
           _fs4.deliveryMessage=dArgs.summary||'';
           _fs4.active=false;
           actualResult=JSON.stringify({ok:true,delivered:true});
+          actualResult='---tool:flow_deliver ok 0ms '+actualResult.length+'ch json---\n'+actualResult;
           messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           _breakOuter=true;
