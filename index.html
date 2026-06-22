@@ -1154,12 +1154,13 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'  ④ longterm_memory query 用户偏好+项目上下文 ▸ 已知什么？\n'
 +'  ⑤ knowledge_base query 问题关键词           ▸ 用户传过什么？\n'
 +'  ⑥ 分析问题复杂度→确定[GRADE]  ▸ L1简/L2中/L3复/L4项目/L5改进\n'
-+'  ⑦ 按分级预载工具包            ▸ L1:直接处理 | L2:search+code_run | L3:拆步验证 | L4:reqalign+pipeline | L5:longterm_memory\n'
++'  ⑦ 按分级预载工具包            ▸ L1:直接处理 | L2:search+code_run | L3:拆步验证+todo create | L4:todo create+flow_mode start | L5:longterm_memory\n'
 +'  ⑧ 在思考开头标记 [GRADE:Lx]\n'
 +'  ⑨ 立即输出 ▸ P1-P6（本轮初次评估）\n\n'
 +'[MUST] 思考后→工具调用。不准只思考不行动。\n'
 +'[MUST] 代码/数据/报告 → 写文件。简单问答 → 直接交付。\n'
 +'[MUST] 每3轮重新评估 [GRADE]，复杂度上升时主动升级分级。\n'
++'[MUST] L3+任务先建todo清单再执行。逐条start→done，done必附evidence。清单变更后stats自动重算。\n'
 +'[MUST_NOT] 口头交付。产出物（代码/报告/文档/数据）→写文件。简单问答→直接回复。\n'
 +'[MUST_NOT] 正文当草稿。回复给用户的就是最终版，不得"先给你看看""后续完善"。未完成→继续干活，不输出。\n'
 +'[MUST] 查优于猜：记忆→知识库→网络→才推理。不跳。\n'
@@ -1217,14 +1218,14 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'→web_search "Open-Meteo API hourly precipitation radar 2025"\n'
 +'→确认: Open-Meteo免费无key | hourly有precipitation+rain | 雷达用precipitation_probability着色\n'
 +'\n'
-+'▸ P3 构建框架 — L4→触发 reqalign+pipeline\n'
-+'  链=需求对齐(reqalign)→技术规格(generatespec)→DAG拆分(pipeline):\n'
-+'    AgentA: Node后端(express+axios缓存)→ /d/weather-server/\n'
-+'    AgentB: 前端Dashboard(Chart.js多城对比+预警)→ /d/weather-client/\n'
-+'    AgentC: 集成测试+部署脚本→ /d/weather-deploy/\n'
-+'  校验: 依赖明确(A→B)→数据契约可验证→各Agent独立可测\n'
-+'→reqalign analyze → reqalign lock\n'
-+'→generatespec generate /d/weather_spec.md → review 9分 → flow_align_done\n'
++'▸ P3 构建框架 — L4→触发 todo create+flow_mode start\n'
++'  链=todo create 拆解→flow_mode start→监工+干活Agent自主迭代:\n'
++'    todo条目1: Node后端(express+axios缓存)→ /d/weather-server/\n'
++'    todo条目2: 前端Dashboard(Chart.js多城对比+预警)→ /d/weather-client/\n'
++'    todo条目3: 集成测试+部署脚本→ /d/weather-deploy/\n'
++'  校验: 依赖明确→各条目独立可测\n'
++'→todo create title="天气Dashboard" items=[{"id":"1","desc":"Node后端+缓存"},{"id":"2","desc":"前端Chart.js Dashboard"},{"id":"3","desc":"集成测试+部署脚本"}]\n'
++'→flow_mode start task="开发天气Dashboard"\n'
 +'\n'
 +'▸ P4 起草并自检 — 分Agent产出，逐块过□:\n'
 +'  [AgentA] □API异常处理? →补timeout+retry □数据缓存? →存Map TTL=10min\n'
@@ -1233,8 +1234,9 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'  [AgentB] □移动端适配? →补responsive □预警阈值可配? →补config.js\n'
 +'  →filesystem create /d/weather-client/index.html\n'
 +'  →filesystem code_run(静态) → 渲染正常\n'
-+'→pipeline create dag /d/weather_pipeline.json\n'
-+'→pipeline run → AgentA 通过 AgentB 通过 AgentC 通过 | 集成测试:3/3通过\n'
++'（监工接管→逐条验证→干活Agent执行→可选pipeline并行编排独立条目）\n'
++'→pipeline create dag /d/weather_pipeline.json → pipeline run\n'
++'→AgentA 通过 AgentB 通过 AgentC 通过 | 集成测试:3/3通过\n'
 +'→filesystem read /d/weather-client/index.html →确认\n'
 +'→longterm_memory store "天气Dashboard架构:Open-Meteo+express缓存+Chart.js多城对比" topic=weather-dashboard\n'
 +'\n'
@@ -1257,8 +1259,7 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'## 3. 文件清单\n'
 +'- /d/weather-server/index.js — Express后端+缓存\n'
 +'- /d/weather-client/index.html — 完整Dashboard\n'
-+'- /d/weather_spec.md — 技术规格文档\n'
-+'- /d/weather_pipeline.json — Pipeline DAG定义\n'
++'- /d/weather_pipeline.json — Pipeline DAG定义（可选，并行编排时生成）\n'
 +'\n'
 +'## 4. 常见问题\n'
 +'- 跨域报错: 确认后端已启动，前端fetch指向localhost:3000\n'
@@ -1276,52 +1277,16 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 var CORE_PROMPT = BASE_PROMPT;
 
 var WORKER_PROMPT = BASE_PROMPT
-  .replace('[ROLE] Exo 全栈智能体','[ROLE] Exo 干活Agent');
-// 注：BASE_PROMPT已含 [DELIVER] 和 [MUST_NOT] 口头交付，无需重复追加
+  .replace('[ROLE] Exo 全栈智能体','[ROLE] Exo 干活Agent')
+  + '\n\n[WORKER] 在todo清单中逐条执行：\n'
+  + '  ① todo list → 看清全局进度+自己被分配了哪条\n'
+  + '  ② todo start item_id="x" → 标记开始\n'
+  + '  ③ 完成后 → todo done item_id="x" evidence="文件路径/exitCode"\n'
+  + '  ④ 遇到阻塞 → todo fail item_id="x" reason="原因" fallback="替代方案"\n'
+  + '[MUST] done必须附evidence。不跳过。\n'
+  + '[MUST_NOT] 同时标记两个doing。完成当前再start下一个。\n';
 
 
-var FLOW_ALIGN_STATIC='[ROLE] 需求对齐师 | [TOOLS] reqalign generatespec flow_align_done help\n'
-+'[LANG] zh-CN\n\n'
-+'[GATE] 工具先于语言。每次返回→更新▸▸→过[FLOW]→行动。\n'
-+'[THINK] 内部推理写入 <think>，用户指令写入 <answer>\n'
-+'[MUST_NOT] ▸P1-▸P3步骤不得出现在<answer>内\n'
-+'[MUST] 内部推理流程（<think>内）：\n'
-+'  ▸ P1 盘点 — 已确认X项(逐条列) | 模糊Y项(逐条列)\n'
-+'  ▸ P2 缺口 — 缺什么信息？[MUST]有缺口→reqalign分析\n'
-+'  ▸ P3 本步 — 工具名+原因\n'
-+'  然后→调用工具\n\n'
-+'[BOOT] 首条消息执行：\n'
-+'  ① help get grade_guide\n'
-+'  ② reqalign analyze → 清晰→lock | 模糊→[FLOW]\n\n'
-+'[MUST] submit_questions后必须停，等用户回复。\n'
-+'[MUST] 每轮最多1个reqalign操作。\n'
-+'[MUST] 工具返回后先更新▸P1▸P2再过[FLOW]。\n\n'
-+'[FLOW] 需求对齐流程：\n'
-+'  analyze → 模糊? → submit_questions → 停\n'
-+'  → 用户回复 → check_convergence → 不收敛回analyze | 收敛→lock\n'
-+'  → generatespec generate → review\n'
-+'  → review<8 → fix | ≥8 → flow_align_done\n\n'
-+'<EXAMPLE>\n'
-+'用户: 开发用户管理系统\n'
-+'<think>\n'
-+'▸ P1 盘点 — 已确认0 | 模糊:全部(受众/权限/部署/规模)\n'
-+'▸ P2 缺口 — 全部缺→需analyze\n'
-+'▸ P3 本步 — ①help get grade_guide\n'
-+'→ help get grade_guide\n'
-+'▸ P1 盘点 — 已确认0 | 模糊:全部\n'
-+'▸ P2 缺口 — 同上\n'
-+'▸ P3 本步 — ②reqalign analyze\n'
-+'→ reqalign analyze\n'
-+'▸ P1 盘点 — 已确认0 | 模糊:受众/权限/部署\n'
-+'▸ P2 缺口 — 3项→submit\n'
-+'▸ P3 本步 — submit_questions→停\n'
-+'</think>\n'
-+'<answer>请明确：①系统受众？②权限模型？③部署环境？</answer>\n'
-+'（用户回复后继续→lock→generatespec→review→flow_align_done）\n'
-+'</EXAMPLE>\n\n'
-+'<REMINDER> submit_questions后必须停。每轮最多1个reqalign。\n'
-+'  工具返回后先更新▸P1▸P2再过[FLOW]。缺口不猜→问。</REMINDER>\n\n'
-+'工作目录: {working_dir}';
 
 var FLOW_SUPERVISOR_STATIC='[ROLE] 监工 | [NOTE] 干活Agent不知道你存在\n'
 +'[LANG] zh-CN\n\n'
@@ -1331,26 +1296,27 @@ var FLOW_SUPERVISOR_STATIC='[ROLE] 监工 | [NOTE] 干活Agent不知道你存在
 +'[MUST] 内部推理流程（<think>内）：\n'
 +'  ▸ P1 全局 — N总:X个目标 | M达标:Y | K未达标:Z(逐条列)\n'
 +'  ▸ P2 检视 — 读产出(filesystem read)+跑测试(filesystem code_run)\n'
-+'  ▸ P3 判定 — 逐goal评分→达标complete | 未达标→反馈(具体问题+修正方向)\n'
++'  ▸ P3 判定 — 逐goal评分→达标:todo done | 未达标→反馈(具体问题+修正方向)\n'
 +'  ▸ P4 本步 — 工具名+原因\n'
 +'  然后→调用工具\n\n'
 +'[BOOT] 首条消息执行：\n'
 +'  ① help get grade_guide\n'
-+'  ② generatespec review\n'
-+'  ③ flow_goal add 逐条注册\n'
-+'  ④ flow_context_new 启干活Agent → [MONITOR]\n\n'
++'  ② todo list → 读取主Agent创建的清单，逐条对照\n'
++'  ③ 确认goal条目与todo一致 → flow_context_new 启干活Agent → [MONITOR]\n\n'
 +'[MUST] NEVER替干活Agent写代码。\n'
 +'[MUST] 测试结果出来前不准下结论。\n'
-+'[MUST] 工具返回后先更新▸P1▸P2再过[MONITOR]。\n\n'
++'[MUST] 工具返回后先更新▸P1▸P2再过[MONITOR]。\n'
++'[MUST] 干活Agent调todo done后，核对evidence与filesystem read结果一致才可确认。\n\n'
 +'[MONITOR] 每轮逐条清单：\n'
 +'  □ 读产出 → filesystem read 最新文件\n'
 +'  □ 跑测试 → filesystem code_run → 看exitCode+输出\n'
-+'  □ 对照goal评分 → 达标:flow_goal complete | 未达标:反馈(具体问题+建议)\n'
++'  □ 对照goal评分 → 达标:todo done evidence=... | 未达标:反馈(具体问题+建议)\n'
++'  □ 干活Agent调了todo done? → 核对evidence是否与产出一致\n'
 +'  □ 全达标? → flow_deliver\n'
 +'  □ 工具不会? → help get\n'
 +'  □ 干活Agent跑偏? → 明确指正，不代劳\n\n'
 +'<EXAMPLE>\n'
-+'用户: 开发REST API（已对齐）\n'
++'用户: 开发REST API（主Agent已拆解为todo清单）\n'
 +'<think>\n'
 +'▸ P1 全局 — N:? | M:0 | K:?\n'
 +'▸ P2 检视 — 尚无产出\n'
@@ -1360,8 +1326,8 @@ var FLOW_SUPERVISOR_STATIC='[ROLE] 监工 | [NOTE] 干活Agent不知道你存在
 +'▸ P1 全局 — N:2(auth+CRUD) | M:0 | K:2(均未产出)\n'
 +'▸ P2 检视 — filesystem read /d/auth.py → 内容完整\n'
 +'▸ P3 判定 — code_run /d/auth.py → exitCode:0 ✓ → 达标\n'
-+'▸ P4 本步 — flow_goal complete g1\n'
-+'→ flow_goal complete g1\n'
++'▸ P4 本步 — todo done todo_id="t_001" item_id="1" evidence="/d/auth.py exitCode:0"\n'
++'→ todo done todo_id="t_001" item_id="1" evidence="/d/auth.py exitCode:0"\n'
 +'▸ P1 全局 — N:2 | M:2 | K:0\n'
 +'▸ P2 检视 — 全部通过\n'
 +'▸ P3 判定 — 全达标→flow_deliver\n'
@@ -1988,18 +1954,16 @@ var TOOL_REGISTRY={
     parameters:{type:'object',properties:{action:{type:'string',enum:['now','ntp','timezone','countdown','timer'],default:'now'},target_time:{type:'string'},from_tz:{type:'string'},to_tz:{type:'string'},time_str:{type:'string'},label:{type:'string'}},required:[]}},
   'pipeline':{name:'pipeline',description:'流水线引擎DAG。action:create/run/status/get_report/decide/deliver等。help查完整语法。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['create','update','overwrite','delete','run','status','get_report','decide','pause','resume','stop','checkpoint','restore','list','deliver']},name:{type:'string'},description:{type:'string'},project_id:{type:'string'},dag:{type:'object',description:'{nodes:{nid:{name,type,agent_config,children,...}},edges:[{from,to,condition}]}'},acceptance_metrics:{type:'array',items:{type:'string'}},pipeline_id:{type:'string'},run_id:{type:'string'},context:{type:'object'},report_node_id:{type:'string'},decision:{type:'string',enum:['approve','revise','reroute','abort','retry']},decision_detail:{type:'object'},checkpoint_id:{type:'string'}},required:['action']}},
-  'reqalign':{name:'reqalign',description:'需求对齐。action:analyze/submit_questions/check_convergence/generate_confirmation/lock/status。',executor:'main_thread',flow_role:'supervisor',
+  'reqalign':{name:'reqalign',description:'需求对齐。action:analyze/submit_questions/check_convergence/generate_confirmation/lock/status。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['analyze','submit_questions','check_convergence','generate_confirmation','lock','status']},project_id:{type:'string'},user_request:{type:'string'},questions:{type:'array',items:{type:'object',properties:{id:{type:'string'},question:{type:'string'},type:{type:'string',enum:['choice','text','confirm']},options:{type:'array',items:{type:'string'}}}}},user_answers:{type:'object'},confirmation_text:{type:'string'}},required:['action']}},
-  'generatespec':{name:'generatespec',description:'开发文档。action:generate/review(0-10)/fix/finalize/status。',executor:'main_thread',flow_role:'supervisor',
+  'generatespec':{name:'generatespec',description:'开发文档。action:generate/review(0-10)/fix/finalize/status。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['generate','review','fix','finalize','status']},project_id:{type:'string'},spec_content:{type:'string'},review_instructions:{type:'string'}},required:['action']}},
   'world_validator':{name:'world_validator',description:'多实体离散仿真。action:define/load/step/run/transition/status等。help查语法。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['define','list','load','step','run','transition','status','delete','export','diff','edit','reset','history','flush_pending','clear_pending']},world_id:{type:'string'},format:{type:'string',enum:['json','yaml','nl','csv','uml'],default:'json'},def:{type:'object'},def_text:{type:'string'},entity_id:{type:'string'},event:{type:'string'},events:{type:'array',items:{type:'string'}},context:{type:'object'},max_ticks:{type:'number',default:100,maximum:1000},snapshot_id:{type:'string'},target_snapshot:{type:'string'},export_format:{type:'string',enum:['mermaid','plantuml','graphviz','csv','json','matrix']},changes:{type:'object'},tick_limit:{type:'number',default:50,maximum:500}},required:['action']}},
   'flow_mode':{name:'flow_mode',description:'心流深度工作模式。复杂任务时载入使用。action:start。启动后监工接管，自主迭代直至达标交付。',executor:'main_thread',flow_role:'root',
     parameters:{type:'object',properties:{action:{type:'string',enum:['start']},task:{type:'string',description:'任务描述，为空时自动从对话上下文提取'}},required:['action']}},
-  'flow_align_done':{name:'flow_align_done',description:'[监工]对齐完成，进入执行。',executor:'main_thread',flow_role:'supervisor',
-    parameters:{type:'object',properties:{criteria:{type:'array',items:{type:'string'},description:'验收标准列表'},dev_doc_summary:{type:'string',description:'开发文档摘要'}},required:['criteria']}},
-  'flow_goal':{name:'flow_goal',description:'[监工]目标清单管理。action:add/update/delete/complete/fail/list。',executor:'main_thread',flow_role:'supervisor',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['add','update','delete','complete','fail','list']},goal_id:{type:'string'},description:{type:'string',description:'目标描述(action=add时)'},score:{type:'number',description:'0-1评分(action=update时)'},evidence:{type:'string',description:'事实证据(action=update/complete时)'},reason:{type:'string',description:'失败原因(action=fail时)'}},required:['action']}},
+  'todo':{name:'todo',description:'目标清单。action:create/start/done/fail/add/reorder/list。复杂任务[MUST]先建清单，逐条完成逐条done。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['create','start','done','fail','add','reorder','list']},todo_id:{type:'string'},title:{type:'string',description:'清单标题(action=create)'},items:{type:'array',items:{type:'object',properties:{id:{type:'string'},desc:{type:'string'},depends_on:{type:'array',items:{type:'string'}}}}},item_id:{type:'string',description:'条目id(action=start/done/fail)'},item:{type:'object',properties:{id:{type:'string'},desc:{type:'string'},depends_on:{type:'array',items:{type:'string'}}}},evidence:{type:'string',description:'完成证据:文件路径/exitCode/输出摘要(action=done)'},reason:{type:'string',description:'受阻原因(action=fail)'},fallback:{type:'string',description:'替代方案(action=fail)'},item_ids:{type:'array',items:{type:'string'},description:'新顺序(action=reorder)'}},required:['action']}},
   'flow_context_new':{name:'flow_context_new',description:'[监工]创建新的干活Agent上下文。summary=前情摘要,first_task=第一条任务指令。',executor:'main_thread',flow_role:'supervisor',
     parameters:{type:'object',properties:{summary:{type:'string',description:'前情摘要(完成了什么/文件在哪/剩余问题)'},first_task:{type:'string',description:'第一条任务指令'}},required:['summary','first_task']}},
   'flow_deliver':{name:'flow_deliver',description:'[监工]全部达标时交付退出心流。',executor:'main_thread',flow_role:'supervisor',
@@ -2034,14 +1998,13 @@ var _SHARED_GRADE='[GRADE:L1] 简单问答\n'
 +'\n'
 +'[GRADE:L4] 项目级\n'
 +'前·· longterm_memory query(项目历史/技术决策)→knowledge_base query(规范/文档)\n'
-+'  →help set "reqalign"→reqalign analyze→确认→lock\n'
-+'  →help set "generatespec"→generate→review→fix→finalize\n'
-+'  →help set "pipeline"→create→run→get_report→decide→deliver\n'
-+'触发: 多模块→pipeline | 反复修改>2轮→flow_mode\n'
-+'缺口: reqalign不可用→手写需求文档 | generatespec不可用→手写规格 | pipeline不可用→手动串行 | 全链不可用→降级L3分步交付+store标记"L4降级"\n'
++'  →todo create 拆解为可验证条目→逐条标记依赖→flow_mode start\n'
++'  →监工接管→逐条验证→干活Agent执行→全done→flow_deliver\n'
++'触发: 多模块依赖→todo清单+flow_mode | 反复修改>2轮→flow_mode\n'
++'缺口: 条目受阻→todo fail reason+fallback→干活Agent按fallback继续 | 全链不可用→降级L3分步交付+store标记"L4降级"\n'
 +'后·· longterm_memory store(架构决策+缺口+降级记录) | knowledge_base store(规范/模板)\n'
-+'□自检: reqalign locked？spec finalized？pipeline全completed？验收达标？后··执行？\n'
-+'★完成: pipeline全completed+验收全达标+关键决策已存\n'
++'□自检: todo全部done？evidence一致？验收达标？后··执行？\n'
++'★完成: todo全部done+验收全达标+关键决策已存\n'
 +'\n'
 +'[GRADE:L5] 持续改进\n'
 +'触发: 同类反复≥3次→longterm_memory query回顾→定位模式→调整方法→longterm_memory store新法\n'
@@ -3016,29 +2979,39 @@ flow_mode action="start" task="完整任务描述"
 
 启动后系统进入对齐阶段，心流监工将与你确认需求细节。`,
 
-  'flow_align_done':`## flow_align_done — [监工] 对齐完成
 
-监工确认需求对齐后调用，进入执行阶段。
+  'todo':`## todo
 
-### 参数
-| 参数 | 说明 |
-|------|------|
-| criteria | 验收标准列表(字符串数组) |
-| dev_doc_summary | 开发文档摘要 |`,
+目标清单。action:create/start/done/fail/add/reorder/list。
 
-  'flow_goal':`## flow_goal — [监工] 目标清单
+### 数据结构
+{
+  "todo_id": "t_001",
+  "title": "数据分析任务",
+  "items": [
+    {"id":"1","desc":"读取并清洗数据","status":"done","evidence":"/data/clean.csv (code_run exitCode:0)"},
+    {"id":"2","desc":"聚合计算","status":"doing","evidence":""},
+    {"id":"3","desc":"生成图表","status":"todo","evidence":"","depends_on":["2"]}
+  ],
+  "stats": {"total":3,"done":1,"doing":1,"todo":1,"failed":0}
+}
 
-管理心流执行阶段的目标清单。
+### 各 action 最小示例
+todo action="create" title="数据分析" items=[{"id":"1","desc":"读取数据"},{"id":"2","desc":"聚合"},{"id":"3","desc":"生成图表"}]
+todo action="start" todo_id="t_001" item_id="1"
+todo action="done" todo_id="t_001" item_id="1" evidence="/data/clean.csv, code_run exitCode:0"
+todo action="fail" todo_id="t_001" item_id="3" reason="chart工具未载入" fallback="help set chart后再试"
+todo action="add" todo_id="t_001" item={"id":"4","desc":"导出PDF","depends_on":["3"]}
+todo action="reorder" todo_id="t_001" item_ids=["1","3","2","4"]
+todo action="list" todo_id="t_001"
 
-### action
-| action | 说明 | 参数 |
-|--------|------|------|
-| add | 新增目标 | description |
-| update | 更新评分 | goal_id, score(0-1), evidence |
-| delete | 删除目标 | goal_id |
-| complete | 标记完成 | goal_id, evidence |
-| fail | 标记失败 | goal_id, reason |
-| list | 列出全部 | - |`,
+### 规则
+- 复杂任务(L3+)建清单。简单问答(L1)不建。
+- 逐条start→done，不可同时两个doing。
+- done必须附evidence(文件路径/exitCode/输出摘要)。
+- fail必须附reason+fallback。
+- 条目有depends_on时，依赖项全部done才能start。
+- 清单变更后stats自动重算。`,
 
   'flow_context_new':`## flow_context_new — [监工] 新建干活Agent上下文
 
@@ -3370,6 +3343,20 @@ var _flowSessions={};
 function flowSession(){return _flowSessions[currentConversationId||'default']||null;}
 function _setFlowSession(v){_flowSessions[currentConversationId||'default']=v;}
 
+// TODO 工具存储层（按对话隔离）
+var _convTodos={};
+function _getTodos(convId){ return _convTodos[convId||currentConversationId] || null; }
+function _setTodos(convId, todos){ _convTodos[convId||currentConversationId] = todos; }
+
+var _convTokenAccumulator={};
+function _updateTokenAccumulator(convId,tokens){
+  convId=convId||currentConversationId;
+  if(tokens>0){ _convTokenAccumulator[convId]=tokens; }
+}
+function _getCumulativeTokens(convId){
+  return _convTokenAccumulator[convId||currentConversationId]||0;
+}
+
 function resetFlowSession(workingDir){
   var sess = {
     task:'', criteria:[], qualityThreshold:0.92, workingDir:workingDir||'/flow/'+Date.now()+'/',
@@ -3383,7 +3370,7 @@ function resetFlowSession(workingDir){
 }
 
 // 【动态工具集】核心工具列表 — 每轮对话首轮必定载入
-var CORE_TOOL_NAMES=['help','skill_manager','filesystem','search','calculator','precise_time','fuzzy_search','semantic_memory','longterm_memory','knowledge_base'];
+var CORE_TOOL_NAMES=['help','skill_manager','filesystem','search','calculator','precise_time','fuzzy_search','semantic_memory','longterm_memory','knowledge_base','todo'];
 
 // 每个对话独立扩展工具激活集 — 对齐 skill 的 per-conversation 模式
 var convActiveTools={};
@@ -9782,15 +9769,14 @@ async function executeMainThreadTool(toolName,args){
     case 'precise_time':return await toolPreciseTime(args);
     case 'pipeline':return await toolPipeline(args);
     case 'reqalign':return await toolReqalign(args);
-      case 'generatespec':return await toolGeneratespec(args);
-      case 'world_validator':return await toolWorldSimulator(args);
-      case 'flow_mode':return await toolFlowMode(args);
-      case 'flow_align_done':return await toolFlowNoop('align_done');
-      case 'flow_goal':return await toolFlowNoop('goal');
-      case 'flow_context_new':return await toolFlowNoop('context_new');
-      case 'flow_deliver':return await toolFlowNoop('deliver');
-      case 'help':return await toolHelp(args);
-      default:throw new Error('Unsupported tool: '+toolName);
+    case 'generatespec':return await toolGeneratespec(args);
+    case 'world_validator':return await toolWorldSimulator(args);
+    case 'flow_mode':return await toolFlowMode(args);
+    case 'todo':return await _executeTodo(args, currentConversationId);
+    case 'flow_context_new':return await toolFlowNoop('context_new');
+    case 'flow_deliver':return await toolFlowNoop('deliver');
+    case 'help':return await toolHelp(args);
+    default:throw new Error('Unsupported tool: '+toolName);
   }
 }
 
@@ -9798,13 +9784,34 @@ async function toolFlowMode(args){
   var action=args.action||'start';
   if(action!=='start')return JSON.stringify({ok:false,message:'不支持的操作'});
   if(flowSession()&&flowSession().active)return JSON.stringify({ok:false,message:'心流模式已在运行中'});
+
+  var convId = currentConversationId;
+  var todos = _getTodos(convId);
+  if(!todos||!todos.active){
+    return JSON.stringify({ok:false,message:'未找到目标清单。请先用 todo create 拆解任务，再启动心流模式。'});
+  }
+
   var workingDir='/flow/'+Date.now()+'/';
   var sess = resetFlowSession(workingDir);
-  sess.task=args.task||'从对话上下文中提取';
+  sess.task=args.task||todos.title;
   sess.active=true;
-  sess.phase='aligning';
+  sess.phase='executing';
   sess.startTime=Date.now();
   sess.rootSystemPrompt=CORE_PROMPT;
+
+  // 从 todo 镜像验收标准和 goals
+  sess.criteria = todos.items.map(function(it){return it.desc;});
+  sess.goals = todos.items.map(function(it, j){
+    return {
+      id: it.id,
+      description: it.desc,
+      score: it.status==='done'?1.0:0,
+      evidence: it.evidence||'未开始',
+      status: it.status==='done'?'completed':it.status==='failed'?'failed':'pending',
+      created_at: Date.now()
+    };
+  });
+
   _setFlowSession(sess);
   try{await createFile(workingDir+'.gitkeep','');}catch(e){}
   return JSON.stringify({ok:true,message:'心流模式已启动。任务转交监工Agent。',workingDir:workingDir});
@@ -13626,7 +13633,10 @@ async function searchSimilarExperiences(query,limit){
 async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText, preUserMessages) {
   if (!pendingToolCalls || pendingToolCalls.length === 0) return null;
 
+  var _todosCache=_getTodos(currentConversationId);
+  var _todoProgress=_todosCache&&_todosCache.active?(_todosCache.stats.done+'/'+_todosCache.stats.total):'none';
   var _cacheKey = pendingToolCalls.map(function(tc){return tc.function.name;}).join(',') + '|' +
+    _todoProgress + '|' +
     (streamReasoning || '').substring(0, 200) + '|' +
     toolResults.map(function(tr){return (tr.content||'').substring(0, 100);}).join('|');
   var _cached = _inlineCritiqueCache[_cacheKey];
@@ -13668,8 +13678,10 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
         '  ▸ P2 输出对齐 — Agent回答了吗？偏离了哪？\n'+
         '  ▸ P3 事实可验 — 有断言可调工具核查吗？\n'+
         '  ▸ P4 证据在手 — 每问题有原文引用吗？\n'+
+        '  ▸ P5 目标对齐 — 本轮工具调用是否在推动todo当前条目？偏离了吗？\n'+
         '  → 判定: 可用 | 存疑—原因 | 不可用—原因\n\n'+
         '[MUST] 只审查不修正。每问题必须有原文引用。\n'+
+        '[MUST] 若本轮有活跃todo，审查时以todo当前条目为基准判断是否偏航。\n'+
         '[OUTPUT] 第一行判定 → 简述。\n\n'+
         '<EXAMPLE>\n'+
         '可用\n'+
@@ -13683,9 +13695,10 @@ for(var _pci=0;_pci<(preUserMessages||[]).length;_pci++){_critiqueMessages.push(
 var _filteredReasoning=(streamReasoning||'(无)')
   .replace(/我们的/g,'Agent们的').replace(/我们/g,'Agent们')
   .replace(/我的/g,'Agent的').replace(/我/g,'Agent');
+var _todoCardInline=_buildTodoUserInjection(currentConversationId,'critique');
 _critiqueMessages.push({
   role: 'user',
-  content: '[用户问题]\\n' + (userText || '(无)') + '\\n\\n[Agent思考]\\n' + _filteredReasoning + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults
+  content: '[用户问题]\\n' + (userText || '(无)') + '\\n\\n[Agent思考]\\n' + _filteredReasoning + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults + (_todoCardInline?'\\n\\n'+_todoCardInline:'')
 });
 
 
@@ -14079,6 +14092,12 @@ async function processUserMessage(userText,taskId){
           messages.push({role:'user',content:'[审查报告] '+_ilcNote});
         }
       }
+      // ★ TODO 注入 — 累计token消耗>100000或dirty标记时注入当前进度
+      _updateTokenAccumulator(currentConversationId,_estimateTokens(JSON.stringify(messages)));
+      var _todoCard=_buildTodoUserInjection(currentConversationId,'main');
+      if(_todoCard){
+        messages.push({role:'user',content:_todoCard});
+      }
       // 【心流强制放权】flow_mode启动后根Agent立即停止
       if(flowSession()&&flowSession().active)break;
 
@@ -14218,10 +14237,12 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
               '  ▸ P2 代码/数据 — 逐一列+run结果\n'+
               '  ▸ P3 引用来源 — 逐一列+是否可追溯\n'+
               '  ▸ P4 逻辑连贯 — 矛盾点列出\n'+
+              '  ▸ P5 清单完整 — 草稿答案是否覆盖了todo全部已完成条目的产出？漏了哪个？\n'+
               '  → 输出审查报告\n\n'+
               '[MUST] 可验证断言先调工具核查再下结论。\n'+
               '[MUST] 代码/数据/可验证结论必须调工具核查。\n'+
-              '[MUST] 只报告有原文证据的问题。\n\n'+
+              '[MUST] 只报告有原文证据的问题。\n'+
+              '[MUST] 若存在活跃todo，逐条核对草稿答案是否引用了每个done条目的evidence。\n\n'+
               '[OUTPUT_FORMAT]\n'+
               '[SEVERITY_BLOCK]\n'+
               '1. [描述] — 证据:[原文引用] — 修正:[具体建议]\n'+
@@ -14243,9 +14264,10 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
           }];
           for(var _ci=0; _ci<_preUserMessages.length; _ci++){critiqueMessages.push(_preUserMessages[_ci]);}
           var _evalHistoryCtx = _evalHistory ? '\\n\\n[前序评估历史]\\n'+_evalHistory : '';
+          var _todoCardPost=_buildTodoUserInjection(currentConversationId,'evaluator');
           critiqueMessages.push({
             role:'user',
-            content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent+_toolCallSummary+_evalHistoryCtx
+            content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent+_toolCallSummary+_evalHistoryCtx+(_todoCardPost?'\\n\\n'+_todoCardPost:'')
           });
 
 
@@ -14389,9 +14411,10 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
               '<REMINDER> 无元评论。证据足→采纳。涉及代码→必验。</REMINDER>'
           }];
           for(var _ri=0; _ri<_preUserMessages.length; _ri++){revisionMessages.push(_preUserMessages[_ri]);}
+          var _todoCardRev=_buildTodoUserInjection(currentConversationId,'revision');
           revisionMessages.push({
             role:'user',
-            content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent+_toolCallSummary+'\\n\\n[审查报告]\\n'+evalReport
+            content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent+_toolCallSummary+'\\n\\n[审查报告]\\n'+evalReport+(_todoCardRev?'\\n\\n'+_todoCardRev:'')
           });
 
 
@@ -14683,65 +14706,15 @@ async function processFlowTurn(userText, cs, taskId){
   if(!session||!session.active)return;
 
   setStatus('flow');
-  var messagesDiv = getConvMessagesList(currentConversationId);
+  var convId = currentConversationId;
+  var messagesDiv = getConvMessagesList(convId);
   if(!messagesDiv)return;
 
   try{
-    if(session.phase==='aligning'){
-      session._projectId=session._projectId||'proj_'+Date.now()+'_'+Math.random().toString(36).substr(2,6);
-
-      var _reg=TOOL_REGISTRY;
-      var _alignTools=[];
-      ['flow_align_done','reqalign','generatespec','help'].forEach(function(tn){
-        if(_reg[tn]&&!_reg[tn].disabled)_alignTools.push(_reg[tn]);
-      });
-
-      if(!session.supervisorMessages){
-        session.supervisorMessages=[
-          {role:'system', content:buildAlignSystemPrompt(session)},
-          {role:'user', content:session.task}
-        ];
-      }else{
-        if(!window._skipAddUser)_addUserMessageToFlow(userText, messagesDiv);
-        session.supervisorMessages[0].content=buildAlignSystemPrompt(session);
-        session.supervisorMessages.push({role:'user', content:userText});
-      }
-
-      // 对齐师 LLM
-      var supResult=null;
-      try{
-        supResult=await callLLMWithToolsLoopStreaming(session.supervisorMessages,_alignTools,cs,messagesDiv);
-      }catch(e){
-        debugLogger.error('对齐LLM异常: '+e.message);
-        if(e.message==='用户已中止'){throw e;}
-        return; // LLM失败，等待用户重试
-      }
-
-      // ★ 对齐完成→展示目标清单
-      var _alignDone=session.criteria&&session.criteria.length>0
-        &&supResult&&supResult.finalContent&&supResult.agentMsgDiv;
-      if(_alignDone){
-        var _supDiv=supResult.agentMsgDiv;
-        var _supContentDiv=_supDiv&&_supDiv.querySelector('.message-content');
-        var _gp='## 目标清单\n|#|目标|状态|\n|---|------|------|\n';
-        for(var _gi=0;_gi<session.criteria.length;_gi++){
-          _gp+='|'+(session.goals[_gi]?session.goals[_gi].id:'g'+(_gi+1))
-            +'|'+session.criteria[_gi]+'|⬜|\n';
-        }
-        var _goalBlock=_createPhaseBlock(_supContentDiv,
-          'flow-align-goals-'+session.iteration,'flow-align-goals-toggle-'+session.iteration,
-          '目标清单','[v]收起','[>]查看',_gp,'[>]查看目标清单');
-        _goalBlock.block.classList.add('collapsed');
-        _goalBlock.toggle.textContent='[>]查看目标清单';
-      }
-
-
-      if(session.phase==='executing'){
-        await flowExecuteLoop(session,cs,taskId,messagesDiv);
-      }
-
-    }else if(session.phase==='executing'){
-      await flowExecuteLoop(session, cs, taskId, messagesDiv);
+    // 兼容旧会话：phase='aligning' 自动切换为 'executing'
+    if(session.phase==='aligning'){ session.phase='executing'; }
+    if(session.phase==='executing'){
+      await flowExecuteLoop(session, cs, taskId, messagesDiv, convId);
     }
 
   }catch(e){
@@ -14815,10 +14788,11 @@ function _addToolBlockAfter(blockId,toggleId,toolName,resultContent,refEl){
   return resultBlock;
 }
 
-async function flowExecuteLoop(session, cs, taskId, messagesDiv){
+async function flowExecuteLoop(session, cs, taskId, messagesDiv, convId){
+  convId = convId || currentConversationId;
   // ★ 首次进入执行阶段：将对齐师的 system prompt 替换为监工 system prompt
   if(session.supervisorMessages && session.supervisorMessages.length>0){
-    session.supervisorMessages[0].content = buildSupervisorSystemPrompt(session, null);
+    session.supervisorMessages[0].content = buildSupervisorSystemPrompt(session, null, convId);
   }
 
   while(session.phase==='executing'&&session.active&&!session.delivered){
@@ -14842,7 +14816,7 @@ async function flowExecuteLoop(session, cs, taskId, messagesDiv){
 
     // ★ 更新 system prompt（每次迭代反映最新 goal 状态）
     if(session.supervisorMessages && session.supervisorMessages.length>0){
-      session.supervisorMessages[0].content = buildSupervisorSystemPrompt(session, mainCtx);
+      session.supervisorMessages[0].content = buildSupervisorSystemPrompt(session, mainCtx, convId);
     }
 
     var mainOutput = '';
@@ -14853,8 +14827,8 @@ async function flowExecuteLoop(session, cs, taskId, messagesDiv){
     session.supervisorMessages.push({
       role:'user',
       content:(session.iteration===1)
-        ? '对齐完成。\\n验收标准: '+JSON.stringify(session.criteria)+'\\n工作目录: '+session.workingDir+'\\n\\n按流程: 审查标准→flow_goal注册目标→flow_context_new启干活Agent'
-        : '干活Agent产出:\\n'+mainOutput+'\\n\\n用filesystem/code_runner验证→更新flow_goal→给引用行号的反馈。全部达标调flow_deliver。'
+        ? '主Agent已完成需求拆解。\\n验收标准: '+JSON.stringify(session.criteria)+'\\n工作目录: '+session.workingDir+'\\n\\n按流程: 审查标准→对照todo清单→flow_context_new启干活Agent'
+        : '干活Agent产出:\\n'+mainOutput+'\\n\\n用filesystem/code_runner验证→逐条对照todo done→给引用行号的反馈。全部达标调flow_deliver。'
     });
 
 
@@ -15115,32 +15089,26 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
         var toolName=tc.function.name;
         var actualResult='';
 
-        if(toolName==='flow_align_done'){
-          var args=parseToolCallArguments(tc);
-          var _fs1 = flowSession();
-          if(!_fs1){
-            actualResult=JSON.stringify({error:'无活跃心流会话'});
-            actualResult='---tool:flow_align_done err 0ms '+actualResult.length+'ch json---\n'+actualResult;
-            messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
-            _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
-          }else{
-          _fs1.criteria=args.criteria||[];
-          _fs1.phase='executing';
-          for(var j=0;j<_fs1.criteria.length;j++){
-            _fs1.goals.push({id:'g'+(j+1),description:_fs1.criteria[j],score:0,evidence:'未开始',status:'pending',created_at:Date.now()});
+        if(toolName==='todo'){
+          var tArgs=parseToolCallArguments(tc);
+          var tResult=_executeTodo(tArgs, currentConversationId);
+          var _fs5=flowSession();
+          if(_fs5 && tResult && tResult.ok!==false){
+            var updatedTodos=_getTodos(currentConversationId);
+            if(updatedTodos){
+              _fs5.goals=updatedTodos.items.map(function(it,j){
+                return {
+                  id:it.id,description:it.desc,
+                  score:it.status==='done'?1.0:0,
+                  evidence:it.evidence||'未开始',
+                  status:it.status==='done'?'completed':it.status==='failed'?'failed':'pending',
+                  created_at:Date.now()
+                };
+              });
+            }
           }
-          actualResult=JSON.stringify({ok:true,criteria:_fs1.criteria});
-          actualResult='---tool:flow_align_done ok 0ms '+actualResult.length+'ch json---\n'+actualResult;
-          messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
-          _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
-          _breakOuter=true;
-          }
-        }else if(toolName==='flow_goal'){
-          var gArgs=parseToolCallArguments(tc);
-          var _fs2 = flowSession();
-          var gResult=executeFlowGoal(gArgs,_fs2);
-          actualResult=JSON.stringify(gResult);
-          actualResult='---tool:flow_goal '+(gResult.ok!==false?'ok':'err')+' 0ms '+actualResult.length+'ch json---\n'+actualResult;
+          actualResult=JSON.stringify(tResult);
+          actualResult='---tool:todo '+(tResult&&tResult.ok!==false?'ok':'err')+' 0ms '+actualResult.length+'ch json---\n'+actualResult;
           messages.push({role:'tool',tool_call_id:tc.id,content:actualResult});
           _flowToolResults.push({role:'tool',tool_call_id:tc.id,content:actualResult});
         }else if(toolName==='flow_context_new'){
@@ -15225,31 +15193,9 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
   return {finalContent:agentContent, agentMsgDiv:agentMsgDiv};
 }
 
-function buildAlignSystemPrompt(session){
-  var parts=[];
-  parts.push(settings.break_armor_enabled ? BREAK_ARMOR_PREFIX : '\n<!-- -->\n');
-  parts.push(FLOW_ALIGN_STATIC.replace(/\{working_dir\}/g, session.workingDir));
-  var skills=skillCache.skills||{};
-  var skillKeys=Object.keys(skills);
-  var injectedCount=0;
-  if(skillKeys.length>0){
-    var skillBlock='# 激活的技能策略';
-    for(var i=0;i<skillKeys.length;i++){
-      var sk=skills[skillKeys[i]];
-      if(!sk||!sk.prompt_fragment)continue;
-      var sid=sk.id||skillKeys[i].replace('.json','');
-      if(skillCache.activeSkillIds.indexOf(sid)>=0){
-        skillBlock+='\n## '+(sk.name||skillKeys[i])+'\n'+sk.prompt_fragment;
-        injectedCount++;
-      }
-    }
-    if(injectedCount>0)parts.push(skillBlock);
-  }
-  return parts.join('\n');
-}
 
 
-function buildSupervisorSystemPrompt(session, mainCtx){
+function buildSupervisorSystemPrompt(session, mainCtx, convId){
   var parts=[];
 
   parts.push(settings.break_armor_enabled ? BREAK_ARMOR_PREFIX : '\n<!-- -->\n');
@@ -15275,31 +15221,36 @@ function buildSupervisorSystemPrompt(session, mainCtx){
 
   parts.push('\n# 工具\n'+getToolsDescription('supervisor'));
 
-  parts.push(buildSupervisorStatusCard(session, mainCtx));
+  parts.push(buildSupervisorStatusCard(session, mainCtx, convId));
 
   return parts.join('\n');
 }
 
-function buildSupervisorStatusCard(session, mainCtx){
+function buildSupervisorStatusCard(session, mainCtx, convId){
   var card='';
+  var todos=_getTodos(convId||currentConversationId);
 
   card+='## 目标清单\n';
-  card+='| # | id | 状态 | 目标 | 评分 | 证据 |\n';
-  card+='|---|---|------|------|------|------|\n';
-  var goals=session.goals||[];
+  card+='| # | id | 状态 | 目标 | 证据 |\n';
+  card+='|---|---|------|------|------|\n';
   var allScores=[];
-  for(var i=0;i<goals.length;i++){
-    var g=goals[i];
-    var icon=g.status==='completed'?'✅':g.status==='failed'?'❌':'🔄';
-    card+='| '+(i+1)+' | '+g.id+' | '+icon+' | '+g.description+' | '+(g.score*100).toFixed(0)+'% | '+(g.evidence||'-')+' |\n';
-    allScores.push(g.score||0);
+  if(todos&&todos.active&&todos.items.length>0){
+    for(var i=0;i<todos.items.length;i++){
+      var it=todos.items[i];
+      var icon=it.status==='done'?'完成':it.status==='doing'?'进行中':it.status==='failed'?'受阻':'待办';
+      card+='| '+(i+1)+' | '+it.id+' | '+icon+' | '+it.desc+' | '+(it.evidence||'-')+' |\n';
+      allScores.push(it.status==='done'?1:0);
+    }
+    card+='\n进度: '+todos.stats.done+'/'+todos.stats.total;
+  }else{
+    card+='| 1 | - | 待办 | (调用todo list查看) | - |\n';
+    allScores.push(0);
   }
-  if(goals.length===0)card+='| 1 | - | ⬜ | (未设置) | 0% | - |\n';
 
   var minScore=allScores.length>0?Math.min.apply(null,allScores):0;
   session.bestScore=Math.max(session.bestScore,minScore);
   card+='\n**最低分**: '+(minScore*100).toFixed(0)+'% | 阈值: '+(session.qualityThreshold*100).toFixed(0)+'%';
-  if(minScore>=session.qualityThreshold)card+=' ✅';
+  if(minScore>=session.qualityThreshold)card+=' 达标';
   card+='\n\n';
 
   var mainTokenCount=0;
@@ -15361,46 +15312,342 @@ function extractMainAgentOutput(messages, startIdx){
   return output;
 }
 
-function executeFlowGoal(args, session){
+// ===== TODO 工具执行函数 =====
+function _executeTodo(args, convId){
   var action=args.action;
-  session.goals=session.goals||[];
+  var todos=_getTodos(convId);
+
   switch(action){
-    case'add':
-      var goal={id:args.goal_id||'g'+(session.goals.length+1),description:args.description||'',score:0,evidence:'',status:'pending',created_at:Date.now()};
-      session.goals.push(goal);
-      return{ok:true,goal:goal};
-    case'update':
-      var gu=session.goals.find(function(g){return g.id===args.goal_id;});
-      if(!gu)return{ok:false,error:'目标不存在: '+args.goal_id};
-      if(args.score!==undefined)gu.score=args.score;
-      if(args.evidence!==undefined)gu.evidence=args.evidence;
-      return{ok:true,goal:gu};
-    case'delete':
-      session.goals=session.goals.filter(function(g){return g.id!==args.goal_id;});
-      return{ok:true};
-    case'complete':
-      var gc=session.goals.find(function(g){return g.id===args.goal_id;});
-      if(!gc)return{ok:false,error:'目标不存在: '+args.goal_id};
-      gc.status='completed';gc.score=1.0;gc.evidence=args.evidence||gc.evidence;
-      return{ok:true,goal:gc};
+    case'create':
+      if(todos)todos.active=false;
+      var newItems=(args.items||[]).map(function(it,j){
+        return {
+          id:it.id||('t'+(j+1)),
+          desc:it.desc||'',
+          depends_on:it.depends_on||[],
+          status:'todo',
+          evidence:'',
+          reason:'',
+          fallback:'',
+          started_at:null,
+          done_at:null
+        };
+      });
+      if(newItems.length===0)return{ok:false,error:'items至少需要1条'};
+      var ids={};
+      for(var i=0;i<newItems.length;i++){
+        if(ids[newItems[i].id])return{ok:false,error:'item id重复: '+newItems[i].id};
+        ids[newItems[i].id]=true;
+      }
+      for(var i=0;i<newItems.length;i++){
+        var deps=newItems[i].depends_on||[];
+        for(var d=0;d<deps.length;d++){
+          if(!ids[deps[d]])return{ok:false,error:'依赖项不存在: '+deps[d]};
+        }
+      }
+      if(_detectCycle(newItems))return{ok:false,error:'依赖关系存在环路'};
+      for(var i=0;i<newItems.length;i++){
+        if(newItems[i].desc.length>500)newItems[i].desc=newItems[i].desc.substring(0,497)+'...';
+      }
+      var todo_id='t_'+Date.now().toString(36)+'_'+Math.random().toString(36).substr(2,4);
+      todos={
+        active:true,
+        todo_id:todo_id,
+        title:args.title||'未命名清单',
+        items:newItems,
+        stats:{total:newItems.length,done:0,doing:0,todo:newItems.length,failed:0},
+        _dirty:true,
+        _lastInjectToken:0,
+        _lastCard:''
+      };
+      _setTodos(convId,todos);
+      return{ok:true,todo_id:todo_id,stats:todos.stats};
+
+    case'start':
+      if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
+      var startItem=null;
+      for(var i=0;i<todos.items.length;i++){if(todos.items[i].id===args.item_id){startItem=todos.items[i];break;}}
+      if(!startItem)return{ok:false,error:'条目不存在: '+args.item_id};
+      var unmet=[];
+      var deps=startItem.depends_on||[];
+      for(var d=0;d<deps.length;d++){
+        var dep=todos.items.find(function(it){return it.id===deps[d];});
+        if(!dep||dep.status!=='done')unmet.push(deps[d]);
+      }
+      if(unmet.length>0)return{ok:false,error:'依赖未完成: '+unmet.join(',')};
+      for(var i=0;i<todos.items.length;i++){
+        if(todos.items[i].status==='doing'){todos.items[i].status='todo';todos.items[i].started_at=null;}
+      }
+      startItem.status='doing';
+      startItem.started_at=Date.now();
+      todos._dirty=true;
+      _recalcStats(todos);
+      _setTodos(convId,todos);
+      return{ok:true,item_id:args.item_id,stats:todos.stats};
+
+    case'done':
+      if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
+      var doneItem=null;
+      for(var i=0;i<todos.items.length;i++){if(todos.items[i].id===args.item_id){doneItem=todos.items[i];break;}}
+      if(!doneItem)return{ok:false,error:'条目不存在: '+args.item_id};
+      if(!args.evidence||args.evidence.length===0)return{ok:false,error:'done必须附evidence'};
+      if(args.evidence.length>2000)args.evidence=args.evidence.substring(0,1997)+'...';
+      doneItem.status='done';
+      doneItem.evidence=args.evidence;
+      doneItem.done_at=Date.now();
+      todos._dirty=true;
+      _recalcStats(todos);
+      _setTodos(convId,todos);
+      return{ok:true,item_id:args.item_id,stats:todos.stats};
+
     case'fail':
-      var gf=session.goals.find(function(g){return g.id===args.goal_id;});
-      if(!gf)return{ok:false,error:'目标不存在: '+args.goal_id};
-      gf.status='failed';gf.evidence=args.reason||gf.evidence;
-      return{ok:true,goal:gf};
+      if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
+      var failItem=null;
+      for(var i=0;i<todos.items.length;i++){if(todos.items[i].id===args.item_id){failItem=todos.items[i];break;}}
+      if(!failItem)return{ok:false,error:'条目不存在: '+args.item_id};
+      if(!args.reason||args.reason.length===0)return{ok:false,error:'fail必须附reason'};
+      failItem.status='failed';
+      failItem.reason=args.reason||'';
+      failItem.fallback=args.fallback||'';
+      todos._dirty=true;
+      _recalcStats(todos);
+      _setTodos(convId,todos);
+      return{ok:true,item_id:args.item_id,stats:todos.stats};
+
+    case'add':
+      if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
+      if(!args.item||!args.item.id||!args.item.desc)return{ok:false,error:'item需含id和desc'};
+      if(todos.items.find(function(it){return it.id===args.item.id;}))return{ok:false,error:'item id重复: '+args.item.id};
+      var deps=args.item.depends_on||[];
+      for(var d=0;d<deps.length;d++){
+        if(!todos.items.find(function(it){return it.id===deps[d];}))return{ok:false,error:'依赖项不存在: '+deps[d]};
+      }
+      todos.items.push({
+        id:args.item.id,
+        desc:(args.item.desc||'').length>500?(args.item.desc||'').substring(0,497)+'...':(args.item.desc||''),
+        depends_on:deps,
+        status:'todo',
+        evidence:'',
+        reason:'',
+        fallback:'',
+        started_at:null,
+        done_at:null
+      });
+      todos._dirty=true;
+      _recalcStats(todos);
+      _setTodos(convId,todos);
+      return{ok:true,item_id:args.item.id,stats:todos.stats};
+
+    case'reorder':
+      if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
+      var newOrder=args.item_ids||[];
+      if(newOrder.length!==todos.items.length)return{ok:false,error:'item_ids数量('+newOrder.length+')与清单条目数('+todos.items.length+')不一致'};
+      var newItems=[];
+      for(var i=0;i<newOrder.length;i++){
+        var found=todos.items.find(function(it){return it.id===newOrder[i];});
+        if(!found)return{ok:false,error:'条目不存在: '+newOrder[i]};
+        newItems.push(found);
+      }
+      todos.items=newItems;
+      todos._dirty=true;
+      _setTodos(convId,todos);
+      return{ok:true,stats:todos.stats};
+
     case'list':
-      return{goals:session.goals};
+      if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
+      if(args.todo_id && args.todo_id!==todos.todo_id)return{ok:false,error:'清单不存在: '+args.todo_id};
+      return{ok:true,todo_id:todos.todo_id,title:todos.title,items:todos.items,stats:todos.stats};
+
     default:
       return{ok:false,error:'未知action: '+action};
   }
 }
 
+function _recalcStats(todos){
+  var stats={total:todos.items.length,done:0,doing:0,todo:0,failed:0};
+  for(var i=0;i<todos.items.length;i++){
+    var s=todos.items[i].status;
+    if(s==='done')stats.done++;
+    else if(s==='doing')stats.doing++;
+    else if(s==='failed')stats.failed++;
+    else stats.todo++;
+  }
+  todos.stats=stats;
+  if(stats.total===stats.done)todos.active=false;
+}
+
+function _detectCycle(items){
+  var ids={};
+  for(var i=0;i<items.length;i++)ids[items[i].id]=i;
+  var WHITE=0,GRAY=1,BLACK=2;
+  var color=[];
+  for(var i=0;i<items.length;i++)color[i]=WHITE;
+  function dfs(u){
+    color[u]=GRAY;
+    var deps=items[u].depends_on||[];
+    for(var d=0;d<deps.length;d++){
+      var v=ids[deps[d]];
+      if(v===undefined)continue;
+      if(color[v]===GRAY)return true;
+      if(color[v]===WHITE&&dfs(v))return true;
+    }
+    color[u]=BLACK;
+    return false;
+  }
+  for(var i=0;i<items.length;i++){
+    if(color[i]===WHITE&&dfs(i))return true;
+  }
+  return false;
+}
+
+// ===== TODO 注入卡片渲染函数 =====
+function _renderTodoCard(todos, role){
+  if(!todos||!todos.active)return null;
+  var card='[TODO] '+todos.stats.done+'/'+todos.stats.total+' done';
+  var items=todos.items;
+
+  var current=null;
+  for(var i=0;i<items.length;i++){if(items[i].status==='doing'){current=items[i];break;}}
+  if(!current){for(var i=0;i<items.length;i++){if(items[i].status==='todo'){current=items[i];break;}}}
+
+  if(current){
+    card+=' | 阶段: '+_summarizeItemDesc(current.desc,40);
+    card+='\n  当前: '+current.desc;
+    if(current.evidence)card+='\n  产出: '+_structurizeEvidence(current.evidence);
+  }
+
+  if(role==='revision'||role==='supervisor'){
+    var failed=items.filter(function(it){return it.status==='failed';});
+    for(var i=0;i<failed.length;i++){
+      card+='\n  受阻: ['+failed[i].id+'] '+failed[i].desc;
+      card+='\n    原因: '+_summarizeItemDesc(failed[i].reason,60);
+      if(failed[i].fallback)card+='\n    替代: '+_summarizeItemDesc(failed[i].fallback,60);
+    }
+  }
+
+  var upstreamIds=current?(current.depends_on||[]):[];
+  if(upstreamIds.length>0){
+    var upstream=items.filter(function(it){return upstreamIds.indexOf(it.id)!==-1&&it.status==='done';});
+    if(upstream.length>0){
+      card+='\n  上游: '+upstream.map(function(it){return '['+it.id+']'+_extractKeyOutput(it.evidence);}).join(' | ');
+    }
+  }else if(role!=='revision'){
+    var doneItems=items.filter(function(it){return it.status==='done';});
+    if(doneItems.length>0){
+      card+='\n  上游: '+doneItems.map(function(it){return '['+it.id+']'+_extractKeyOutput(it.evidence);}).join(' | ');
+    }
+  }
+
+  var blocked=items.filter(function(it){
+    if(it.status!=='todo')return false;
+    if(!it.depends_on||it.depends_on.length===0)return false;
+    return it.depends_on.some(function(depId){
+      var dep=items.find(function(x){return x.id===depId;});
+      return dep&&dep.status==='failed';
+    });
+  });
+  if(blocked.length>0){
+    card+='\n  阻塞: '+blocked.map(function(it){
+      return '['+it.id+']'+it.desc+' 等待:'+it.depends_on.filter(function(depId){
+        var dep=items.find(function(x){return x.id===depId;});
+        return dep&&dep.status==='failed';
+      }).join(',');
+    }).join(' | ');
+  }
+
+  if(role==='main'||role==='supervisor'){
+    var next=items.filter(function(it){return it.status==='todo';}).slice(0,3);
+    if(next.length>0){
+      card+='\n  下一步: '+next.map(function(it){
+        var dep=(it.depends_on&&it.depends_on.length)?' 依赖:['+it.depends_on.join(',')+']':'';
+        return '['+it.id+']'+it.desc+dep;
+      }).join(' | ');
+    }
+  }
+
+  return card;
+}
+
+function _buildTodoUserInjection(convId, role){
+  var todos=_getTodos(convId);
+  if(!todos||!todos.active)return null;
+
+  var cumulative=_getCumulativeTokens(convId);
+
+  if(!todos._dirty){
+    var nextAt=todos._nextInjectAt||100000;
+    if(cumulative<nextAt)return null;
+  }
+
+  var card=_renderTodoCard(todos,role);
+  if(!card)return null;
+  if(card===todos._lastCard&&!todos._dirty)return null;
+
+  todos._lastCard=card;
+  todos._nextInjectAt=cumulative+100000;
+  todos._dirty=false;
+  _setTodos(convId,todos);
+
+  return card;
+}
+
+// ===== TODO 辅助函数 =====
+function _summarizeItemDesc(desc, maxLen){
+  if(!desc)return'';
+  maxLen=maxLen||60;
+  if(desc.length<=maxLen)return desc;
+  var cut=maxLen;
+  var breakChars=['。','，',',','.','；',';',' ','\n'];
+  for(var i=0;i<breakChars.length;i++){
+    var pos=desc.lastIndexOf(breakChars[i],maxLen);
+    if(pos>maxLen*0.6){cut=pos;break;}
+  }
+  return desc.substring(0,cut)+'...';
+}
+
+function _extractKeyOutput(evidence){
+  if(!evidence)return'未记录';
+  var pathMatch=evidence.match(/(\/[\w\/\-\.]+\.\w{1,6})/);
+  var exitMatch=evidence.match(/exitCode[:\s]*(\d+)/i);
+  var metricMatch=evidence.match(/(\d+[Kk]?\s*(行|条|个|项|%|MB|KB))/);
+  var parts=[];
+  if(pathMatch)parts.push(pathMatch[1]);
+  if(exitMatch&&exitMatch[1]!=='0')parts.push('exitCode:'+exitMatch[1]);
+  else if(exitMatch)parts.push('exitCode:0');
+  if(metricMatch)parts.push(metricMatch[1]);
+  if(parts.length===0)return _summarizeItemDesc(evidence,50);
+  return parts.join(' ');
+}
+
+function _structurizeEvidence(evidence){
+  if(!evidence)return'未产出';
+  var pathMatch=evidence.match(/(\/[\w\/\-\.]+\.\w{1,6})/g);
+  var exitMatch=evidence.match(/exitCode[:\s]*(\d+)/i);
+  var parts=[];
+  if(pathMatch)parts.push(pathMatch.join(' | '));
+  if(exitMatch)parts.push('exitCode:'+exitMatch[1]);
+  var remaining=evidence
+    .replace(/(\/[\w\/\-\.]+\.\w{1,6})/g,'')
+    .replace(/exitCode[:\s]*\d+/gi,'')
+    .trim();
+  if(remaining.length>0)parts.push(_summarizeItemDesc(remaining,60));
+  return parts.join(' | ')||evidence.substring(0,80);
+}
+
 async function flowDeliver(session, cs, messagesDiv){
   try{
+    var todos=_getTodos(currentConversationId);
     var devDoc='# 心流开发文档\n\n## 任务\n'+session.task+'\n\n## 最终指标\n';
-    for(var i=0;i<session.goals.length;i++){
-      var g=session.goals[i];
-      devDoc+='- '+(g.status==='completed'?'✅':'❌')+' '+g.description+': '+(g.score*100).toFixed(0)+'% | '+g.evidence+'\n';
+    if(todos&&todos.items){
+      for(var i=0;i<todos.items.length;i++){
+        var it=todos.items[i];
+        devDoc+='- '+(it.status==='done'?'完成':it.status==='failed'?'受阻':'待办')+' '+it.desc+': '+(it.evidence||'')+'\n';
+      }
+    }else{
+      for(var i=0;i<session.goals.length;i++){
+        var g=session.goals[i];
+        devDoc+='- '+(g.status==='completed'?'完成':g.status==='failed'?'受阻':'待办')+' '+g.description+': '+(g.evidence||'')+'\n';
+      }
     }
     devDoc+='\n## 统计\n- 迭代: '+session.iteration+'轮\n- 版本: v'+session.currentVersion+'\n- 交付物: '+session.workingDir+'\n';
     await createFile(session.workingDir+'DEV_DOC.md',devDoc);
