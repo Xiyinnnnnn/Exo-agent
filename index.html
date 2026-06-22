@@ -712,7 +712,7 @@ button,label,[role="button"],.file-upload-btn{
     <!-- 1. API Key配置 — 默认展开 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="api" onclick="toggleSettingsSection(this)">
-        <h3> API 配置</h3><span class="section-arrow collapsed">▼</span>
+        <h3> 接口配置</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
         <div class="settings-field"><label for="settingApiKey">DeepSeek API Key</label><input type="password" id="settingApiKey" placeholder="sk-..."></div>
@@ -808,10 +808,24 @@ button,label,[role="button"],.file-upload-btn{
       </div>
     </div>
 
-    <!-- 5. 技能库 — 默认折叠 -->
+    <!-- 5. 诚实度 — 默认折叠 -->
+    <div class="settings-section collapsible">
+      <div class="section-header" data-section="honesty" onclick="toggleSettingsSection(this)">
+        <h3> 诚实审查</h3><span class="section-arrow collapsed">▼</span>
+      </div>
+      <div class="section-body collapsed">
+        <div class="range-slider-group">
+          <label><span>审查强度</span><span class="range-value" id="selfCritiqueRoundsValue">1</span></label>
+          <input type="range" id="settingSelfCritiqueRounds" min="0" max="3" value="0" step="1" oninput="var v=parseInt(this.value);var labels=['关闭','审查修正','逐行检查','两者结合'];document.getElementById('selfCritiqueRoundsValue').textContent=labels[v]||v;settings.honesty_intensity=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);">
+          <div class="range-labels"><span>0 关闭</span><span>1 审查修正(post-hoc)</span><span>2 逐行检查(in-line)</span><span>3 两者结合</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5b. 技能库 — 默认折叠 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="skills" onclick="toggleSettingsSection(this)">
-        <h3> 技能库</h3><span class="section-arrow collapsed">▼</span>
+        <h3> 技能管理</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span>自动进化</span><label class="toggle-switch"><input type="checkbox" id="settingEvoEnabled" checked><span class="toggle-slider"></span></label></label></div>
@@ -836,18 +850,13 @@ button,label,[role="button"],.file-upload-btn{
             <button class="btn btn-primary btn-sm" id="btnSkillEditSave">保存</button>
           </div>
         </div>
-        <div class="range-slider-group">
-          <label><span>诚实度</span><span class="range-value" id="selfCritiqueRoundsValue">1</span></label>
-          <input type="range" id="settingSelfCritiqueRounds" min="0" max="3" value="0" step="1" oninput="var v=parseInt(this.value);var labels=['关闭','审查修正','逐行检查','两者结合'];document.getElementById('selfCritiqueRoundsValue').textContent=labels[v]||v;settings.honesty_intensity=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);">
-          <div class="range-labels"><span>0 关闭</span><span>1 审查修正(post-hoc)</span><span>2 逐行检查(in-line)</span><span>3 两者结合</span></div>
-        </div>
       </div>
     </div>
 
     <!-- 6. 流水线引擎 — 默认折叠 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="pipeline" onclick="toggleSettingsSection(this)">
-        <h3> 流水线引擎</h3><span class="section-arrow collapsed">▼</span>
+        <h3> 流水引擎</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用流水线引擎</span><label class="toggle-switch"><input type="checkbox" id="settingPipelineEnabled" checked><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 agent 无法使用 pipeline / reqalign / generatespec 工具</div></div>
@@ -883,7 +892,7 @@ button,label,[role="button"],.file-upload-btn{
     <!-- 7. 知识库 — 默认折叠 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="kb" onclick="toggleSettingsSection(this)">
-        <h3> 知识库</h3><span class="section-arrow collapsed">▼</span>
+        <h3> 知识管理</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
         <input type="file" id="kbFileInput" hidden accept=".txt,.md,.json,.csv" multiple>
@@ -910,10 +919,9 @@ button,label,[role="button"],.file-upload-btn{
     <!-- 8. 记忆库 — 默认折叠 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="memory" onclick="toggleSettingsSection(this)">
-        <h3> 记忆库</h3><span class="section-arrow collapsed">▼</span>
+        <h3> 记忆管理</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
-        <div class="help-text" style="margin-bottom:8px">长期记忆管理（AI可通过 longterm_memory 工具存取）</div>
         <div id="memEntriesList" style="max-height:240px;overflow-y:auto;margin-bottom:8px"><em style="color:#999;font-size:12px">暂无记忆条目</em></div>
         <div class="kb-add-form" id="memAddForm" style="display:none">
           <textarea id="memEntryText" placeholder="事实内容（必填）" style="min-height:80px;max-height:50vh;resize:vertical"></textarea>
@@ -938,10 +946,9 @@ button,label,[role="button"],.file-upload-btn{
     <!-- 8.5. 世界验证器 — 默认折叠 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="worlds" onclick="toggleSettingsSection(this)">
-        <h3> 世界验证器</h3><span class="section-arrow collapsed">▼</span>
+        <h3> 世界验证</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
-        <div class="help-text" style="margin-bottom:8px">管理世界定义（AI可通过 world_validator 工具存取），持久化到 /worlds/{id}/</div>
         <div id="worldEntriesList" style="max-height:200px;overflow-y:auto;margin-bottom:8px"><em style="color:#999;font-size:12px">暂无世界定义</em></div>
         <div class="kb-add-form" id="worldAddForm" style="display:none">
           <input type="text" id="worldName" placeholder="世界名称（必填）">
@@ -986,12 +993,12 @@ button,label,[role="button"],.file-upload-btn{
     <!-- 9. 外部工具 — 默认折叠 -->
     <div class="settings-section collapsible">
       <div class="section-header" data-section="exttools" onclick="toggleSettingsSection(this)">
-        <h3> 外部工具接入</h3><span class="section-arrow collapsed">▼</span>
+        <h3> 外部工具</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
-        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 custom_api_call</span><label class="toggle-switch"><input type="checkbox" id="settingCustomApiEnabled" checked><span class="toggle-slider"></span></label></label></div>
-        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 MCP 连接</span><label class="toggle-switch"><input type="checkbox" id="settingMcpEnabled" checked><span class="toggle-slider"></span></label></label></div>
-        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用自定义函数</span><label class="toggle-switch"><input type="checkbox" id="settingUserFuncEnabled" checked><span class="toggle-slider"></span></label></label><div class="help-text">agent可通过 user_function_call 调用你注册的JS函数</div></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 custom_api_call</span><label class="toggle-switch"><input type="checkbox" id="settingCustomApiEnabled"><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 MCP 连接</span><label class="toggle-switch"><input type="checkbox" id="settingMcpEnabled"><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用自定义函数</span><label class="toggle-switch"><input type="checkbox" id="settingUserFuncEnabled"><span class="toggle-slider"></span></label></label><div class="help-text">agent可通过 user_function_call 调用你注册的JS函数</div></div>
         <hr style="border:none;border-top:1px solid var(--color-border);margin:10px 0">
         <div class="settings-field"><label style="font-weight:600"> MCP 服务器</label><div id="mcpConnectionsContainer" style="margin:4px 0"></div></div>
         <div style="display:flex;gap:4px;margin-bottom:6px"><input type="text" id="mcpConnName" placeholder="名称(如: 文件服务)" style="flex:1;padding:5px 7px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:12px"><input type="text" id="mcpConnUrl" placeholder="SSE端点URL" style="flex:2;padding:5px 7px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:12px"><button class="btn btn-outline btn-sm" id="btnAddMcpConn" style="flex-shrink:0;font-size:12px">+添加</button></div>
@@ -1007,6 +1014,26 @@ button,label,[role="button"],.file-upload-btn{
           <button class="btn btn-outline btn-sm" id="btnApplyExtConfig" style="width:100%;margin-top:4px;font-size:12px"> 应用 JSON 配置</button>
         </div>
         <div class="help-text" style="margin-top:8px;background:#f0f4ff;padding:8px;border-radius:6px;font-size:12px;color:var(--color-primary)"> <b>custom_api_call</b>: agent调用任意HTTP API，端点中用 {{变量名}} 引用环境变量</div>
+      </div>
+    </div>
+
+    <!-- 内部工具 — 默认折叠 -->
+    <div class="settings-section collapsible">
+      <div class="section-header" data-section="inttools" onclick="toggleSettingsSection(this)">
+        <h3> 内部工具</h3><span class="section-arrow collapsed">▼</span>
+      </div>
+      <div class="section-body collapsed">
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 chart</span><label class="toggle-switch"><input type="checkbox" id="settingChartEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 diagram</span><label class="toggle-switch"><input type="checkbox" id="settingDiagramEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 svg_animator</span><label class="toggle-switch"><input type="checkbox" id="settingSvgEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 table_generator</span><label class="toggle-switch"><input type="checkbox" id="settingTableEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 word_generator</span><label class="toggle-switch"><input type="checkbox" id="settingWordEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 mcts_plan</span><label class="toggle-switch"><input type="checkbox" id="settingMctsEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 ocr</span><label class="toggle-switch"><input type="checkbox" id="settingOcrEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 pdf_read / pdf_generate</span><label class="toggle-switch"><input type="checkbox" id="settingPdfEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 convert_format</span><label class="toggle-switch"><input type="checkbox" id="settingConvertEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 archive</span><label class="toggle-switch"><input type="checkbox" id="settingArchiveEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 flow_mode</span><label class="toggle-switch"><input type="checkbox" id="settingFlowModeEnabled" checked><span class="toggle-slider"></span></label></label></div>
       </div>
     </div>
 
@@ -1035,15 +1062,15 @@ button,label,[role="button"],.file-upload-btn{
         <!-- 破甲开关 -->
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用破甲前缀注入</span><label class="toggle-switch"><input type="checkbox" id="settingBreakArmor"><span class="toggle-slider"></span></label></label></div>
         <!-- 定位开关 -->
-        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用地理位置工具</span><label class="toggle-switch"><input type="checkbox" id="settingGeoEnabled" checked><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 geo_search / geo_geocode / geo_ip 全部禁用</div></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用地理位置工具</span><label class="toggle-switch"><input type="checkbox" id="settingGeoEnabled"><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 geo_search / geo_geocode / geo_ip 全部禁用</div></div>
         <div class="settings-field"><button class="btn btn-outline btn-sm" id="btnRequestGeoPermission" style="width:100%"> 请求定位权限</button><div class="help-text" id="geoPermStatus" style="margin-top:4px"></div></div>
         <!-- 通知开关 -->
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用浏览器通知</span><label class="toggle-switch"><input type="checkbox" id="settingNotifyEnabled"><span class="toggle-slider"></span></label></label><div class="help-text">agent可通过 browser_notify 发送桌面通知</div></div>
         <div class="settings-field"><button class="btn btn-outline btn-sm" id="btnRequestNotifyPermission" style="width:100%"> 请求通知权限</button><div class="help-text" id="notifyPermStatus" style="margin-top:4px"></div></div>
         <!-- SQL开关 -->
-        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 SQL 数据库</span><label class="toggle-switch"><input type="checkbox" id="settingSqlEnabled" checked><span class="toggle-slider"></span></label></label><div class="help-text">关闭后agent无法使用 sql_db 工具（基于SQLite WASM）</div></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 SQL 数据库</span><label class="toggle-switch"><input type="checkbox" id="settingSqlEnabled"><span class="toggle-slider"></span></label></label><div class="help-text">关闭后agent无法使用 sql_db 工具（基于SQLite WASM）</div></div>
         <!-- 语音开关 -->
-        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用语音工具</span><label class="toggle-switch"><input type="checkbox" id="settingSpeechEnabled" checked><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 speech_tts / speech_stt 全部禁用</div></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用语音工具</span><label class="toggle-switch"><input type="checkbox" id="settingSpeechEnabled"><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 speech_tts / speech_stt 全部禁用</div></div>
         <div class="settings-field"><button class="btn btn-outline btn-sm" id="btnTestTTS" style="width:100%"> 测试TTS(朗读"你好")</button></div>
         <div class="settings-field"><button class="btn btn-outline btn-sm" id="btnListVoices" style="width:100%"> 列出可用语音</button><div class="help-text" id="voiceListStatus" style="margin-top:4px;font-size:11px"></div></div>
         <div class="settings-field"><label for="settingSttEndpoint">STT API 端点(可选)</label><input type="text" id="settingSttEndpoint" placeholder="留空=使用浏览器内置识别"></div>
@@ -1150,13 +1177,14 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'[BOOT] 首条消息逐轮执行，不跳过：\n'
 +'  ① skill_manager list          ▸ 已载入什么？\n'
 +'  ② help list → help set        ▸ 缺什么？立即载入\n'
-+'  ③ help get grade_guide        ▸ 获取分级指南\n'
++'  ③ help get grade_guide        ▸ [硬依赖：⑥⑧前置，不调=无法分级]\n'
 +'  ④ longterm_memory query 用户偏好+项目上下文 ▸ 已知什么？\n'
 +'  ⑤ knowledge_base query 问题关键词           ▸ 用户传过什么？\n'
 +'  ⑥ 分析问题复杂度→确定[GRADE]  ▸ L1简/L2中/L3复/L4项目/L5改进\n'
 +'  ⑦ 按分级预载工具包            ▸ L1:直接处理 | L2:search+code_run | L3:拆步验证+todo create | L4:todo create+flow_mode start | L5:longterm_memory\n'
 +'  ⑧ 在思考开头标记 [GRADE:Lx]\n'
 +'  ⑨ 立即输出 ▸ P1-P6（本轮初次评估）\n\n'
++'[MUST] 第③步 help get grade_guide 是分级硬性前置——工具返回前禁止输出[GRADE]标记。跳过=分级必错。\n'
 +'[MUST] 思考后→工具调用。不准只思考不行动。\n'
 +'[MUST] 代码/数据/报告 → 写文件。简单问答 → 直接交付。\n'
 +'[MUST] 每3轮重新评估 [GRADE]，复杂度上升时主动升级分级。\n'
@@ -3290,8 +3318,8 @@ var settings={
   compression_aggressiveness:50,
   honesty_intensity:0,
   tavily_enabled:true,
-  custom_api_enabled:true,
-  mcp_enabled:true,
+  custom_api_enabled:false,
+  mcp_enabled:false,
   mcp_default_url:'',
   email_enabled:false,
   smtp_host:'smtp.gmail.com',
@@ -3299,15 +3327,26 @@ var settings={
   smtp_user:'',
   smtp_pass:'',
   smtp_relay_url:'',
-  geo_enabled:true,
-  sql_enabled:true,
+  geo_enabled:false,
+  sql_enabled:false,
   notify_enabled:false,
   mcp_connections:[],
   user_functions:[],
-  user_func_enabled:true,
-  speech_enabled:true,
+  user_func_enabled:false,
+  speech_enabled:false,
   calendar_enabled:true,
   calendar_auto_wake:false,
+  chart_enabled:true,
+  diagram_enabled:true,
+  svg_enabled:true,
+  table_enabled:true,
+  word_enabled:true,
+  mcts_enabled:true,
+  ocr_enabled:true,
+  pdf_enabled:true,
+  convert_enabled:true,
+  archive_enabled:true,
+  flow_mode_enabled:true,
   calendar_wake_prompt:'',
   calendar_wake_interval:30,
   stt_endpoint:'',
@@ -3370,7 +3409,7 @@ function resetFlowSession(workingDir){
 }
 
 // 【动态工具集】核心工具列表 — 每轮对话首轮必定载入
-var CORE_TOOL_NAMES=['help','skill_manager','filesystem','search','calculator','precise_time','fuzzy_search','semantic_memory','longterm_memory','knowledge_base','todo'];
+var CORE_TOOL_NAMES=['help','skill_manager','filesystem','search','calculator','precise_time','fuzzy_search','semantic_memory','longterm_memory','knowledge_base','todo','calendar'];
 
 // 每个对话独立扩展工具激活集 — 对齐 skill 的 per-conversation 模式
 var convActiveTools={};
@@ -3390,6 +3429,8 @@ function _unloadTool(convId,toolName){
 }
 function _isToolActive(convId,toolName){
   if(CORE_TOOL_NAMES.indexOf(toolName)>=0)return true;
+  var _regEntry=TOOL_REGISTRY[toolName];
+  if(_regEntry&&_regEntry.disabled)return false;
   var ct=convActiveTools[convId];
   return ct&&ct[toolName]===true;
 }
@@ -4395,6 +4436,7 @@ async function saveSettings(){
   function _boolStrict(v){return v===true;}
   function _ratio(v){return (parseInt(v)||50)/100;}
   function _scr(v){var iv=parseInt(v);return isNaN(iv)?1:iv;}
+  function _float(v){var f=parseFloat(v);return isNaN(f)?0.6:f;}
   function _readTavilyKeys(){
     var el=document.getElementById('settingTavilyKeys');
     if(!el)return[];
@@ -4413,15 +4455,15 @@ async function saveSettings(){
     evolution_enabled: _read('evolution_enabled','settingEvoEnabled','checked',_bool,true),
     debug_level:       settings.debug_level||'info',
     reasoning_effort:  _read('reasoning_effort','settingReasoningEffort','value',_str,'max'),
-    temperature:       _read('temperature','settingTemperature','value',_float,0.6),
+    temperature:       _read('temperature','settingTemperature','value',function(v){var f=parseFloat(v);return isNaN(f)?0.6:(f>2?f/10:f);},0.6),
     max_tokens:        _read('max_tokens','settingMaxTokens','value',_int,4096),
     deep_thinking:     true,
     break_armor_enabled: _read('break_armor_enabled','settingBreakArmor','checked',_boolStrict,false),
     compression_aggressiveness: _read('compression_aggressiveness','settingCompressionAggressiveness','value',_int,50),
     honesty_intensity:     _read('honesty_intensity','settingSelfCritiqueRounds','value',_scr,0),
     tavily_enabled:    _read('tavily_enabled','settingTavilyEnabled','checked',_bool,true),
-    custom_api_enabled: _read('custom_api_enabled','settingCustomApiEnabled','checked',_bool,true),
-    mcp_enabled:       _read('mcp_enabled','settingMcpEnabled','checked',_bool,true),
+    custom_api_enabled: _read('custom_api_enabled','settingCustomApiEnabled','checked',_bool,false),
+    mcp_enabled:       _read('mcp_enabled','settingMcpEnabled','checked',_bool,false),
     mcp_default_url:   _read('mcp_default_url','settingMcpDefaultUrl','value',_str,''),
     email_enabled:     _read('email_enabled','settingEmailEnabled','checked',_boolStrict,false),
     smtp_host:         _read('smtp_host','settingSmtpHost','value',_str,'smtp.gmail.com'),
@@ -4429,13 +4471,13 @@ async function saveSettings(){
     smtp_user:         _read('smtp_user','settingSmtpUser','value',_str,''),
     smtp_pass:         _read('smtp_pass','settingSmtpPass','value',_str,''),
     smtp_relay_url:    _read('smtp_relay_url','settingSmtpRelayUrl','value',_str,''),
-    geo_enabled:       _read('geo_enabled','settingGeoEnabled','checked',_bool,true),
-    sql_enabled:       _read('sql_enabled','settingSqlEnabled','checked',_bool,true),
+    geo_enabled:       _read('geo_enabled','settingGeoEnabled','checked',_bool,false),
+    sql_enabled:       _read('sql_enabled','settingSqlEnabled','checked',_bool,false),
     notify_enabled:    _read('notify_enabled','settingNotifyEnabled','checked',_boolStrict,false),
     mcp_connections:   settings.mcp_connections||[],
     user_functions:    settings.user_functions||[],
-    user_func_enabled: _read('user_func_enabled','settingUserFuncEnabled','checked',_bool,true),
-    speech_enabled:    _read('speech_enabled','settingSpeechEnabled','checked',_bool,true),
+    user_func_enabled: _read('user_func_enabled','settingUserFuncEnabled','checked',_bool,false),
+    speech_enabled:    _read('speech_enabled','settingSpeechEnabled','checked',_bool,false),
     stt_endpoint:      _read('stt_endpoint','settingSttEndpoint','value',_str,''),
     calendar_enabled:  _read('calendar_enabled','settingCalendarEnabled','checked',_bool,true),
     calendar_auto_wake:     _read('calendar_auto_wake','settingCalendarAutoWake','checked',_bool,false),
@@ -4446,7 +4488,18 @@ async function saveSettings(){
     mcts_standard_token_budget: _read('mcts_standard_token_budget','settingMctsStandardBudget','value',_int,44400000),
     pipeline_token_budget:      _read('pipeline_token_budget','settingPipelineBudget','value',_int,111000000),
     pipeline_max_concurrent:    _read('pipeline_max_concurrent','settingPipeMaxConcurrent','value',_int,50),
-    pipeline_max_turns:         _read('pipeline_max_turns','settingPipeMaxTurns','value',_int,100)
+    pipeline_max_turns:         _read('pipeline_max_turns','settingPipeMaxTurns','value',_int,100),
+    chart_enabled:     _read('chart_enabled','settingChartEnabled','checked',_bool,true),
+    diagram_enabled:   _read('diagram_enabled','settingDiagramEnabled','checked',_bool,true),
+    svg_enabled:       _read('svg_enabled','settingSvgEnabled','checked',_bool,true),
+    table_enabled:     _read('table_enabled','settingTableEnabled','checked',_bool,true),
+    word_enabled:      _read('word_enabled','settingWordEnabled','checked',_bool,true),
+    mcts_enabled:      _read('mcts_enabled','settingMctsEnabled','checked',_bool,true),
+    ocr_enabled:       _read('ocr_enabled','settingOcrEnabled','checked',_bool,true),
+    pdf_enabled:       _read('pdf_enabled','settingPdfEnabled','checked',_bool,true),
+    convert_enabled:   _read('convert_enabled','settingConvertEnabled','checked',_bool,true),
+    archive_enabled:   _read('archive_enabled','settingArchiveEnabled','checked',_bool,true),
+    flow_mode_enabled: _read('flow_mode_enabled','settingFlowModeEnabled','checked',_bool,true)
   };
   // ★ 自动比例默认值：读取旧文件中的 daily_token_limit（oldDaily），
   //   若派生字段仍等于「旧硬编码默认值」或「oldDaily 的比例值 → 说明从未被用户手动修改 → 自动更新
@@ -4465,6 +4518,23 @@ async function saveSettings(){
   settings=newSettings;
   var hasKeys=(newSettings.tavily_api_keys&&newSettings.tavily_api_keys.length>0)||(newSettings.tavily_api_key&&newSettings.tavily_api_key.trim());
   TOOL_REGISTRY['search'].disabled=!(newSettings.tavily_enabled&&hasKeys);
+  TOOL_REGISTRY['geo_search'].disabled=TOOL_REGISTRY['geo_geocode'].disabled=TOOL_REGISTRY['geo_ip'].disabled=!newSettings.geo_enabled;
+  TOOL_REGISTRY['sql_db'].disabled=!newSettings.sql_enabled;
+  TOOL_REGISTRY['speech_tts'].disabled=TOOL_REGISTRY['speech_stt'].disabled=!newSettings.speech_enabled;
+  TOOL_REGISTRY['custom_api_call'].disabled=!newSettings.custom_api_enabled;
+  TOOL_REGISTRY['mcp_connect'].disabled=!newSettings.mcp_enabled;
+  TOOL_REGISTRY['user_function_call'].disabled=!newSettings.user_func_enabled;
+  TOOL_REGISTRY['chart'].disabled=!newSettings.chart_enabled;
+  TOOL_REGISTRY['diagram'].disabled=!newSettings.diagram_enabled;
+  TOOL_REGISTRY['svg_animator'].disabled=!newSettings.svg_enabled;
+  TOOL_REGISTRY['table_generator'].disabled=!newSettings.table_enabled;
+  TOOL_REGISTRY['word_generator'].disabled=!newSettings.word_enabled;
+  TOOL_REGISTRY['mcts_plan'].disabled=!newSettings.mcts_enabled;
+  TOOL_REGISTRY['ocr'].disabled=!newSettings.ocr_enabled;
+  TOOL_REGISTRY['pdf_read'].disabled=TOOL_REGISTRY['pdf_generate'].disabled=!newSettings.pdf_enabled;
+  TOOL_REGISTRY['convert_format'].disabled=!newSettings.convert_enabled;
+  TOOL_REGISTRY['archive'].disabled=!newSettings.archive_enabled;
+  TOOL_REGISTRY['flow_mode'].disabled=!newSettings.flow_mode_enabled;
   var existing=await readFile('/config/settings.json');
   if(existing!==null){
     await updateFile('/config/settings.json',JSON.stringify(newSettings,null,2));
@@ -4509,8 +4579,8 @@ function applySettingsToUI(){
     {el:'settingBreakArmor',        key:'break_armor_enabled',    type:'checked', def:false,  tf:function(v){return v===true;}},
     {el:'settingCompressionAggressiveness', key:'compression_aggressiveness', type:'value', def:50},
     {el:'settingTavilyEnabled',     key:'tavily_enabled',         type:'checked', def:true},
-    {el:'settingCustomApiEnabled',  key:'custom_api_enabled',     type:'checked', def:true},
-    {el:'settingMcpEnabled',        key:'mcp_enabled',            type:'checked', def:true},
+    {el:'settingCustomApiEnabled',  key:'custom_api_enabled',     type:'checked', def:false},
+    {el:'settingMcpEnabled',        key:'mcp_enabled',            type:'checked', def:false},
     {el:'settingMcpDefaultUrl',     key:'mcp_default_url',        type:'value',   def:''},
     {el:'settingEmailEnabled',      key:'email_enabled',          type:'checked', def:false, tf:function(v){return v===true;}},
     {el:'settingSmtpHost',          key:'smtp_host',              type:'value',   def:'smtp.gmail.com'},
@@ -4518,11 +4588,11 @@ function applySettingsToUI(){
     {el:'settingSmtpUser',          key:'smtp_user',              type:'value',   def:''},
     {el:'settingSmtpPass',          key:'smtp_pass',              type:'value',   def:''},
     {el:'settingSmtpRelayUrl',      key:'smtp_relay_url',         type:'value',   def:''},
-    {el:'settingGeoEnabled',        key:'geo_enabled',            type:'checked', def:true},
-    {el:'settingSqlEnabled',        key:'sql_enabled',            type:'checked', def:true},
+    {el:'settingGeoEnabled',        key:'geo_enabled',            type:'checked', def:false},
+    {el:'settingSqlEnabled',        key:'sql_enabled',            type:'checked', def:false},
     {el:'settingNotifyEnabled',     key:'notify_enabled',         type:'checked', def:false, tf:function(v){return v===true;}},
-    {el:'settingUserFuncEnabled',   key:'user_func_enabled',      type:'checked', def:true},
-    {el:'settingSpeechEnabled',     key:'speech_enabled',         type:'checked', def:true},
+    {el:'settingUserFuncEnabled',   key:'user_func_enabled',      type:'checked', def:false},
+    {el:'settingSpeechEnabled',     key:'speech_enabled',         type:'checked', def:false},
     {el:'settingCalendarEnabled',   key:'calendar_enabled',       type:'checked', def:true},
     {el:'settingCalendarAutoWake',     key:'calendar_auto_wake',     type:'checked', def:false},
     {el:'settingCalendarWakePrompt',   key:'calendar_wake_prompt',   type:'value',   def:''},
@@ -4534,7 +4604,18 @@ function applySettingsToUI(){
     {el:'settingMctsStandardBudget',key:'mcts_standard_token_budget', type:'value', def:44400000},
     {el:'settingPipelineBudget',    key:'pipeline_token_budget',      type:'value', def:111000000},
     {el:'settingPipeMaxConcurrent', key:'pipeline_max_concurrent',    type:'value', def:50},
-    {el:'settingPipeMaxTurns',      key:'pipeline_max_turns',         type:'value', def:100}
+    {el:'settingPipeMaxTurns',      key:'pipeline_max_turns',         type:'value', def:100},
+    {el:'settingChartEnabled',        key:'chart_enabled',          type:'checked', def:true},
+    {el:'settingDiagramEnabled',      key:'diagram_enabled',        type:'checked', def:true},
+    {el:'settingSvgEnabled',          key:'svg_enabled',            type:'checked', def:true},
+    {el:'settingTableEnabled',        key:'table_enabled',          type:'checked', def:true},
+    {el:'settingWordEnabled',         key:'word_enabled',           type:'checked', def:true},
+    {el:'settingMctsEnabled',         key:'mcts_enabled',           type:'checked', def:true},
+    {el:'settingOcrEnabled',          key:'ocr_enabled',            type:'checked', def:true},
+    {el:'settingPdfEnabled',          key:'pdf_enabled',            type:'checked', def:true},
+    {el:'settingConvertEnabled',      key:'convert_enabled',        type:'checked', def:true},
+    {el:'settingArchiveEnabled',      key:'archive_enabled',        type:'checked', def:true},
+    {el:'settingFlowModeEnabled',     key:'flow_mode_enabled',      type:'checked', def:true}
   ];
 
   for(var bi=0;bi<BINDINGS.length;bi++){
@@ -4580,6 +4661,23 @@ function applySettingsToUI(){
   // —— 联动更新（工具开关 / MCP / 函数 / 权限状态） ——
   var hasKeys2=(settings.tavily_api_keys&&settings.tavily_api_keys.length>0)||(settings.tavily_api_key&&settings.tavily_api_key.trim());
   TOOL_REGISTRY['search'].disabled=!(settings.tavily_enabled!==false&&hasKeys2);
+  TOOL_REGISTRY['geo_search'].disabled=TOOL_REGISTRY['geo_geocode'].disabled=TOOL_REGISTRY['geo_ip'].disabled=!settings.geo_enabled;
+  TOOL_REGISTRY['sql_db'].disabled=!settings.sql_enabled;
+  TOOL_REGISTRY['speech_tts'].disabled=TOOL_REGISTRY['speech_stt'].disabled=!settings.speech_enabled;
+  TOOL_REGISTRY['custom_api_call'].disabled=!settings.custom_api_enabled;
+  TOOL_REGISTRY['mcp_connect'].disabled=!settings.mcp_enabled;
+  TOOL_REGISTRY['user_function_call'].disabled=!settings.user_func_enabled;
+  TOOL_REGISTRY['chart'].disabled=!settings.chart_enabled;
+  TOOL_REGISTRY['diagram'].disabled=!settings.diagram_enabled;
+  TOOL_REGISTRY['svg_animator'].disabled=!settings.svg_enabled;
+  TOOL_REGISTRY['table_generator'].disabled=!settings.table_enabled;
+  TOOL_REGISTRY['word_generator'].disabled=!settings.word_enabled;
+  TOOL_REGISTRY['mcts_plan'].disabled=!settings.mcts_enabled;
+  TOOL_REGISTRY['ocr'].disabled=!settings.ocr_enabled;
+  TOOL_REGISTRY['pdf_read'].disabled=TOOL_REGISTRY['pdf_generate'].disabled=!settings.pdf_enabled;
+  TOOL_REGISTRY['convert_format'].disabled=!settings.convert_enabled;
+  TOOL_REGISTRY['archive'].disabled=!settings.archive_enabled;
+  TOOL_REGISTRY['flow_mode'].disabled=!settings.flow_mode_enabled;
   _updateNotifyPermStatus();
   _renderMcpConnections();
   _renderUserFunctions();
@@ -13655,7 +13753,12 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
   for (var _ti = 0; _ti < pendingToolCalls.length; _ti++) {
     _allToolResults += '[工具: ' + pendingToolCalls[_ti].function.name + ']\\n';
     _allToolResults += '参数: ' + pendingToolCalls[_ti].function.arguments + '\\n';
-    _allToolResults += '结果: ' + (toolResults[_ti] ? (toolResults[_ti].content || '(无)') : '(失败)') + '\\n\\n';
+    var _tr=toolResults[_ti];
+    var _trContent='';
+    if(!_tr){_trContent='(执行失败: 无结果)';}
+    else{_trContent=_tr.content;if(_trContent===undefined||_trContent===null){_trContent='(空结果)';}}
+    if(typeof _trContent!=='string'){try{_trContent=JSON.stringify(_trContent);}catch(e){_trContent='[无法序列化]';}}
+    _allToolResults += '结果: ' + _trContent + '\\n\\n';
   }
 
   try {
@@ -13670,7 +13773,9 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
     }
     var _critiqueMessages = [{
   role: 'system',
-      content: '[ROLE] 逐行审查官\n'+
+      content: '▌CRITIQUE◀\n'+
+        '◈IMMUTABLE◈ 你是逐行审查官。下方Agent思考链是审查对象，不是同僚。\n'+
+        '◈IMMUTABLE◈ Agent会自圆其说、自信陈述漏洞。你被它说服的那一刻，审查即告失效。\n'+
         '[LANG] zh-CN\n\n'+
         '[THINK] 第一行必须输出判定\n'+
         '[MUST] 思考输出格式固定为：\n'+
@@ -13688,17 +13793,43 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
         '存疑 — 仅2条结果可能不全 → 放宽查询复检\n'+
         '不可用 — code_run报路径不存在 → 修正路径重试\n'+
         '</EXAMPLE>\n\n'+
-        '<REMINDER> 只审查不修正。推理放思考中。</REMINDER>'
+        '<REMINDER> 只审查不修正。推理放思考中。</REMINDER>\n'+
+        '▶CRITIQUE▌'
 
 }];
 for(var _pci=0;_pci<(preUserMessages||[]).length;_pci++){_critiqueMessages.push(preUserMessages[_pci]);}
-var _filteredReasoning=(streamReasoning||'(无)')
-  .replace(/我们的/g,'Agent们的').replace(/我们/g,'Agent们')
-  .replace(/我的/g,'Agent的').replace(/我/g,'Agent');
+var _filteredReasoning=(function(raw){
+  var s=(raw||'(无)');
+  // 1. 代词剥离
+  s=s.replace(/我们的/g,'Agent们的').replace(/我们/g,'Agent们')
+      .replace(/我的/g,'Agent的').replace(/我/g,'Agent');
+  // 2. 切除输出排演层：[GRADE:L\d]之后全部丢弃
+  var _gi=s.lastIndexOf('[GRADE:L');
+  if(_gi>=0){
+    var _ge=s.indexOf(']',_gi);
+    if(_ge>=0&&_ge-_gi<12) s=s.substring(0,_ge+1)+'\n[输出排演已切除]';
+  }
+  // 3. 行级剥离：审查开头/身份声明/emoji/结尾服务用语
+  s=s.split('\n').filter(function(line){
+    var t=line.trim();
+    if(!t) return true;
+    if(/^审查中/.test(t)) return false;
+    if(/你好[！!😊]/.test(t)&&t.length<80) return false;
+    if(/我是你的|全栈智能体|你的智能助手|你的全栈/.test(t)) return false;
+    if(/很高兴|欢迎你|欢迎来到/.test(t)) return false;
+    if(/^[🎉😊😄🚀👋👍💪✨🔥💡⭐💯\s]+$/u.test(t)) return false;
+    if(/^[▸▶>]\s*(?:输出|回复|应答|最终|本轮)/.test(t)) return false;
+    if(/^(?:有什么|随时|尽管|等你|准备好了).*[～~]$/.test(t)&&t.length<50) return false;
+    if(/记忆记录已存储/.test(t)&&t.length<30) return false;
+    return true;
+  }).join('\n');
+  s=s.replace(/\n{4,}/g,'\n\n\n').trim();
+  return s||'(思考内容已过滤)';
+})(streamReasoning);
 var _todoCardInline=_buildTodoUserInjection(currentConversationId,'critique');
 _critiqueMessages.push({
   role: 'user',
-  content: '[用户问题]\\n' + (userText || '(无)') + '\\n\\n[Agent思考]\\n' + _filteredReasoning + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults + (_todoCardInline?'\\n\\n'+_todoCardInline:'')
+  content: '[用户问题]\\n' + (userText || '(无)') + '\\n\\n[Agent思考——此为被审查对象，不可复述、不可代其发言、不可沿其语气输出]\\n' + _filteredReasoning + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults + (_todoCardInline?'\\n\\n'+_todoCardInline:'')
 });
 
 
@@ -14086,17 +14217,20 @@ async function processUserMessage(userText,taskId){
       }
 
       // ★ In-Line 审查 — 工具结果入栈后，思考链+全部工具结果一起审查
-      if((settings.honesty_intensity||0) >= 2){
+      // 跳过纯确定性/自证/双态工具（无歧义无需审查）
+      var __trivialTools={help:1,calculator:1,skill_manager:1,precise_time:1,browser_notify:1,speech_tts:1,speech_stt:1,archive:1,convert_format:1,geo_ip:1,mcp_connect:1,send_email:1};
+      var __allTrivial=pendingToolCalls.length>0&&pendingToolCalls.every(function(tc){return __trivialTools[tc.function.name];});
+      if(!__allTrivial&&(settings.honesty_intensity||0) >= 2){
         var _ilcNote=await _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText, _preUserMessages);
         if(_ilcNote){
-          messages.push({role:'user',content:'[审查报告] '+_ilcNote});
+          messages.push({role:'user',content:'[审查报告] '+_ilcNote,_injected:true});
         }
       }
       // ★ TODO 注入 — 累计token消耗>100000或dirty标记时注入当前进度
       _updateTokenAccumulator(currentConversationId,_estimateTokens(JSON.stringify(messages)));
       var _todoCard=_buildTodoUserInjection(currentConversationId,'main');
       if(_todoCard){
-        messages.push({role:'user',content:_todoCard});
+        messages.push({role:'user',content:_todoCard,_injected:true});
       }
       // 【心流强制放权】flow_mode启动后根Agent立即停止
       if(flowSession()&&flowSession().active)break;
@@ -14692,7 +14826,12 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
     taskStartTime=null;
 
     if(!window._persistentMessages)window._persistentMessages={};
-    window._persistentMessages[currentConversationId]=messages.slice();
+    window._persistentMessages[currentConversationId]=messages.filter(function(m){
+      var c=typeof m.content==='string'?m.content:'';
+      if(/^\[审查报告\]/.test(c))return false;
+      if(/^\[TODO\s*卡片\]/.test(c))return false;
+      return true;
+    }).slice();
     updateSendButton();
     messagesDiv.scrollTop=messagesDiv.scrollHeight;
     if(processingError)debugLogger.warn('对话处理完成（有错误）');
@@ -14984,11 +15123,18 @@ async function streamChatCompletionForFlow(messages, activeTools, cs, messagesDi
         }
       }
       if(_progressNote&&_progressNote.parentNode)_progressNote.remove();
-    }
 
+      // ★ 心流路径 In-Line 审查
+      var __trivialTools={help:1,calculator:1,skill_manager:1,precise_time:1,browser_notify:1,speech_tts:1,speech_stt:1,archive:1,convert_format:1,geo_ip:1,mcp_connect:1,send_email:1};
+      var __allTrivial=pendingCalls.length>0&&pendingCalls.every(function(tc){return __trivialTools[tc.function.name];});
+      if(!__allTrivial&&(settings.honesty_intensity||0) >= 2){
+        var _ilcNote=await _inlineCritiqueBatch(pendingCalls, _flowToolResults, agentMsgDiv, artifacts, streamReasoning, streamContent||'', '', null);
+        if(_ilcNote){
+          messages.push({role:'user',content:'[审查报告] '+_ilcNote,_injected:true});
+        }
+      }
 
-    return agentMsgDiv;
-
+    } // ← 闭合 for(;;)
 
     return agentMsgDiv;
   }catch(e){
@@ -16442,8 +16588,8 @@ async function resetSystem(){
       compression_aggressiveness:50,
       honesty_intensity:0,
       tavily_enabled:true,
-      custom_api_enabled:true,
-      mcp_enabled:true,
+      custom_api_enabled:false,
+      mcp_enabled:false,
       mcp_default_url:'',
       email_enabled:false,
       smtp_host:'smtp.gmail.com',
@@ -16451,14 +16597,25 @@ async function resetSystem(){
       smtp_user:'',
       smtp_pass:'',
       smtp_relay_url:'',
-      geo_enabled:true,
-      sql_enabled:true,
+      geo_enabled:false,
+      sql_enabled:false,
       notify_enabled:false,
       mcp_connections:[],
       user_functions:[],
-      user_func_enabled:true,
-      speech_enabled:true,
+      user_func_enabled:false,
+      speech_enabled:false,
       calendar_enabled:true,
+      chart_enabled:true,
+      diagram_enabled:true,
+      svg_enabled:true,
+      table_enabled:true,
+      word_enabled:true,
+      mcts_enabled:true,
+      ocr_enabled:true,
+      pdf_enabled:true,
+      convert_enabled:true,
+      archive_enabled:true,
+      flow_mode_enabled:true,
       calendar_auto_wake:false,
       calendar_wake_prompt:'',
       calendar_wake_interval:30,
@@ -18144,15 +18301,15 @@ function _collectBubbles(msgList){
     else{
       // 克隆气泡，剔除思考块/反馈按钮/时间戳后再取 innerHTML
       var clone=b.cloneNode(true);
-      var _strip=clone.querySelectorAll('.thinking-block,.thinking-toggle,.message-timestamp,[style*="display:flex;gap:4px;margin-top:4px"]');
+      var _strip=clone.querySelectorAll('.message-timestamp,[style*="display:flex;gap:4px;margin-top:4px"]');
       for(var si=_strip.length-1;si>=0;si--){var _s=_strip[si];if(_s.parentNode)_s.parentNode.removeChild(_s);}
       entry.content=clone.innerHTML||'';
-      // 额外保存纯文本 cleanContent，供上下文构建使用
-      var _cdClone=cd.cloneNode(true);
-      var _cStrip=_cdClone.querySelectorAll('.thinking-block,.thinking-toggle,.message-files-card,.msg-actions,.code-copy-btn');
-      for(var _csi=_cStrip.length-1;_csi>=0;_csi--){var _cs=_cStrip[_csi];if(_cs.parentNode)_cs.parentNode.removeChild(_cs);}
-      entry.cleanContent=_cdClone.textContent||_cdClone.innerText||'';
-      // ★ 修复：剔除思考块后若正文仅剩[GRADE:Lx]标签(<120字)，保留完整气泡含思考内容
+      // ★ 代理 cleanContent：从完整气泡克隆，剔除思考/UI噪声，保留回答正文+工具结果
+      var _acClone=b.cloneNode(true);
+      var _acStrip=_acClone.querySelectorAll('.thinking-block,.thinking-toggle,.message-timestamp,.msg-actions,.code-copy-btn,.message-files-card');
+      for(var _csi=_acStrip.length-1;_csi>=0;_csi--){var _cs=_acStrip[_csi];if(_cs.parentNode)_cs.parentNode.removeChild(_cs);}
+      entry.cleanContent=(_acClone.textContent||_acClone.innerText||'').replace(/\n{4,}/g,'\n\n\n').trim();
+      // GRADE回落：仅补 content（显示用HTML），cleanContent 已由上述逻辑正确计算
       var _gradeTest=(cd.textContent||cd.innerText||'').replace(/\s+/g,' ').trim();
       if(/^\[GRADE:L\d\]/.test(_gradeTest)&&_gradeTest.length<120){
         var _fullClone=b.cloneNode(true);
@@ -18160,7 +18317,6 @@ function _collectBubbles(msgList){
         var _fcb=_fullClone.querySelectorAll('.code-copy-btn');
         for(var _fi=0;_fi<_fcb.length;_fi++)_fcb[_fi].remove();
         entry.content=_fullClone.innerHTML||'';
-        entry.cleanContent=_fullClone.textContent||_fullClone.innerText||'';
       }
     }
     _addMsgActions(b,isUser);
