@@ -3831,6 +3831,10 @@ var _ajvInstance=null;
 var LIBRARY_LOAD_PROMISES={};
 var LIBRARY_FAILED_AT={};
 var LIBRARY_RETRY_COOLDOWN=30000;
+// ===== PWA: Cache API 本地缓存（主线程，无需 Service Worker）=====
+var CACHE_NAME='exo-libs-v3';  // ★ 升级库版本时递增此数字即可清旧缓存
+var _cacheReady=null;          // 懒初始化 CacheStorage 的 Promise
+var _cacheStorage=null;        // 打开的 Cache 实例引用
 var mdRenderer=null;
 var heartbeatIntervalId=null;
 var healthCheckIntervalId=null;
@@ -5571,6 +5575,79 @@ async function _loadCSSWithFallback(libName,cssUrls){
   }
 }
 
+// ===== 辅助函数：打开/获取 Cache 实例 =====
+function _getCache(){
+  if(_cacheReady)return _cacheReady;
+  _cacheReady=(async function(){
+    if(!('caches' in window)){
+      debugLogger.warn('Cache API 不可用，回退到纯网络加载');
+      _cacheStorage=null;return;
+    }
+    try{
+      _cacheStorage=await caches.open(CACHE_NAME);
+      debugLogger.info('[Cache] "'+CACHE_NAME+'" 已就绪');
+    }catch(e){
+      debugLogger.warn('Cache API 打开失败: '+e.message);
+      _cacheStorage=null;
+    }
+  })();
+  return _cacheReady;
+}
+
+// ===== 辅助函数：从 Cache 或网络获取脚本，注入页面 =====
+async function _loadScriptWithCache(url,allGlobals,libName){
+  var blobUrl=null;
+  try{
+    // ── 第1步：查 Cache API 本地缓存 ──
+    await _getCache();
+    var cachedResponse=_cacheStorage?await _cacheStorage.match(url):null;
+    if(cachedResponse){
+      var blob=await cachedResponse.blob();
+      blobUrl=URL.createObjectURL(blob);
+      debugLogger.info('[Cache] '+libName+' 命中本地缓存 → '+url.replace(/https?:\/\/[^/]+\//,''));
+    }else{
+      // ── 第2步：从网络 fetch（带超时） ──
+      var controller=new AbortController();
+      var timeoutId=setTimeout(function(){controller.abort();},15000);
+      var response;
+      try{
+        response=await fetch(url,{mode:'cors',signal:controller.signal});
+      }finally{clearTimeout(timeoutId);}
+      if(!response.ok)throw new Error('HTTP '+response.status);
+      var netBlob=await response.blob();
+      // ── 第3步：存入 Cache（await 确保写入完成） ──
+      if(_cacheStorage){
+        try{
+          await _cacheStorage.put(url,new Response(netBlob.slice(),{
+            status:200,statusText:'OK',
+            headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=31536000,immutable'}
+          }));
+          debugLogger.info('[Cache] '+libName+' 已写入本地 → '+url.replace(/https?:\/\/[^/]+\//,''));
+        }catch(e){
+          debugLogger.warn('[Cache] '+libName+' 写入失败: '+e.message);
+        }
+      }
+      blobUrl=URL.createObjectURL(netBlob);
+    }
+    // ── 第4步：通过 Blob URL 注入 <script> ──
+    await new Promise(function(res,rej){
+      var script=document.createElement('script');
+      script.src=blobUrl;
+      script.onload=function(){URL.revokeObjectURL(blobUrl);res();};
+      script.onerror=function(){
+        if(script.parentNode)script.parentNode.removeChild(script);
+        URL.revokeObjectURL(blobUrl);
+        rej(new Error('脚本执行失败: '+url));
+      };
+      document.head.appendChild(script);
+    });
+  }catch(e){
+    if(blobUrl)URL.revokeObjectURL(blobUrl);
+    throw e;
+  }
+}
+
+// ===== 修改后的 loadLibrary（核心逻辑不变，加载方式改为 Cache-first） =====
 async function loadLibrary(libName){
   var lib=EXTERNAL_LIBRARIES[libName];
   if(!lib)throw new Error('Unknown library: '+libName);
@@ -5601,17 +5678,14 @@ async function loadLibrary(libName){
       for(var retryRound=0;retryRound<3;retryRound++){
         for(var ui=0;ui<jsUrls.length;ui++){
           var url=jsUrls[ui];
+          // 检查是否已有同 src 的 script 标签
           if(document.querySelector('script[src="'+url+'"]')){
             for(var gi2=0;gi2<allGlobals.length;gi2++){if(allGlobals[gi2]&&window[allGlobals[gi2]]){loadedGlobal=allGlobals[gi2];break;}}
             if(loadedGlobal)break;
           }
           try{
-            await new Promise(function(res,rej){
-              var script=document.createElement('script');script.src=url;
-              script.crossOrigin='anonymous';
-              script.onload=res;script.onerror=function(){if(script.parentNode)script.parentNode.removeChild(script);rej(new Error('网络错误: '+url));};
-              document.head.appendChild(script);
-            });
+            // ★ 核心改动：用 Cache-first 加载替代直接 <script src=CDN>
+            await _loadScriptWithCache(url,allGlobals,libName);
             var attempts=0;
             while(attempts<50){
               for(var gi3=0;gi3<allGlobals.length;gi3++){if(allGlobals[gi3]&&window[allGlobals[gi3]]){loadedGlobal=allGlobals[gi3];break;}}
@@ -5619,7 +5693,7 @@ async function loadLibrary(libName){
               await new Promise(function(r){setTimeout(r,100);});attempts++;
             }
             if(loadedGlobal)break;
-          }catch(e){}
+          }catch(e){debugLogger.warn('源 '+url+' 失败: '+e.message);}
         }
         if(loadedGlobal)break;
         if(retryRound<2){
