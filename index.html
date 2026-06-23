@@ -1175,8 +1175,8 @@ var DB_VERSION=2;
 var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'\n'
 +'[BOOT] 首条消息逐轮执行，不跳过：\n'
-+'  ① skill_manager list          ▸ 已载入什么？\n'
-+'  ② help list → help set        ▸ 缺什么？立即载入\n'
++'  ① skill_manager query 意图    ▸ 匹配技能→set激活\n'
++'  ② help query 需求             ▸ 匹配工具→set载入\n'
 +'  ③ help get grade_guide        ▸ [硬依赖：⑥⑧前置，不调=无法分级]\n'
 +'  ④ longterm_memory query 用户偏好+项目上下文 ▸ 已知什么？\n'
 +'  ⑤ knowledge_base query 问题关键词           ▸ 用户传过什么？\n'
@@ -1269,6 +1269,7 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'→longterm_memory store "天气Dashboard架构:Open-Meteo+express缓存+Chart.js多城对比" topic=weather-dashboard\n'
 +'\n'
 +'▸ P5 润色 — 通读全链路→修"温度单位"前后不一致(一处F一处C)→统一为C→验递进\n'
++'[DELIVER] □代码已跑通 □文件已验证 □数据已核实 □问题已回答 □路径已告知\n'
 +'</think>\n'
 +'\n'
 +'<answer>\n'
@@ -1294,7 +1295,6 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'- 数据不刷新: 缓存TTL=10min，手动重启后端\n'
 +'- 城市无数据: Open-Meteo用经纬度，确认坐标正确\n'
 +'\n'
-+'[DELIVER] □代码已跑通 □文件已验证 □数据已核实 □问题已回答 □路径已告知\n'
 +'</answer>\n'
 +'</EXAMPLE>\n'
 +'\n'
@@ -1914,16 +1914,16 @@ function getCodeRunPermission(filePath){
 }
 
 var TOOL_REGISTRY={
-  'help':{name:'help',description:'工具管理。action:list/set/get/unset。扩展工具需help set载入后才可调用。',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['list','set','get','unset'],default:'list'},tool_name:{type:'string',description:'工具名(action=set/get/unset时必填)'},id:{type:'string',description:'工具名别名(同tool_name)'}},required:[]}},
+  'help':{name:'help',description:'工具管理。action:query/list/set/get/unset。扩展工具需help set载入后才可调用。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['query','list','set','get','unset'],default:'list'},query:{type:'string',description:'语义搜索(action=query必填)'},limit:{type:'number',default:5,maximum:10},tool_name:{type:'string',description:'工具名(action=set/get/unset时必填)'},id:{type:'string',description:'工具名别名(同tool_name)'}},required:[]}},
   'filesystem':{name:'filesystem',description:'VFS文件系统。action:create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/code_run/rename。行操作从大到小排序。code_run沙箱可读写VFS。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','code_run','rename','move','copy']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'},timeout:{type:'number',default:10000},sandbox_dir:{type:'string',description:'沙箱工作目录(默认/sandbox/)'}},required:['action','path']}},
   'search':{name:'search',description:'网络搜索(Tavily)。返回标题/URL/摘要。可选include_raw_content抓原文。',executor:'task_worker',
     parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词'},max_results:{type:'number',default:5,maximum:10},search_depth:{type:'string',enum:['basic','advanced'],default:'advanced'},include_raw_content:{type:'boolean',default:false},include_domains:{type:'array',items:{type:'string'}},exclude_domains:{type:'array',items:{type:'string'}}},required:['query']}},
   'calculator':{name:'calculator',description:'数学计算(mathjs)。四则/三角/对数/矩阵/统计/组合/单位/复数/分数。',executor:'main_thread',
     parameters:{type:'object',properties:{expression:{type:'string',description:'数学表达式。支持阶乘n!、排列组合、矩阵[1,2;3,4]、统计函数、复数2+3i、单位换算"3inch to cm"、分数等'}},required:['expression']}},
-  'skill_manager':{name:'skill_manager',description:'技能管理。action:list/set(激活)/reset(卸载全部)。',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['list','set','reset']},id:{type:'string',description:'技能ID(action=set必填)'}},required:['action']}},
+  'skill_manager':{name:'skill_manager',description:'技能管理。action:query/list/set(激活)/reset(卸载全部)。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['query','list','set','reset']},query:{type:'string',description:'语义搜索(action=query必填)'},limit:{type:'number',default:5,maximum:15},id:{type:'string',description:'技能ID(action=set必填)'}},required:['action']}},
   'semantic_memory':{name:'semantic_memory',description:'搜索历史对话(只读)。混合语义检索。',executor:'main_thread',
     parameters:{type:'object',properties:{query:{type:'string',description:'自然语言查询'},limit:{type:'number',default:3,maximum:10}},required:['query']}},
   'longterm_memory':{name:'longterm_memory',description:'AI私人笔记。action:query/store/list/get/delete/update/batch_delete。',executor:'main_thread',
@@ -2039,7 +2039,7 @@ var _SHARED_GRADE='[GRADE:L1] 简单问答\n'
 +'  或 定期→calendar auto_wake→复盘→改进\n'
 +'触发识别: 本轮P2 query命中≥3条同主题记忆→自动升L5审视\n'
 +'缺口: 反复缺口为系统性问题→store标记"已知局限"(category:"能力缺口") | 工具侧缺口→建议用户扩展工具链\n'
-+'注意: skill_manager仅list/set/reset。策略调整靠自己改进。不依赖外部fix。\n'
++'注意: skill_manager: query搜索技能/set激活/reset卸载。策略调整靠自己改进。不依赖外部fix。\n'
 +'后·· longterm_memory store(改进方案+时间戳)。旧法记忆不删，追加marker"已被v2替代"。\n'
 +'□自检: 同类记忆≥3条命中？问题点已定位？新法已store？下次可验证？\n'
 +'★完成: longterm_memory已记录+下次同类提前预警+旧法已标记替代\n'
@@ -2075,6 +2075,7 @@ var TOOL_DOCS={
 ### action
 | action | 说明 | 示例 |
 |--------|------|------|
+| query  | 语义搜索工具 | `+"`"+`help action="query" query="画图表的工具"`+"`"+` |
 | list   | 列出全部工具+载入状态 | `+"`"+`help list`+"`"+` |
 | set    | 载入工具到当前对话 | `+"`"+`help set "chart"`+"`"+` |
 | get    | 获取工具完整文档 | `+"`"+`help "pipeline"`+"`"+` 或 `+"`"+`help get "pipeline"`+"`"+` |
@@ -2082,9 +2083,10 @@ var TOOL_DOCS={
 
 ### 工作流
 1. 首轮自动拥有10个核心工具（filesystem/search/calculator/precise_time/fuzzy_search/semantic_memory/longterm_memory/knowledge_base/skill_manager/help）
-2. 需要其他工具时: `+"`"+`help list`+"`"+` → 找到目标 → `+"`"+`help set "<id>"`+"`"+`
-3. 不确定怎么用: `+"`"+`help "<id>"`+"`"+` 查看完整文档
-4. 不再需要: `+"`"+`help unset "<id>"`+"`"+` 卸载释放上下文
+2. 搜索工具: `+"`"+`help action="query" query="图表"`+"`"+` → 语义匹配最相关工具 → `+"`"+`help set "<id>"`+"`"+`
+3. 或列出全部: `+"`"+`help list`+"`"+` → 找到目标 → `+"`"+`help set "<id>"`+"`"+`
+4. 不确定怎么用: `+"`"+`help "<id>"`+"`"+` 查看完整文档
+5. 不再需要: `+"`"+`help unset "<id>"`+"`"+` 卸载释放上下文
 
 ### 扩展工具清单(需载入)
 chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / ocr / pdf_read / pdf_generate / custom_api_call / mcp_connect / user_function_call / convert_format / geo_search / geo_geocode / geo_ip / send_email / sql_db / browser_notify / archive / speech_tts / speech_stt / calendar / pipeline / reqalign / generatespec / world_validator / flow_mode`,
@@ -2227,17 +2229,19 @@ pi(π)  e  i(虚数)
 管理技能库，按需激活/卸载技能，激活后其 prompt_fragment 注入系统指令。
 
 ### action
+- **query**: 语义搜索技能(传query)。返回相关度排序的技能列表
 - **list**: 列出全部技能及触发条件(名称/ID/触发词/分类/来源/激活状态)
-- **set**: 激活指定技能(传id)。可从 list 结果获取 ID
+- **set**: 激活指定技能(传id)。可从 query/list 结果获取 ID
 - **reset**: 卸载全部激活技能，恢复空白状态
 
 ### 最小示例
+`+"`"+`skill_manager action="query" query="代码分析"`+"`"+`
 `+"`"+`skill_manager action="list"`+"`"+`
 `+"`"+`skill_manager action="set" id="python_expert"`+"`"+`
 `+"`"+`skill_manager action="reset"`+"`"+`
 ### 注意事项
 - 未激活的技能不影响行为
-- 建议首轮调用 list 了解可用技能，然后按需 set
+- 建议先用 query 语义搜索找到相关技能，再按需 set
 - ID 支持完整ID或文件名(不含.json)`,
 
   'semantic_memory':`## semantic_memory — 语义记忆搜索
@@ -7747,7 +7751,7 @@ function _buildLLMRequest(messages,tools,stream,source){
           else if(_tname==='semantic_memory'){_guide+='历史对话片段('+(_cl2/1000).toFixed(0)+'K字符) | 可用 semantic_memory 重新搜索';}
           else if(_tname==='longterm_memory'){_guide+='笔记内容('+(_cl2/1000).toFixed(0)+'K字符) | 可用 longterm_memory action="query" 或 action="get" 重新获取';}
           else if(_tname==='knowledge_base'){_guide+='知识库条目('+(_cl2/1000).toFixed(0)+'K字符) | 可用 knowledge_base action="query" 或 action="get" 重新获取';}
-          else if(_tname==='skill_manager'){_guide+='技能清单 | 可用 skill_manager action="list" 重新查看';}
+          else if(_tname==='skill_manager'){_guide+='技能清单 | 可用 skill_manager action="query" 或 action="list" 重新查看';}
           else if(_tname==='precise_time'){_guide+=_tname+'结果 | 可重新调用';}
           else{_guide+=_tname+'结果('+(_cl2/1000).toFixed(0)+'K字符)'+(_paths.length>0?' | 路径:'+_paths.join(', '):'')+' | 可重新调用获取完整内容';}
           cleanedMessages[_mi2].content=_guide;
@@ -9919,9 +9923,56 @@ async function toolFlowNoop(type){
   return JSON.stringify({ok:true,processed_in_supervisor_loop:true,type:type});
 }
 
+var _toolEmbeddings={}; // 工具语义搜索向量缓存
+
 async function toolHelp(args){
   var convId=currentConversationId;
   var action=args.action||'list';
+
+  // ── query：语义搜索工具 ──
+  if(action==='query'){
+    if(!args.query)return '请指定 query 搜索描述。示例: help action="query" query="画图表"';
+    var limit=args.limit||5;
+    var queryEmb=null;
+    try{var resp=await sendToTaskWorker('embed',{text:args.query.substring(0,500)});
+      if(resp&&resp.data&&Array.isArray(resp.data)&&resp.data.length===384)queryEmb=resp.data;
+    }catch(e){/* 嵌入失败，降级到关键词 */}
+    var keys=Object.keys(TOOL_REGISTRY);
+    var scored=[];
+    for(var i=0;i<keys.length;i++){
+      var t=TOOL_REGISTRY[keys[i]];
+      if(t.disabled)continue;
+      if(t.flow_role==='supervisor'||t.flow_role==='root')continue;
+      var searchText=t.name+' '+(t.description||'')+' '+(TOOL_DOCS[t.name]||'').substring(0,500);
+      var sim=0;
+      if(queryEmb){
+        var toolEmb=_toolEmbeddings[t.name];
+        if(!toolEmb){
+          try{var tResp=await sendToTaskWorker('embed',{text:searchText.substring(0,500)});
+            if(tResp&&tResp.data&&Array.isArray(tResp.data)&&tResp.data.length===384){toolEmb=tResp.data;_toolEmbeddings[t.name]=toolEmb;}
+          }catch(e){}
+        }
+        if(toolEmb)sim=cosineSimilarity(queryEmb,toolEmb);
+      }
+      var kwMatch=0,ql=args.query.toLowerCase();
+      if(t.name.toLowerCase().indexOf(ql)>=0)kwMatch=0.4;
+      if((t.description||'').toLowerCase().indexOf(ql)>=0)kwMatch=Math.max(kwMatch,0.25);
+      var finalScore=sim>0?sim*0.85+kwMatch:kwMatch;
+      if(finalScore>=0.2)scored.push({tool:t,score:finalScore});
+    }
+    scored.sort(function(a,b){return b.score-a.score;});
+    var top=scored.slice(0,limit);
+    if(!top.length)return '未找到与「'+args.query+'」相关的工具。使用 help list 查看全部工具。';
+    var lines=['##  工具搜索: '+args.query+' (前'+top.length+'条)\n| # | 状态 | 工具名 | 相关度 | 简介 |','|---|---|---|---|---|'];
+    for(var j=0;j<top.length;j++){
+      var r=top[j];
+      var isActive=_isToolActive(convId,r.tool.name);
+      var desc=(r.tool.description||'').replace(/\|/g,'\\|').substring(0,60);
+      lines.push('| '+(j+1)+' | '+(isActive?' 已载入':' 未载入')+' | `'+r.tool.name+'` | '+Math.round(r.score*100)+'% | '+desc+' |');
+    }
+    lines.push('\n使用 `help set "<工具名>"` 载入目标工具');
+    return lines.join('\n');
+  }
 
   if(action==='list'){
     var keys=Object.keys(TOOL_REGISTRY);
@@ -9937,6 +9988,7 @@ async function toolHelp(args){
     }
     lines.push('\n---');
     lines.push('### 操作指令');
+    lines.push('- `help action="query" query="关键词"` — 语义搜索工具');
     lines.push('- `help set "<id>"` — 载入工具（如 `help set "chart"`）');
     lines.push('- `help "<id>"` 或 `help get "<id>"` — 获取完整文档');
     lines.push('- `help "grade_guide"` — 分级指南（L1-L5+升降级+前··后··闭环）');
@@ -9947,9 +9999,9 @@ async function toolHelp(args){
 
   if(action==='set'){
     var setId=(args.tool_name||args.id||'').trim();
-    if(!setId)return ' 请指定工具ID。用 `help list` 查看所有可用工具。';
+    if(!setId)return ' 请指定工具ID。用 `help action="query" query="关键词"` 搜索或 `help list` 查看全部。';
     var tDef=TOOL_REGISTRY[setId];
-    if(!tDef)return ' 未找到工具: `'+setId+'`。用 `help list` 查看完整列表。';
+    if(!tDef)return ' 未找到工具: `'+setId+'`。用 `help action="query" query="关键词"` 搜索或 `help list` 查看完整列表。';
     if(tDef.disabled)return ' 工具 `'+setId+'` 已被禁用。';
     if(CORE_TOOL_NAMES.indexOf(tDef.name)>=0)return ' `'+tDef.name+'` 是核心工具，始终可用，无需手动载入。';
     if(tDef.flow_role==='supervisor')return ' `'+tDef.name+'` 是监工专属工具，不可手动载入。';
@@ -9977,7 +10029,7 @@ async function toolHelp(args){
   if(doc)return doc;
   var t2=TOOL_REGISTRY[tn];
   if(t2)return '## '+tn+'\n'+t2.description+'\n\n(该工具暂无扩展文档，以上为基本信息。)';
-  return ' 未找到工具: `'+tn+'`。用 `help list` 查看所有可用工具。';
+  return ' 未找到工具: `'+tn+'`。用 `help action="query" query="关键词"` 搜索或 `help list` 查看所有可用工具。';
 }
 
 async function toolLongtermMemory(args){
@@ -13195,6 +13247,57 @@ async function toolSkillManager(args){
   var skills=skillCache.skills||{};
   var allIds=Object.keys(skills);
 
+  // ── query：语义搜索技能 ──
+  if(action==='query'){
+    if(!args.query)return '请指定 query 搜索描述。示例: skill_manager action="query" query="代码分析"';
+    var limit=args.limit||5;
+    if(allIds.length===0)return '技能库为空。你可以建议用户通过设置面板上传Skill JSON文件来添加技能。';
+    var queryEmb=null;
+    try{var resp=await sendToTaskWorker('embed',{text:args.query.substring(0,500)});
+      if(resp&&resp.data&&Array.isArray(resp.data)&&resp.data.length===384)queryEmb=resp.data;
+    }catch(e){/* 嵌入失败，降级到关键词 */}
+    var scored=[];
+    for(var i=0;i<allIds.length;i++){
+      var sk=skills[allIds[i]];
+      var sid=sk.id||allIds[i].replace('.json','');
+      var searchText=(sk.name||'')+' '+(sk.trigger||'')+' '+(sk.category||'')+' '+(sk.description||'')+' '+(sk.prompt_fragment||'').substring(0,500);
+      var sim=0;
+      if(queryEmb){
+        var skEmb=sk._embedding;
+        if(!skEmb){
+          try{var tResp=await sendToTaskWorker('embed',{text:searchText.substring(0,500)});
+            if(tResp&&tResp.data&&Array.isArray(tResp.data)&&tResp.data.length===384){skEmb=tResp.data;sk._embedding=skEmb;}
+          }catch(e){}
+        }
+        if(skEmb)sim=cosineSimilarity(queryEmb,skEmb);
+      }
+      var kwMatch=0,ql=args.query.toLowerCase();
+      if((sk.name||'').toLowerCase().indexOf(ql)>=0)kwMatch=0.45;
+      if((sk.trigger||'').toLowerCase().indexOf(ql)>=0)kwMatch=Math.max(kwMatch,0.35);
+      if((sk.category||'').toLowerCase().indexOf(ql)>=0)kwMatch=Math.max(kwMatch,0.2);
+      if((sk.description||'').toLowerCase().indexOf(ql)>=0)kwMatch=Math.max(kwMatch,0.2);
+      if((sk.prompt_fragment||'').toLowerCase().indexOf(ql)>=0)kwMatch=Math.max(kwMatch,0.1);
+      var finalScore=sim>0?sim*0.85+kwMatch:kwMatch;
+      if(finalScore>=0.2)scored.push({skill:sk,id:sid,key:allIds[i],score:finalScore});
+    }
+    scored.sort(function(a,b){return b.score-a.score;});
+    var top=scored.slice(0,limit);
+    if(!top.length)return '未找到与「'+args.query+'」相关的技能。使用 skill_manager list 查看全部技能。';
+    var lines=['##  技能搜索: '+args.query+' (前'+top.length+'条)\n'];
+    for(var j=0;j<top.length;j++){
+      var r=top[j];
+      var isActive=(skillCache.activeSkillIds.indexOf(r.id)>=0);
+      lines.push(
+        (j+1)+'. '+(isActive?'激活':'未激活')+' **'+(r.skill.name||'未命名')+'** (相关度:'+Math.round(r.score*100)+'%)'+
+        '\n   - ID: `'+r.id+'`'+
+        '\n   - 触发词: '+(r.skill.trigger||'(无)')+
+        '\n   - 分类: '+(r.skill.category||'未分类')
+      );
+    }
+    lines.push('\n使用 `skill_manager action="set" id="技能ID"` 激活目标技能');
+    return lines.join('\n');
+  }
+
   if(action==='list'){
     if(allIds.length===0){
       return ' 技能库为空。你可以建议用户通过设置面板上传Skill JSON文件来添加技能。';
@@ -13228,7 +13331,7 @@ async function toolSkillManager(args){
   if(action==='set'){
     var targetId=(args.id||'').trim();
     if(!targetId){
-      return ' 请指定技能ID。先用 `skill_manager action="list"` 查看可用技能列表，然后 `skill_manager action="set" id="技能ID"` 激活。';
+      return ' 请指定技能ID。先用 `skill_manager action="query" query="关键词"` 搜索或 `skill_manager action="list"` 查看全部，然后 `skill_manager action="set" id="技能ID"` 激活。';
     }
     var found=null;
     for(var i=0;i<allIds.length;i++){
@@ -14060,6 +14163,18 @@ async function processUserMessage(userText,taskId){
     // 活跃工具集在循环外计算一次，避免每轮重复构建
     var activeTools=getActiveTools();
     var toolResultHistory=[]; // 用于追踪工具执行状态，提供给用户可见的进度
+    // ★ RAF节流：每帧最多一次渲染+一次滚动，仅近底时自动跟底
+    var _renderPending=false,_scrollPending=false,_latestAgentContent='',_userScrolledUp=false;
+    var _lastKnownScrollTop=messagesDiv.scrollTop;
+    function _isNearBottom(el){return el.scrollHeight-el.scrollTop-el.clientHeight<120;}
+    // 基于滚动方向判断用户意图：向上滚立即停跟底，滚回最底部才恢复
+    function _onUserScroll(){
+      var st=messagesDiv.scrollTop;
+      if(st<_lastKnownScrollTop){_userScrolledUp=true;}
+      else if(st>_lastKnownScrollTop&&messagesDiv.scrollHeight-st-messagesDiv.clientHeight<5){_userScrolledUp=false;}
+      _lastKnownScrollTop=st;
+    }
+    messagesDiv.addEventListener('scroll',_onUserScroll,{passive:true});
     for(var round=0;;round++){ // 无限循环，由 pendingToolCalls 为空或 finishReason=stop 退出
       if(cs.stopRequested){throw new Error('用户已中止');}
       agentMsgDiv._currentRound = round;
@@ -14067,18 +14182,9 @@ async function processUserMessage(userText,taskId){
       var streamReasoning='';
       var streamToolCalls={};
       var hasStreamContent=false;
-      // ★ RAF节流：每帧最多一次渲染+一次滚动，仅近底时自动跟底
-      var _renderPending=false,_scrollPending=false,_latestAgentContent='',_userScrolledUp=false;
-      var _lastKnownScrollTop=messagesDiv.scrollTop;
-      function _isNearBottom(el){return el.scrollHeight-el.scrollTop-el.clientHeight<120;}
-      // 基于滚动方向判断用户意图：向上滚立即停跟底，滚回最底部才恢复
-      function _onUserScroll(){
-        var st=messagesDiv.scrollTop;
-        if(st<_lastKnownScrollTop){_userScrolledUp=true;}
-        else if(st>_lastKnownScrollTop&&messagesDiv.scrollHeight-st-messagesDiv.clientHeight<5){_userScrolledUp=false;}
-        _lastKnownScrollTop=st;
-      }
-      messagesDiv.addEventListener('scroll',_onUserScroll,{passive:true});
+      // 每轮重置流式渲染状态
+      _renderPending=false;_scrollPending=false;_latestAgentContent='';_userScrolledUp=false;
+      _lastKnownScrollTop=messagesDiv.scrollTop;
       function _scheduleStreamRender(){
         if(_renderPending)return;_renderPending=true;
         var _wasAtBottom=!_userScrolledUp&&_isNearBottom(messagesDiv);  // 内容变化前快照
