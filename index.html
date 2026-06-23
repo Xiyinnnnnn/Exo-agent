@@ -3713,7 +3713,7 @@ async function kbSearch(query,limit){
     if(e.title.toLowerCase().indexOf(ql)>=0)kwMatch=0.3;
     if(e.content.toLowerCase().indexOf(ql)>=0)kwMatch=Math.max(kwMatch,0.15);
     var finalScore=sim>0?sim*0.85+kwMatch:kwMatch;
-    if(finalScore>0)scored.push({entry:e,score:finalScore});
+    if(finalScore>=0.25)scored.push({entry:e,score:finalScore});
   }
   scored.sort(function(a,b){return b.score-a.score;});
   return scored.slice(0,limit);
@@ -10039,7 +10039,7 @@ async function toolLongtermMemory(args){
       var ql=query.toLowerCase();
       if(f.text.toLowerCase().indexOf(ql)>=0)kwMatch=0.4;
       var finalScore=sim>0?sim*0.85+kwMatch:kwMatch;
-      if(finalScore>0.01||sim>0)scored.push({fact:f,score:finalScore});
+      if(finalScore>=0.25)scored.push({fact:f,score:finalScore});
     }
     scored.sort(function(a,b){return b.score-a.score;});
     var top=scored.slice(0,limit);
@@ -13719,7 +13719,8 @@ async function searchSimilarExperiences(query,limit){
       return {episode:ep,similarity:fused};
     });
     scored.sort(function(a,b){return b.similarity-a.similarity;});
-    return scored.slice(0,limit).map(function(s){return {text:s.episode.text,similarity:Math.round(s.similarity*100)/100,id:s.episode.id};});
+    var filtered=scored.filter(function(s){return s.similarity>=0.25;});
+return filtered.slice(0,limit).map(function(s){return {text:s.episode.text,similarity:Math.round(s.similarity*100)/100,id:s.episode.id};});
   }catch(e){return [];}
 }
 
