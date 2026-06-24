@@ -3855,7 +3855,7 @@ var LIBRARY_LOAD_PROMISES={};
 var LIBRARY_FAILED_AT={};
 var LIBRARY_RETRY_COOLDOWN=30000;
 // ===== PWA: Cache API 本地缓存（主线程，无需 Service Worker）=====
-var CACHE_NAME='exo-libs-v3';  // ★ 升级库版本时递增此数字即可清旧缓存
+var CACHE_NAME='libs';  // ★ 升级库版本时递增此数字即可清旧缓存
 var _cacheReady=null;          // 懒初始化 CacheStorage 的 Promise
 var _cacheStorage=null;        // 打开的 Cache 实例引用
 var mdRenderer=null;
@@ -16906,6 +16906,12 @@ async function resetSystem(){
     if(taskWorkerManager){taskWorkerManager.terminate();taskWorker=null;}
     if(heartbeatIntervalId){clearInterval(heartbeatIntervalId);}
     if(healthCheckIntervalId){clearInterval(healthCheckIntervalId);}
+    // ★ 清除 CDN 库缓存（Cache API: libs）
+    try{
+      await caches.delete(CACHE_NAME);
+      _cacheStorage=null;_cacheReady=null;
+      debugLogger.info('[Cache] CDN库缓存已清除');
+    }catch(e){debugLogger.warn('[Cache] 清除缓存失败: '+e.message);}
     var d=await getDB();
     var storeNames=Array.from(d.objectStoreNames);
     for(var s=0;s<storeNames.length;s++){
