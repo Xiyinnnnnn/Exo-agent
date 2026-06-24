@@ -19044,7 +19044,7 @@ async function switchConversation(convId,forceSwitch){
     while(targetState._container.firstChild){
       msgList.appendChild(targetState._container.firstChild);
     }
-    msgList.scrollTop=targetState._scrollPos||0;
+    requestAnimationFrame(function(){msgList.scrollTop=targetState._scrollPos||0;});
     _restoreFlowBubbles(convId);
     renderConversationList();
     updateSendButton();
@@ -19119,7 +19119,7 @@ async function switchConversation(convId,forceSwitch){
         }
       }
       _restoreRenderArtifacts(msgList);
-      msgList.scrollTop=targetState._scrollPos||msgList.scrollHeight;
+      requestAnimationFrame(function(){msgList.scrollTop=targetState._scrollPos||msgList.scrollHeight;});
       _renderBubbleBranchNavs();
       setStatus('idle');
     }catch(e){debugLogger.warn('切换会话失败: '+e.message);}
