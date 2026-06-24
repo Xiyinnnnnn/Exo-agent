@@ -18842,7 +18842,9 @@ async function loadConversationsFromDB(){
     if(all.length>0){
       all.sort(function(a,b){return b.createdAt-a.createdAt;});
       conversationDB.entries=all;
-      currentConversationId=all[0].id;
+      var _lastId=localStorage.getItem('exo_last_conv');
+      var _found=_lastId&&all.find(function(e){return e.id===_lastId;});
+      currentConversationId=_found?_found.id:all[0].id;
     }else{
       // 无历史对话，保持欢迎界面，不创建对话
       conversationDB.entries=[];
@@ -19025,6 +19027,7 @@ async function switchConversation(convId,forceSwitch){
   
   // 2) 切换CID — 全局变量代理自动指向新对话的convState，无需手动同步
   currentConversationId=convId;
+  localStorage.setItem('exo_last_conv',convId);
   var targetState=_ensureConvState(convId);
   // 恢复该对话的技能激活状态
   skillCache.activeSkillIds=targetState.activeSkillIds||[];
