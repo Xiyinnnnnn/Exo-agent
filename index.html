@@ -1034,6 +1034,7 @@ button,label,[role="button"],.file-upload-btn{
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 convert_format</span><label class="toggle-switch"><input type="checkbox" id="settingConvertEnabled" checked><span class="toggle-slider"></span></label></label></div>
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 archive</span><label class="toggle-switch"><input type="checkbox" id="settingArchiveEnabled" checked><span class="toggle-slider"></span></label></label></div>
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 flow_mode</span><label class="toggle-switch"><input type="checkbox" id="settingFlowModeEnabled" checked><span class="toggle-slider"></span></label></label></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 vis_network</span><label class="toggle-switch"><input type="checkbox" id="settingVisNetworkEnabled" checked><span class="toggle-slider"></span></label></label></div>
       </div>
     </div>
 
@@ -1996,7 +1997,9 @@ var TOOL_REGISTRY={
   'flow_context_new':{name:'flow_context_new',description:'[监工]创建新的干活Agent上下文。summary=前情摘要,first_task=第一条任务指令。',executor:'main_thread',flow_role:'supervisor',
     parameters:{type:'object',properties:{summary:{type:'string',description:'前情摘要(完成了什么/文件在哪/剩余问题)'},first_task:{type:'string',description:'第一条任务指令'}},required:['summary','first_task']}},
   'flow_deliver':{name:'flow_deliver',description:'[监工]全部达标时交付退出心流。',executor:'main_thread',flow_role:'supervisor',
-    parameters:{type:'object',properties:{summary:{type:'string',description:'向用户报告的交付总结'}},required:['summary']}}
+    parameters:{type:'object',properties:{summary:{type:'string',description:'向用户报告的交付总结'}},required:['summary']}},
+  'vis_network':{name:'vis_network',description:'关系图谱。nodes:[{id,label,color}] edges:[{from,to,label}] 渲染交互式网络图。',executor:'main_thread',
+    parameters:{type:'object',properties:{nodes:{type:'array',items:{type:'object',properties:{id:{type:'string'},label:{type:'string'},color:{type:'string'}}}},edges:{type:'array',items:{type:'object',properties:{from:{type:'string'},to:{type:'string'},label:{type:'string'}}}},options:{type:'object',properties:{height:{type:'string',default:'400px'}}}},required:['nodes','edges']}}
 };
 
 var _SHARED_GRADE='[GRADE:L1] 简单问答\n'
@@ -3070,6 +3073,22 @@ flow_context_new summary="已完成v1: engine.js+handler.js。测试15/15通过�
 | 参数 | 说明 |
 |------|------|
 | summary | 向用户报告的交付总结 |`,
+
+  'vis_network':`## vis_network — 关系图谱
+
+用 nodes + edges JSON 渲染交互式网络图。节点可拖拽、缩放。
+
+### 参数
+| 参数 | 说明 |
+|------|------|
+| nodes | [{id,label,color}] 节点列表。id唯一标识,label显示文字,color可选 |
+| edges | [{from,to,label}] 边列表。from/to指向节点id |
+| options | {height:"400px"} 可选配置 |
+
+### 最小示例
+\`\`\`
+vis_network nodes=[{"id":"1","label":"A"},{"id":"2","label":"B"}] edges=[{"from":"1","to":"2","label":"调用"}]
+\`\`\``,
 };
 
 var LOG_LEVELS={ERROR:0,WARN:1,INFO:2,DEBUG:3};
@@ -3080,6 +3099,7 @@ var EXTERNAL_LIBRARIES={
   'highlight':{urls:['https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js','https://unpkg.com/@highlightjs/cdn-assets@11.9.0/highlight.min.js','https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'],cssUrls:['https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github.min.css','https://unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/github.min.css','https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css'],global:'hljs',required:false,loadOnStart:false},
   'mermaid':{urls:['https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js','https://unpkg.com/mermaid@10/dist/mermaid.min.js','https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js'],global:'mermaid',required:false,loadOnStart:false},
   'dompurify':{urls:['https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js','https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js','https://unpkg.com/dompurify@3.2.4/dist/purify.min.js'],global:'DOMPurify',required:true,loadOnStart:true},
+  'vis-network':{urls:['https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js','https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js'],global:'vis',required:false,loadOnStart:false},
   'echarts':{urls:['https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js','https://unpkg.com/echarts@5/dist/echarts.min.js','https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js'],global:'echarts',required:false,loadOnStart:false},
   'xlsx':{urls:['https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js','https://cdn.jsdelivr.net/npm/xlsx@0.20.1/dist/xlsx.full.min.js','https://unpkg.com/xlsx@0.20.1/dist/xlsx.full.min.js'],global:'XLSX',required:false,loadOnStart:false},
   'docx':{urls:['https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js','https://unpkg.com/docx@8.5.0/build/index.umd.min.js','https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js'],global:'docx',altGlobals:['Docx'],required:false,loadOnStart:false},
@@ -3823,6 +3843,8 @@ var pendingWorkerRequests=new Map();
 var uploadedFiles=[];
 var chartRenderQueue=[];
 var diagramRenderQueue=[];
+var visNetworkRenderQueue=[];
+var svgAnimationQueue=[];
 var currentTaskId=null;
 var taskStartTime=null;
 var evoWorkerManager=null;
@@ -4518,7 +4540,8 @@ async function saveSettings(){
     pdf_enabled:       _read('pdf_enabled','settingPdfEnabled','checked',_bool,true),
     convert_enabled:   _read('convert_enabled','settingConvertEnabled','checked',_bool,true),
     archive_enabled:   _read('archive_enabled','settingArchiveEnabled','checked',_bool,true),
-    flow_mode_enabled: _read('flow_mode_enabled','settingFlowModeEnabled','checked',_bool,true)
+    flow_mode_enabled: _read('flow_mode_enabled','settingFlowModeEnabled','checked',_bool,true),
+    vis_network_enabled: _read('vis_network_enabled','settingVisNetworkEnabled','checked',_bool,true)
   };
   // ★ 自动比例默认值：读取旧文件中的 daily_token_limit（oldDaily），
   //   若派生字段仍等于「旧硬编码默认值」或「oldDaily 的比例值 → 说明从未被用户手动修改 → 自动更新
@@ -4554,6 +4577,7 @@ async function saveSettings(){
   TOOL_REGISTRY['convert_format'].disabled=!newSettings.convert_enabled;
   TOOL_REGISTRY['archive'].disabled=!newSettings.archive_enabled;
   TOOL_REGISTRY['flow_mode'].disabled=!newSettings.flow_mode_enabled;
+  TOOL_REGISTRY['vis_network'].disabled=!newSettings.vis_network_enabled;
   var existing=await readFile('/config/settings.json');
   if(existing!==null){
     await updateFile('/config/settings.json',JSON.stringify(newSettings,null,2));
@@ -4634,7 +4658,8 @@ function applySettingsToUI(){
     {el:'settingPdfEnabled',          key:'pdf_enabled',            type:'checked', def:true},
     {el:'settingConvertEnabled',      key:'convert_enabled',        type:'checked', def:true},
     {el:'settingArchiveEnabled',      key:'archive_enabled',        type:'checked', def:true},
-    {el:'settingFlowModeEnabled',     key:'flow_mode_enabled',      type:'checked', def:true}
+    {el:'settingFlowModeEnabled',     key:'flow_mode_enabled',      type:'checked', def:true},
+    {el:'settingVisNetworkEnabled',   key:'vis_network_enabled',    type:'checked', def:true}
   ];
 
   for(var bi=0;bi<BINDINGS.length;bi++){
@@ -4697,6 +4722,7 @@ function applySettingsToUI(){
   TOOL_REGISTRY['convert_format'].disabled=!settings.convert_enabled;
   TOOL_REGISTRY['archive'].disabled=!settings.archive_enabled;
   TOOL_REGISTRY['flow_mode'].disabled=!settings.flow_mode_enabled;
+  TOOL_REGISTRY['vis_network'].disabled=!settings.vis_network_enabled;
   _updateNotifyPermStatus();
   _renderMcpConnections();
   _renderUserFunctions();
@@ -5774,14 +5800,15 @@ var _SAFE_TAGS={div:1,span:1,p:1,br:1,hr:1,h1:1,h2:1,h3:1,h4:1,h5:1,h6:1,
   caption:1,colgroup:1,col:1,pre:1,code:1,blockquote:1,em:1,strong:1,
   b:1,i:1,u:1,s:1,del:1,ins:1,sub:1,sup:1,mark:1,small:1,abbr:1,
   a:1,img:1,svg:1,g:1,path:1,circle:1,rect:1,line:1,ellipse:1,
-  polygon:1,polyline:1,text:1,tspan:1,defs:1,use:1,title_tag:1,desc:1,
-  style_tag:1,foreignObject:1};
+  polygon:1,polyline:1,text:1,tspan:1,defs:1,use:1,title:1,desc:1,
+  style:1,foreignObject:1,animate:1,animateTransform:1,animateMotion:1,set:1};
 var _SAFE_ATTRS={class:1,id:1,style:1,alt:1,title:1,href:1,src:1,
   target:1,rel:1,width:1,height:1,viewBox:1,xmlns:1,d:1,fill:1,stroke:1,
   'stroke-width':1,transform:1,cx:1,cy:1,r:1,rx:1,ry:1,x1:1,y1:1,x2:1,y2:1,
   points:1,'font-size':1,'font-family':1,'text-anchor':1,'dominant-baseline':1,
   'data-target':1,'data-expand-label':1,'data-collapse-label':1,'data-filename':1,
-  'clip-path':1,'stroke-dasharray':1};
+  'data-chart-config':1,'data-vis-nodes':1,'data-vis-edges':1,'data-svg-animation':1,'data-processed':1,
+  'type':1,'clip-path':1,'stroke-dasharray':1};
 var _DANGEROUS_HREF=/^(javascript|data\s*:|vbscript):/i;
 
 function sanitizeArtifactHTML(html){
@@ -8163,6 +8190,8 @@ async function toolFilesystem(args){
     case 'read':
       var fc=await readFile(path);
       if(fc===null)return ' 文件不存在: '+path;
+      // 防御：readFile 可能返回对象（LLM 调用 create 时 content 被传为 JSON 对象而非字符串）
+      if(typeof fc!=='string')fc=JSON.stringify(fc,null,2);
       var mode=args.mode||'auto';  // auto(默认,自动) | chunked(按行号) | full(强制全量)
       // ★ 如果用户显式指定了 line/endLine，说明需要分块读取，不要走 full
       var userWantsChunked=args.line!=null||args.endLine!=null;
@@ -8458,9 +8487,10 @@ function tokenizeMath(s){
 async function toolChart(args){
   var type=args.type,title=args.title,data=args.data,options=args.options||{};
   var chartId='chart-'+Date.now()+'-'+Math.random().toString(36).substr(2,9);
-  var containerHtml='<div id="'+chartId+'" style="width:100%;height:400px;" class="echarts-container"></div>';
+  var chartConfig=JSON.stringify({type:type,title:title,data:data,options:options});
+  var containerHtml='<div id="'+chartId+'" style="width:100%;height:400px;" class="echarts-container" data-chart-config="'+chartConfig.replace(/"/g,'&quot;')+'"></div>';
   chartRenderQueue.push({chartId:chartId,type:type,title:title,data:data,options:options});
-  var chartConfig=JSON.stringify({type:type,title:title,data:data,options:options},null,2);
+  chartConfig=JSON.stringify({type:type,title:title,data:data,options:options},null,2);
   var ts=Date.now();
   try{await createFile('/downloads/chart_'+ts+'.json',chartConfig);}catch(e){}
   registerGeneratedFile(chartConfig,'chart_'+ts+'.json','application/json');
@@ -8494,6 +8524,7 @@ async function scheduleChartRender(chartId,retries){
     return;
   }
   try{
+    if(dom._echarts_instance_) echarts.dispose(dom);
     var myChart=echarts.init(dom);
     // 【修复】不设固定 grid，让 buildChartSeries 自带 containLabel 或 ECharts 自动计算，确保柱子/轴标签不溢出
     var option={title:{text:task.title||'',left:'center',textStyle:{fontSize:14}},tooltip:{trigger:'axis'}};
@@ -8631,7 +8662,8 @@ function buildChartSeries(type,data){
 async function toolDiagram(args){
   var code=args.code,diagram_type=args.diagram_type||'flowchart';
   var diagramId='diagram-'+Date.now()+'-'+Math.random().toString(36).substr(2,9);
-  var containerHtml='<div class="mermaid" id="'+diagramId+'">'+code+'</div>';
+  var escapedCode = code.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  var containerHtml='<div class="mermaid" id="'+diagramId+'">'+code+'</div><pre class="mermaid-src" style="display:none">'+escapedCode+'</pre>';
   await loadLibrary('mermaid');
   try{mermaid.initialize({startOnLoad:false,theme:'default'});}catch(e){debugLogger.warn('Mermaid初始化失败: '+e.message);}
   diagramRenderQueue.push({diagramId:diagramId});
@@ -8643,6 +8675,24 @@ var dmPreview=code.replace(/\n/g,' ').substring(0,5000);
 var dmFilePath='/downloads/diagram_'+ts+'.mmd';
 if(code.length>5000)dmPreview+='\n...(以上为前5000字摘要，完整代码共'+code.length+'字符。使用 filesystem read '+dmFilePath+' 读取完整Mermaid代码)';
   return {html:containerHtml,message:' '+dmTypeLabel+'已生成（'+code.length+'字符）。'+dmFilePath+' 代码摘要: '+dmPreview};
+}
+
+async function toolVisNetwork(args){
+  await loadLibrary('vis-network');
+  var nodes = args.nodes || [];
+  var edges = args.edges || [];
+  var opts = args.options || {};
+  var netId = 'visnet-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  var height = opts.height || '400px';
+  var nodesJson = JSON.stringify(nodes).replace(/"/g, '&quot;');
+  var edgesJson = JSON.stringify(edges).replace(/"/g, '&quot;');
+  var containerHtml = '<div id="' + netId + '" style="width:100%;height:' + height + ';border-radius:8px;border:1px solid var(--color-border);background:#fafafa" data-vis-nodes="' + nodesJson + '" data-vis-edges="' + edgesJson + '"></div>';
+  visNetworkRenderQueue.push({netId: netId, nodes: nodes, edges: edges});
+  var ts = Date.now();
+  var jsonStr = JSON.stringify({nodes: nodes, edges: edges}, null, 2);
+  try { await createFile('/downloads/vis_network_' + ts + '.json', jsonStr); } catch (e) {}
+  registerGeneratedFile(jsonStr, 'vis_network_' + ts + '.json', 'application/json');
+  return {html: containerHtml, message: ' 关系图谱已生成（' + nodes.length + '节点, ' + edges.length + '边）。'};
 }
 
 async function toolSVGAnimator(args){
@@ -8659,7 +8709,9 @@ async function toolSVGAnimator(args){
   registerGeneratedFile(fullSvg,'svg_'+ts+'.svg','image/svg+xml');
   var svgLen=svg_code.length;
   var animDesc=animation_type+(duration?', '+duration+'ms':'');
-  return {html:'<div id="'+wrapperId+'" class="svg-container" style="overflow-x:auto">'+animationStyle+svg_code+'</div>',message:' SVG动画已生成（类型:'+animDesc+', SVG代码'+svgLen+'字符）。'};
+  var svgAnimData = JSON.stringify({style: animationStyle}).replace(/"/g, '&quot;');
+  svgAnimationQueue.push({wrapperId: wrapperId, style: animationStyle});
+  return {html:'<div id="'+wrapperId+'" class="svg-container" style="overflow-x:auto" data-svg-animation="'+svgAnimData+'">'+svg_code+'</div>',message:' SVG动画已生成（类型:'+animDesc+', SVG代码'+svgLen+'字符）。'};
 }
 
 function isSafeSVG(svgCode){
@@ -9972,6 +10024,7 @@ async function executeMainThreadTool(toolName,args){
     case 'reqalign':return await toolReqalign(args);
     case 'generatespec':return await toolGeneratespec(args);
     case 'world_validator':return await toolWorldSimulator(args);
+    case 'vis_network':return await toolVisNetwork(args);
     case 'flow_mode':return await toolFlowMode(args);
     case 'todo':return await _executeTodo(args, currentConversationId);
     case 'flow_context_new':return await toolFlowNoop('context_new');
@@ -14489,6 +14542,23 @@ async function processUserMessage(userText,taskId){
           var artDiv=document.createElement('div');
           artDiv.innerHTML=sanitizeArtifactHTML(artifacts[a].html);
           contentDiv.appendChild(artDiv);
+          // ★ 立即处理 SVG 容器：注入动画 style 并触发 CSS animation
+          var svgWrappers = artDiv.querySelectorAll('.svg-container[data-svg-animation]');
+          for (var swi = 0; swi < svgWrappers.length; swi++) {
+            (function(wrapper) {
+              try {
+                var animData = JSON.parse(wrapper.getAttribute('data-svg-animation').replace(/&quot;/g, '"'));
+                if (animData.style) {
+                  var styleEl = document.createElement('style');
+                  wrapper.insertBefore(styleEl, wrapper.firstChild);
+                  // 三段式写入：先清空→强制回流→再写入，确保 animation 正确触发
+                  styleEl.textContent = '';
+                  void wrapper.offsetHeight;
+                  styleEl.textContent = animData.style.replace(/<\/?style>/g, '');
+                }
+              } catch(e) {}
+            })(svgWrappers[swi]);
+          }
         }
       }
       renderedArtifactCount=artifacts.length;
@@ -14947,6 +15017,31 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
       }
     }
 
+    // ★ 立即重启 SVG 动画：body3.innerHTML 替换触发的回流会杀死 CSS animation
+    // ★ 立即重启动画，但只处理 有 <style> 子元素 的 wrapper（流式期间已注入的）
+    //    另外清除所有不带 <style> 的同类 wrapper（重复渲染/空壳，即"不会动的svg框"）
+    var svgWrappers = contentDiv.querySelectorAll('.svg-container[data-svg-animation]');
+    for (var sri = svgWrappers.length - 1; sri >= 0; sri--) {
+      (function(el) {
+        try {
+          var styleEl = el.querySelector('style');
+          if (!styleEl) {
+            // 无 <style> → 是重复渲染的空壳，直接删掉
+            if (el.parentNode) el.parentNode.removeChild(el);
+            return;
+          }
+          // 已有 <style> → 重启动画
+          var animData = JSON.parse(el.getAttribute('data-svg-animation').replace(/&quot;/g, '"'));
+          if (animData.style) {
+            styleEl.textContent = '';
+            void el.offsetHeight;
+            styleEl.textContent = animData.style.replace(/<\/?style>/g, '');
+          }
+        } catch(e) {}
+      })(svgWrappers[sri]);
+    }
+    if (typeof svgAnimationQueue !== 'undefined') svgAnimationQueue = [];
+
     // 折叠所有轮次的思考块（它们已在流式期间随 updateThinkingBlock 按 round 创建好）
     var allThinkBlocks = agentMsgDiv.querySelectorAll('.thinking-block');
     for(var tbi=0;tbi<allThinkBlocks.length;tbi++){allThinkBlocks[tbi].classList.add('collapsed');}
@@ -14969,6 +15064,50 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
           try{mermaid.run({querySelector:'#'+diagramRenderQueue[di].diagramId});}catch(e){}
         }
         diagramRenderQueue=[];
+      }
+      if (typeof visNetworkRenderQueue !== 'undefined' && typeof vis !== 'undefined') {
+        for (var vi = 0; vi < visNetworkRenderQueue.length; vi++) {
+          (function (task) {
+            var dom = document.getElementById(task.netId);
+            if (!dom) return;
+            var nodesArr = new vis.DataSet(
+              task.nodes.map(function (n, i) {
+                return { id: n.id || String(i + 1), label: n.label || n.id || String(i + 1), color: n.color || null };
+              })
+            );
+            var edgesArr = new vis.DataSet(
+              task.edges.map(function (e) {
+                return { from: e.from, to: e.to, label: e.label || '', arrows: e.arrows || 'to' };
+              })
+            );
+            var data = { nodes: nodesArr, edges: edgesArr };
+            var options = {
+              nodes: { shape: 'dot', size: 16, font: { size: 14, color: '#1a1a2e' } },
+              edges: { font: { size: 11, color: '#6c757d', align: 'middle' }, smooth: { type: 'continuous' } },
+              physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -40, centralGravity: 0.005, springLength: 120, springConstant: 0.08 } },
+              interaction: { hover: true, tooltipDelay: 100 }
+            };
+            new vis.Network(dom, data, options);
+          })(visNetworkRenderQueue[vi]);
+        }
+        visNetworkRenderQueue = [];
+      }
+      if (typeof svgAnimationQueue !== 'undefined' && svgAnimationQueue.length > 0) {
+        for (var sai = 0; sai < svgAnimationQueue.length; sai++) {
+          (function(task){
+            var el = document.getElementById(task.wrapperId);
+            if (!el) return;
+            var s = el.querySelector('style');
+            if (!s) {
+              s = document.createElement('style');
+              el.insertBefore(s, el.firstChild);
+            }
+            s.textContent = '';
+            void el.offsetHeight;
+            s.textContent = task.style.replace(/<\/?style>/g, '');
+          })(svgAnimationQueue[sai]);
+        }
+        svgAnimationQueue = [];
       }
     },500);
 
@@ -16270,6 +16409,10 @@ function handleMessageDelete(msgDiv) {
   if (!window.confirm('确定删除这条消息？')) return;
   if (msgDiv.parentNode) msgDiv.parentNode.removeChild(msgDiv);
   _saveBranchMessages(currentConversationId).catch(function(){});
+  // ★ 清除持久化消息缓存，强制下次发送从 IndexedDB 重建上下文，防止脏上下文
+  if (window._persistentMessages && window._persistentMessages[currentConversationId]) {
+    delete window._persistentMessages[currentConversationId];
+  }
   showToast('消息已删除','success');
 }
 
@@ -16289,7 +16432,7 @@ function updateThinkingBlock(msgDiv, thinkingText) {
     }
     // 创建本轮思考块
     thinkingBlock = document.createElement('div');
-    thinkingBlock.className = 'thinking-block';
+    thinkingBlock.className = 'thinking-block collapsed';
     thinkingBlock.id = blockId;
     var contentDiv = wrapper.querySelector('.message-content');
     if (contentDiv && contentDiv.parentNode) {
@@ -16299,15 +16442,14 @@ function updateThinkingBlock(msgDiv, thinkingText) {
     var toggleEl = document.createElement('div');
     toggleEl.className = 'thinking-toggle';
     toggleEl.id = 'thinking-toggle-' + msgDiv._msgId + '-r' + round;
-    toggleEl.textContent = '[v] 思考过程';
+    toggleEl.textContent = '[>] 思考过程';
     toggleEl.setAttribute('data-target', blockId);
     contentDiv.parentNode.insertBefore(toggleEl, thinkingBlock);
   }
-  thinkingBlock.classList.remove('collapsed');
   thinkingBlock.textContent = thinkingText;
   // 同步toggle文字 — 在wrapper内查找
   var toggle = wrapper.querySelector('[id="thinking-toggle-' + msgDiv._msgId + '-r' + round + '"]');
-  if (toggle) toggle.textContent = '[v] 思考过程';
+  if (toggle) toggle.textContent = '[>] 思考过程';
 }
 
 function toggleThinking() {
@@ -18377,6 +18519,97 @@ async function deleteConversation(convId){
 }
 
 // 切换会话（多对话并行：不中断进行中的请求）
+function _restoreRenderArtifacts(msgList){
+  setTimeout(function(){
+    // ── chart ──
+    var echartsContainers = msgList.querySelectorAll('.echarts-container[data-chart-config]');
+    for (var ei = 0; ei < echartsContainers.length; ei++) {
+      (function (el) {
+        try {
+          var cfg = JSON.parse(el.getAttribute('data-chart-config').replace(/&quot;/g, '"'));
+          var qid = el.id;
+          var el2 = document.getElementById(qid);
+          if (el2 && el2._echarts_instance_) { try { echarts.dispose(el2); } catch (e) {} }
+          chartRenderQueue.push({ chartId: qid, type: cfg.type, title: cfg.title, data: cfg.data, options: cfg.options || {} });
+          scheduleChartRender(qid, 10);
+        } catch (e) {}
+      })(echartsContainers[ei]);
+    }
+    // ── mermaid ──
+    var mermaidEls = msgList.querySelectorAll('.mermaid');
+    if (mermaidEls.length > 0) {
+      loadLibrary('mermaid').then(function(){
+        try { mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' }); } catch (e) {}
+        for (var mi = 0; mi < mermaidEls.length; mi++) {
+          (function(el){
+            try {
+              // 从相邻隐藏 <pre> 读取源码
+              var srcEl = el.nextElementSibling;
+              if (srcEl && srcEl.classList.contains('mermaid-src')) {
+                el.removeAttribute('data-processed');
+                el.textContent = srcEl.textContent;
+                void el.offsetHeight;
+                mermaid.run({ nodes: [el] });
+              }
+            } catch (e) {}
+          })(mermaidEls[mi]);
+        }
+      }).catch(function(){});
+    }
+    // ── vis-network ──
+    var visContainers2 = msgList.querySelectorAll('[data-vis-nodes]');
+    if (visContainers2.length > 0) {
+      loadLibrary('vis-network').then(function(){
+        for (var vi = 0; vi < visContainers2.length; vi++) {
+          (function (el) {
+            try {
+              var nodes = JSON.parse(el.getAttribute('data-vis-nodes').replace(/&quot;/g, '"'));
+              var edges = JSON.parse(el.getAttribute('data-vis-edges').replace(/&quot;/g, '"'));
+              var nodesArr = new vis.DataSet(
+                nodes.map(function (n, i) {
+                  return { id: n.id || String(i + 1), label: n.label || n.id || String(i + 1), color: n.color || null };
+                })
+              );
+              var edgesArr = new vis.DataSet(
+                edges.map(function (e) {
+                  return { from: e.from, to: e.to, label: e.label || '', arrows: e.arrows || 'to' };
+                })
+              );
+              var options = {
+                nodes: { shape: 'dot', size: 16, font: { size: 14, color: '#1a1a2e' } },
+                edges: { font: { size: 11, color: '#6c757d', align: 'middle' }, smooth: { type: 'continuous' } },
+                physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -40, centralGravity: 0.005, springLength: 120, springConstant: 0.08 } },
+                interaction: { hover: true, tooltipDelay: 100 }
+              };
+              new vis.Network(el, { nodes: nodesArr, edges: edgesArr }, options);
+            } catch (e) {}
+          })(visContainers2[vi]);
+        }
+      }).catch(function(){});
+    }
+    // ── SVG ──
+    var svgContainers = msgList.querySelectorAll('.svg-container[data-svg-animation]');
+    for (var si = 0; si < svgContainers.length; si++) {
+      (function (el) {
+        try {
+          // 先从 data-svg-animation 属性重建 style 节点
+          var animData = JSON.parse(el.getAttribute('data-svg-animation').replace(/&quot;/g, '"'));
+          if (animData.style) {
+            var s = el.querySelector('style');
+            if (!s) {
+              s = document.createElement('style');
+              el.insertBefore(s, el.firstChild);
+            }
+            s.textContent = '';
+            void el.offsetHeight;
+            s.textContent = animData.style.replace(/<\/?style>/g, '');
+          }
+        } catch (e) {}
+      })(svgContainers[si]);
+    }
+  }, 800);
+}
+
 async function switchConversation(convId,forceSwitch){
   if(!convId)return;
   if(currentConversationId===convId && !forceSwitch){closeSidebar();return;}
@@ -18491,6 +18724,7 @@ async function switchConversation(convId,forceSwitch){
           msgList.appendChild(targetState._container.firstChild);
         }
       }
+      _restoreRenderArtifacts(msgList);
       _renderBubbleBranchNavs();
       setStatus('idle');
     }catch(e){debugLogger.warn('切换会话失败: '+e.message);}
