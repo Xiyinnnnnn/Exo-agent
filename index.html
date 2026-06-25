@@ -4249,6 +4249,16 @@ function formatSize(bytes){
   return (bytes/(1024*1024)).toFixed(1)+' MB';
 }
 
+function formatRelativeTime(ts){
+  if(!ts)return'';
+  var diff=Date.now()-ts;
+  if(diff<60000)return'刚刚';
+  if(diff<3600000)return Math.floor(diff/60000)+'分钟前';
+  if(diff<86400000)return Math.floor(diff/3600000)+'小时前';
+  if(diff<7*86400000)return Math.floor(diff/86400000)+'天前';
+  return Math.floor(diff/(7*86400000))+'周前';
+}
+
 function showToast(message,type,duration){
   type=type||'info';
   duration=duration||3000;
@@ -8476,7 +8486,8 @@ async function _renderFileTree(dirPath, maxDepth, _depth){
     var entryPath = prefix + item;
     var meta = await getFileMeta(entryPath.replace(/\/$/,''));
     var sizeStr = (meta && !meta.isDir) ? ' ('+formatSize(meta.size)+')' : '';
-    lines.push(branch + item.replace(/\/$/,'') + sizeStr);
+    var timeStr = (meta && !meta.isDir && meta.updated_at) ? ', '+formatRelativeTime(meta.updated_at) : '';
+    lines.push(branch + item.replace(/\/$/,'') + sizeStr + timeStr);
     if(item.endsWith('/') && (maxDepth===0||_depth+1<maxDepth)){
       var subtree = await _renderFileTree(prefix+item, maxDepth, _depth+1);
       if(subtree){
