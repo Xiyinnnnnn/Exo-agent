@@ -7331,6 +7331,11 @@ async function handleProxyLLMCall(msg){
   var max_tokens=payload.max_tokens||settings.max_tokens||2000;
   if(!settings.deepseek_api_key)throw new Error('API Key未配置');
   var limit=settings.daily_limit||100000;
+  // 主对话活跃时，反思API暂缓，避免抢占用户交互的连接池
+  var _activeCs=_ensureConvState(currentConversationId);
+  if(_activeCs&&_activeCs.isProcessing){
+    await new Promise(function(r){setTimeout(r,800+Math.random()*1500|0);});
+  }
   var evoAvailable=budgetManager.getAvailableForEvo();
   if(budgetUsed>=limit&&evoAvailable<=0)throw new Error('DAILY_LIMIT_REACHED');
   var baseUrl=settings.base_url||'https://api.deepseek.com';
@@ -19244,7 +19249,7 @@ function renderConversationList(){
     if(_sb&&_sb.firstChild)_sb.insertBefore(_si,_sb.firstChild.nextSibling);
   }
   var entries=conversationDB.entries||[];
-  entries.sort(function(a,b){return b.createdAt-a.createdAt;});
+  entries.sort(function(a,b){return(b.createdAt||0)-(a.createdAt||0);});
   if(entries.length===0){
     list.innerHTML='<div style="text-align:center;color:var(--color-text-secondary);padding:20px;font-size:13px">暂无对话</div>';
     return;
