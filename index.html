@@ -3117,11 +3117,13 @@ var EXTERNAL_LIBRARIES={
   'ajv':{urls:['https://cdn.jsdelivr.net/npm/ajv@8/dist/ajv.min.js','https://unpkg.com/ajv@8/dist/ajv.min.js','https://cdn.jsdelivr.net/npm/ajv@8.17.1/dist/ajv.min.js'],global:'ajv7',required:false,loadOnStart:false},
   'yaml':{urls:['https://cdn.jsdelivr.net/npm/yaml@2/dist/index.min.js','https://unpkg.com/yaml@2/dist/index.min.js','https://cdn.jsdelivr.net/npm/yaml@2.7.0/dist/index.min.js'],global:'YAML',required:false,loadOnStart:false},
   'mathjs':{urls:['https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js','https://cdn.jsdelivr.net/npm/mathjs@12.4.3/dist/math.min.js','https://unpkg.com/mathjs@12.4.3/dist/math.min.js'],global:'math',altGlobals:['mathjs'],required:false,loadOnStart:false},
-  'pdfjs':{urls:['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js','https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js','https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js'],global:'pdfjsLib',required:false,loadOnStart:false},
+  'pdfjs':{urls:['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js','https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js','https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js'],global:'pdfjsLib',required:false,loadOnStart:false,
+    workerUrls:['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js','https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js','https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js']},
   'mammoth':{urls:['https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js','https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js','https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js'],global:'mammoth',required:false,loadOnStart:false},
   'pptxjs':{urls:['https://cdn.jsdelivr.net/npm/pptxjs@3.0.0/dist/pptxjs.min.js','https://unpkg.com/pptxjs@3.0.0/dist/pptxjs.min.js','https://cdn.jsdelivr.net/npm/pptxjs@3.0.0/dist/pptxjs.min.js'],global:'pptxJs',required:false,loadOnStart:false},
   'jszip':{urls:['https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js','https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js','https://unpkg.com/jszip@3.10.1/dist/jszip.min.js'],global:'JSZip',required:false,loadOnStart:false},
-  'tesseract':{urls:['https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js','https://unpkg.com/tesseract.js@5/dist/tesseract.min.js','https://cdn.jsdelivr.net/npm/tesseract.js@5.1.5/dist/tesseract.min.js'],global:'Tesseract',required:false,loadOnStart:false},
+  'tesseract':{urls:['https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js','https://unpkg.com/tesseract.js@5/dist/tesseract.min.js','https://cdn.jsdelivr.net/npm/tesseract.js@5.1.5/dist/tesseract.min.js'],global:'Tesseract',required:false,loadOnStart:false,
+    workerUrls:['https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js','https://unpkg.com/tesseract.js@5/dist/worker.min.js']},
   'sqljs':{urls:['https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.min.js','https://unpkg.com/sql.js@1.10.3/dist/sql-wasm.min.js','https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.min.js'],global:'initSqlJs',required:false,loadOnStart:false},
   'mespeak':{urls:['https://www.masswerk.at/mespeak/mespeak.full.js','https://cdn.jsdelivr.net/gh/masswerk/mespeak@2.0.5/lib/mespeak.full.min.js','https://unpkg.com/mespeak@2.0.5/lib/mespeak.full.min.js'],global:'meSpeak',required:false,loadOnStart:false},
   'html2pdf':{urls:['https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js','https://unpkg.com/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js','https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js'],global:'html2pdf',required:false,loadOnStart:false}
@@ -3147,7 +3149,7 @@ for(var ti=0;ti<TEXT_EXTS.length;ti++){
 // PDF — 结构化 Markdown，全量解析，超大时分离存储
 FILE_PARSERS['.pdf']=async function(arrayBuf,filePath){
   await loadLibrary('pdfjs');
-  pdfjsLib.GlobalWorkerOptions.workerSrc='';
+  await _setupPdfWorker();
   var pdf=await pdfjsLib.getDocument({data:arrayBuf}).promise;
   var FULL_STORE_THRESHOLD=500000;
   var allPages=[];
@@ -3515,7 +3517,8 @@ for(var ii=0;ii<IMG_EXTS.length;ii++){
       await loadLibrary('tesseract');
       var blob=new Blob([arrayBuf]);
       var url=URL.createObjectURL(blob);
-      var result=await Tesseract.recognize(url,'eng+chi_sim',{logger:function(){}});
+      var tesseractWorkerPath=await _setupTesseractWorker();
+      var result=await Tesseract.recognize(url,'eng+chi_sim',{logger:function(){},workerPath:tesseractWorkerPath});
       URL.revokeObjectURL(url);
       if(result&&result.data){
         ocrText=(result.data.text||'').trim();
@@ -5948,6 +5951,63 @@ function _getCache(){
   return _cacheReady;
 }
 
+// ===== 辅助函数：为 PDF.js 准备 worker（Cache-first，完全离线可用） =====
+var _pdfWorkerBlobUrl=null;
+async function _setupPdfWorker(){
+  if(_pdfWorkerBlobUrl){pdfjsLib.GlobalWorkerOptions.workerSrc=_pdfWorkerBlobUrl;return;}
+  var lib=EXTERNAL_LIBRARIES['pdfjs'];
+  var workerUrls=lib.workerUrls||[];
+  var workerBlob=null;
+  // 第1步：Cache API 命中
+  await _getCache();
+  if(_cacheStorage){
+    for(var i=0;i<workerUrls.length;i++){
+      try{var cached=await _cacheStorage.match(workerUrls[i]);if(cached){workerBlob=await cached.blob();debugLogger.info('[Cache] pdf.worker 命中');break;}}catch(e){}
+    }
+  }
+  // 第2步：网络 fetch + 写入 Cache
+  if(!workerBlob){
+    for(var j=0;j<workerUrls.length;j++){
+      try{var resp=await fetch(workerUrls[j],{mode:'cors'});if(resp.ok){workerBlob=await resp.blob();break;}}catch(e){}
+    }
+    if(!workerBlob)throw new Error('PDF worker 所有CDN源均不可用');
+    if(_cacheStorage){
+      try{await _cacheStorage.put(workerUrls[0],new Response(workerBlob.slice(),{status:200,statusText:'OK',headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=31536000,immutable'}}));debugLogger.info('[Cache] pdf.worker 已写入');}catch(e){}
+    }
+  }
+  // 第3步：生成 blob URL → 设置 workerSrc
+  _pdfWorkerBlobUrl=URL.createObjectURL(workerBlob);
+  pdfjsLib.GlobalWorkerOptions.workerSrc=_pdfWorkerBlobUrl;
+}
+
+// ===== 辅助函数：为 Tesseract.js 准备 worker（Cache-first，完全离线可用） =====
+var _tesseractWorkerBlobUrl=null;
+async function _setupTesseractWorker(){
+  if(_tesseractWorkerBlobUrl)return _tesseractWorkerBlobUrl;
+  var lib=EXTERNAL_LIBRARIES['tesseract'];
+  var workerUrls=lib.workerUrls||[];
+  var workerBlob=null;
+  // 第1步：Cache API 命中
+  await _getCache();
+  if(_cacheStorage){
+    for(var i=0;i<workerUrls.length;i++){
+      try{var cached=await _cacheStorage.match(workerUrls[i]);if(cached){workerBlob=await cached.blob();debugLogger.info('[Cache] tesseract.worker 命中');break;}}catch(e){}
+    }
+  }
+  // 第2步：网络 fetch + 写入 Cache
+  if(!workerBlob){
+    for(var j=0;j<workerUrls.length;j++){
+      try{var resp=await fetch(workerUrls[j],{mode:'cors'});if(resp.ok){workerBlob=await resp.blob();break;}}catch(e){}
+    }
+    if(!workerBlob)throw new Error('Tesseract worker 所有CDN源均不可用');
+    if(_cacheStorage){
+      try{await _cacheStorage.put(workerUrls[0],new Response(workerBlob.slice(),{status:200,statusText:'OK',headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=31536000,immutable'}}));debugLogger.info('[Cache] tesseract.worker 已写入');}catch(e){}
+    }
+  }
+  _tesseractWorkerBlobUrl=URL.createObjectURL(workerBlob);
+  return _tesseractWorkerBlobUrl;
+}
+
 // ===== 辅助函数：从 Cache 或网络获取脚本，注入页面 =====
 async function _loadScriptWithCache(url,allGlobals,libName){
   var blobUrl=null;
@@ -7384,6 +7444,7 @@ src+='  }\n';
   src+='  self.postMessage({type:\"log\",payload:{level:\"info\",message:\"[任务Worker] OCR开始识别，语言:\"+language+\"，图片大小:\"+imgData.length+\"字符\"}});\n';
   src+='  var result=await Promise.race([\n';
   src+='    Tesseract.recognize(imgData,language,{\n';
+  src+='      workerPath:\"https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js\",\n';
   src+='      logger:function(m){\n';
   src+='        if(m.status===\"recognizing text\"&&m.progress){\n';
    src+='          self.postMessage({type:\"log\",payload:{level:\"info\",message:\"[任务Worker] OCR进度:\"+Math.round(m.progress*100)+\"%\"}});\n';
@@ -10778,7 +10839,7 @@ async function toolKnowledgeBase(args){
 async function toolPdfRead(args){
   if(!args.filename) throw new Error('请指定 filename');
   await loadLibrary('pdfjs');
-  pdfjsLib.GlobalWorkerOptions.workerSrc='';
+  await _setupPdfWorker();
   var content=await readFile('/uploads/'+args.filename);
   if(!content){content=await readFile('/downloads/'+args.filename);}
   if(!content) return ' 文件不存在: '+args.filename+'。文件需在 /uploads/ (上传) 或 /downloads/ (生成) 中。';
