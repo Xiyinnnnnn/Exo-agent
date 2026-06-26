@@ -3646,8 +3646,7 @@ var settings={
   reserve_ratio:0.5,
   environment_variables:{},
   evolution_enabled:true,
-  debug_level:'info',
-  reasoning_effort:'max',
+  debug_level:'warn',  reasoning_effort:'max',
   max_tokens:384000,
   temperature:0.6,
   deep_thinking:true,
@@ -4223,12 +4222,11 @@ var MODEL_CONFIG={name:'local-ngram-hash',type:'local',dim:384,maxTokens:500,eng
 var debugLogger={
   maxEntries:3000,
   entries:[],
-  level:LOG_LEVELS.INFO,
+  level:LOG_LEVELS.WARN,
   _renderScheduled:false,
   _lastRender:0,
 
   log:function(level,message,context){
-    if(level>this.level)return;
     var entry={ts:Date.now(),level:Object.keys(LOG_LEVELS).find(function(k){return LOG_LEVELS[k]===level;}),message:message,context:context||{}};
     this.entries.push(entry);
     if(this.entries.length>this.maxEntries)this.entries.shift();
@@ -4250,7 +4248,16 @@ var debugLogger={
   info:function(msg,ctx){this.log(LOG_LEVELS.INFO,msg,ctx);},
   debug:function(msg,ctx){this.log(LOG_LEVELS.DEBUG,msg,ctx);},
   clear:function(){this.entries=[];this.render();},
-  setLevel:function(levelName){var lv=LOG_LEVELS[levelName];if(lv!==undefined)this.level=lv;},
+  setLevel:function(levelName){
+    var lv=LOG_LEVELS[levelName];
+    if(lv!==undefined)this.level=lv;
+    var sel=document.getElementById('logLevel');
+    if(sel){
+      var self=this;
+      var v=Object.keys(LOG_LEVELS).find(function(k){return LOG_LEVELS[k]===self.level;});
+      if(v)sel.value=v.toLowerCase();
+    }
+  },
   render:function(){
     var container=document.getElementById('logEntries');
     var countEl=document.getElementById('logCount');
@@ -4258,7 +4265,13 @@ var debugLogger={
     var logLevelFilter=(document.getElementById('logLevel')||{}).value||'all';
     var recent=this.entries.slice(-100);
     if(logLevelFilter!=='all'){
-      recent=recent.filter(function(e){return e.level.toLowerCase()===logLevelFilter;});
+      var maxLevel=LOG_LEVELS[logLevelFilter.toUpperCase()];
+      if(maxLevel!==undefined){
+        recent=recent.filter(function(e){
+          var el=LOG_LEVELS[e.level];
+          return el!==undefined&&el<=maxLevel;
+        });
+      }
     }
     container.innerHTML=recent.map(function(e){
       return '<div class="log-entry log-'+e.level.toLowerCase()+'"><span class="log-ts">'+new Date(e.ts).toLocaleTimeString()+'</span><span class="log-msg">'+escapeHtml(e.message)+(e.context&&Object.keys(e.context).length?' '+escapeHtml(JSON.stringify(e.context).substring(0,80)):'')+'</span></div>';
@@ -5995,7 +6008,7 @@ function _getCache(){
     }
     try{
       _cacheStorage=await caches.open(CACHE_NAME);
-      debugLogger.info('[Cache] "'+CACHE_NAME+'" 已就绪');
+      debugLogger.info(' "'+CACHE_NAME+'" 已就绪');
     }catch(e){
       debugLogger.warn('Cache API 打开失败: '+e.message);
       _cacheStorage=null;
@@ -6015,7 +6028,7 @@ async function _setupPdfWorker(){
   await _getCache();
   if(_cacheStorage){
     for(var i=0;i<workerUrls.length;i++){
-      try{var cached=await _cacheStorage.match(workerUrls[i]);if(cached){workerBlob=await cached.blob();debugLogger.info('[Cache] pdf.worker 命中');break;}}catch(e){}
+      try{var cached=await _cacheStorage.match(workerUrls[i]);if(cached){workerBlob=await cached.blob();debugLogger.info(' pdf.worker 命中');break;}}catch(e){}
     }
   }
   // 第2步：网络 fetch + 写入 Cache
@@ -6025,7 +6038,7 @@ async function _setupPdfWorker(){
     }
     if(!workerBlob)throw new Error('PDF worker 所有CDN源均不可用');
     if(_cacheStorage){
-      try{await _cacheStorage.put(workerUrls[0],new Response(workerBlob.slice(),{status:200,statusText:'OK',headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=31536000,immutable'}}));debugLogger.info('[Cache] pdf.worker 已写入');}catch(e){}
+      try{await _cacheStorage.put(workerUrls[0],new Response(workerBlob.slice(),{status:200,statusText:'OK',headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=31536000,immutable'}}));debugLogger.info(' pdf.worker 已写入');}catch(e){}
     }
   }
   // 第3步：生成 blob URL → 设置 workerSrc
@@ -6044,7 +6057,7 @@ async function _setupTesseractWorker(){
   await _getCache();
   if(_cacheStorage){
     for(var i=0;i<workerUrls.length;i++){
-      try{var cached=await _cacheStorage.match(workerUrls[i]);if(cached){workerBlob=await cached.blob();debugLogger.info('[Cache] tesseract.worker 命中');break;}}catch(e){}
+      try{var cached=await _cacheStorage.match(workerUrls[i]);if(cached){workerBlob=await cached.blob();debugLogger.info(' tesseract.worker 命中');break;}}catch(e){}
     }
   }
   // 第2步：网络 fetch + 写入 Cache
@@ -6054,7 +6067,7 @@ async function _setupTesseractWorker(){
     }
     if(!workerBlob)throw new Error('Tesseract worker 所有CDN源均不可用');
     if(_cacheStorage){
-      try{await _cacheStorage.put(workerUrls[0],new Response(workerBlob.slice(),{status:200,statusText:'OK',headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=31536000,immutable'}}));debugLogger.info('[Cache] tesseract.worker 已写入');}catch(e){}
+      try{await _cacheStorage.put(workerUrls[0],new Response(workerBlob.slice(),{status:200,statusText:'OK',headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=31536000,immutable'}}));debugLogger.info(' tesseract.worker 已写入');}catch(e){}
     }
   }
   _tesseractWorkerBlobUrl=URL.createObjectURL(workerBlob);
@@ -6071,7 +6084,7 @@ async function _loadScriptWithCache(url,allGlobals,libName){
     if(cachedResponse){
       var blob=await cachedResponse.blob();
       blobUrl=URL.createObjectURL(blob);
-      debugLogger.info('[Cache] '+libName+' 命中本地缓存 → '+url.replace(/https?:\/\/[^/]+\//,''));
+      debugLogger.info(' '+libName+' 命中本地缓存 → '+url.replace(/https?:\/\/[^/]+\//,''));
     }else{
       // ── 第2步：从网络 fetch（带超时） ──
       var controller=new AbortController();
@@ -6089,9 +6102,9 @@ async function _loadScriptWithCache(url,allGlobals,libName){
             status:200,statusText:'OK',
             headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=31536000,immutable'}
           }));
-          debugLogger.info('[Cache] '+libName+' 已写入本地 → '+url.replace(/https?:\/\/[^/]+\//,''));
+          debugLogger.info(' '+libName+' 已写入本地 → '+url.replace(/https?:\/\/[^/]+\//,''));
         }catch(e){
-          debugLogger.warn('[Cache] '+libName+' 写入失败: '+e.message);
+          debugLogger.warn(' '+libName+' 写入失败: '+e.message);
         }
       }
       blobUrl=URL.createObjectURL(netBlob);
@@ -17681,8 +17694,8 @@ async function resetSystem(){
     try{
       await caches.delete(CACHE_NAME);
       _cacheStorage=null;_cacheReady=null;
-      debugLogger.info('[Cache] CDN库缓存已清除');
-    }catch(e){debugLogger.warn('[Cache] 清除缓存失败: '+e.message);}
+      debugLogger.info(' CDN库缓存已清除');
+    }catch(e){debugLogger.warn(' 清除缓存失败: '+e.message);}
     var d=await getDB();
     var storeNames=Array.from(d.objectStoreNames);
     for(var s=0;s<storeNames.length;s++){
@@ -17740,8 +17753,7 @@ async function resetSystem(){
       reserve_ratio:0.5,
       environment_variables:{},
       evolution_enabled:true,
-      debug_level:'info',
-      reasoning_effort:'max',
+      debug_level:'warn',      reasoning_effort:'max',
       max_tokens:384000,
       deep_thinking:true,
       break_armor_enabled:false,
@@ -18741,6 +18753,15 @@ function initEventBindings(){
   }
   var btnClearLogs=document.getElementById('btnClearLogs');
   if(btnClearLogs)btnClearLogs.addEventListener('click',function(){debugLogger.clear();});
+  var logLevelSelect=document.getElementById('logLevel');
+  if(logLevelSelect){
+    logLevelSelect.addEventListener('change',function(){
+      if(this.value!=='all'){
+        debugLogger.setLevel(this.value.toUpperCase());
+      }
+      debugLogger.render();
+    });
+  }
   // 文件管理器按钮
   var btnRefreshFiles=document.getElementById('btnRefreshFiles');
   if(btnRefreshFiles)btnRefreshFiles.addEventListener('click',function(){renderFileManager();renderUploadedFilesList();updateStorageInfo();});
@@ -19201,8 +19222,7 @@ window.addEventListener('beforeunload',function(){
 
 async function initApp(){
   debugLogger.info('Exo 初始化');
-  debugLogger.level=LOG_LEVELS.DEBUG;
-
+  
   // 0. 优先绑定UI事件 — 不依赖DB/设置/Worker，即使后续初始化失败UI也有响应
   initEventBindings();
   initSidebarEvents();
