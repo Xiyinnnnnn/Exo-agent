@@ -10840,9 +10840,12 @@ async function toolPdfRead(args){
   if(!args.filename) throw new Error('请指定 filename');
   await loadLibrary('pdfjs');
   await _setupPdfWorker();
-  var content=await readFile('/uploads/'+args.filename);
-  if(!content){content=await readFile('/downloads/'+args.filename);}
-  if(!content) return ' 文件不存在: '+args.filename+'。文件需在 /uploads/ (上传) 或 /downloads/ (生成) 中。';
+  var filename=args.filename;
+  // 智能路径解析：直接查找 → /uploads/前缀 → /downloads/前缀 → 报错
+  var content=await readFile(filename);
+  if(!content){content=await readFile('/uploads/'+filename);}
+  if(!content){content=await readFile('/downloads/'+filename);}
+  if(!content) return ' 文件不存在: '+filename+'。已尝试路径: '+filename+'、/uploads/'+filename+'、/downloads/'+filename+'。';
   var arrayBuf;
   if(content instanceof Blob){arrayBuf=await content.arrayBuffer();}
   else if(content.indexOf('data:')===0){var b64=content.split(',')[1];var binary=atob(b64);arrayBuf=new Uint8Array(binary.length);for(var i=0;i<binary.length;i++)arrayBuf[i]=binary.charCodeAt(i);}
