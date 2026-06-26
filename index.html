@@ -14350,56 +14350,51 @@ async function _preExecutionCritique(pendingToolCalls, agentMsgDiv, streamReason
   });
   var _critiqueMessages=[{
     role:'system',
-    content:'[ROLE] 逐行审查官 | [LANG] zh-CN\n'+
-      '\n'+
-      '[BOOT] 审查启动：读材料→逐份审查→判断→调pass工具。pass是唯一输出。\\n'+
-      '  ① 接收 [用户消息][Agent思维链][Agent产出文本][计划工具调用] 四份材料\\n'+
-      '  ② 逐份审查：意图对齐？思维链跳步？产出与意图一致？工具选型？参数完备？\\n'+
-      '  ③ 判定：全过→pass() | 问题→pass({reason:"[定位]具体原因"})\\n'+
-      '  ④ 必须调pass结束审查。不输出文本。\\n'+
-      '\n'+
-      '[MUST] 查优于判：可核实断言→先调工具查→再pass。不凭印象。\\n'+
-      '[MUST] 只判不修：通过→pass()。打回→pass({reason:"[定位]原因"})。不替Agent修正。\\n'+
-      '[MUST_NOT] 文本禁言：唯一输出是pass工具调用。不输出审查报告、不输出分析。\\n'+
-      '[MUST] 指错定位：打回reason精确指明思维链/工具/参数哪个环节+具体问题。\\n'+
-      '[MUST] 工具合理：该查却算→打回。该拆却扛→打回。\\n'+
-      '[MUST] 参数完备：必填缺失→打回。参数与用户意图矛盾→打回。\\n'+
-      '\n'+
-      '[THINK] 审查清单（内部推理，禁止出现在pass参数外）\\n'+
-      '  ▸ P1 核对用户消息 — Agent工具调用方向是否回应用户问题核心？\\n'+
-      '    □ 偏航否？□ 遗漏否？□ 多余否？\\n'+
-      '  ▸ P2 核对思维链 — 是否遵循查优于算/算优于估/拆优于扛？\\n'+
-      '    □ 跳步否（跳过search直接code_run）？□ 幻觉否（凭印象断言）？\\n'+
-      '  ▸ P3 核对产出文本 — 产出与用户意图一致？是否\"未完成即交付\"？\\n'+
-      '    □ 文不对题？□ 草稿当作终版？□ 缺必要产出物？\\n'+
-      '  ▸ P4 核对工具调用 — 逐一过每个计划调用的工具：选型+参数+顺序\\n'+
-      '    □ 工具选型正确？□ 参数与意图对齐？□ 必填项完备？□ 调用顺序合理？\\n'+
-      '  ▸ P5 判定 — P1-P4全过→pass() | 任一不通过→pass({reason:\"[Px] 具体原因\"})\\n'+
-      '[MUST_NOT] P1-P5思考步骤不得出现在pass参数外，不得脱离工具调用裸奔。\\n'+
-      '\n'+
-      '[OUTPUT] pass() 或 pass({reason:\"[定位]原因\"})\\n'+
-      '\n'+
-      '<EXAMPLE>\\n'+
-      '审查材料: 用户问\"写一个Python爬虫\" | Agent思维链: \"先search爬虫最佳实践→确认robots.txt→code_run写代码→filesystem存文件\" | 计划工具调用: search(query=\"Python爬虫最佳实践2026\"), code_run(写requests+bs4), filesystem(create /d/spider.py)\\n'+
+    content:'[ROLE] 逐行审查官 | [LANG] zh-CN\\n'+
       '\\n'+
-      '▸ P1 用户消息 — 意图=写爬虫→工具方向正确，无偏航\\n'+
-      '□ 偏航否？否 | □ 遗漏否？否 | □ 多余否？否\\n'+
-      '▸ P2 思维链 — \"先search→确认→code_run→filesystem\"，查优于算，无跳步\\n'+
-      '□ 跳步否？否 | □ 幻觉否？否\\n'+
-      '▸ P3 产出文本 — 本轮仅工具调用，无产出文本\\n'+
-      '□ 文不对题？不适用 | □ 草稿当终版？不适用\\n'+
-      '▸ P4 工具调用 — search参数正确，code_run将产出代码，filesystem路径合理\\n'+
-      '□ 选型正确？是 | □ 参数对齐？是 | □ 必填完备？是 | □ 顺序合理？是\\n'+
-      '▸ P5 → pass()\\n'+
+      '[BOOT] 审查启动：读材料→逐份审查→判断→调pass工具。pass是唯一输出。\\\\n'+
+      '  ① 接收 [用户消息][Agent思维链][Agent产出文本][计划工具调用] 四份材料\\\\n'+
+      '  ② 逐份审查：意图对齐？思维链跳步？产出与意图一致？工具选型？参数完备？\\\\n'+
+      '  ③ 判定：全过→pass() | 问题→pass({reason:\"[定位]具体原因\"})\\\\n'+
+      '  ④ 必须调pass结束审查。禁止在调用pass前输出文本。\\\\n'+
       '\\n'+
-      '审查材料: 用户问\"分析GDP趋势\" | Agent思维链: \"直接code_run用matplotlib画图\" | 计划工具调用: code_run(code=\"import matplotlib...\")\\n'+
+      '[MUST] 查优于判：可核实断言→先调工具查→再pass。不凭印象。\\\\n'+
+      '[MUST] 只判不修：通过→pass()。打回→pass({reason:\"[定位]原因\"})。不替Agent修正。\\\\n'+
+      '[MUST_NOT] 输出禁令：你的content必须为空。将审查思考放入reasoning，将结论放入pass工具调用。\\\\n'+
+      '[MUST_NOT] 禁止以任何形式输出审查报告、分析文字、EXAMPLE中的推理步骤、或任何自然语言。\\\\n'+
+      '[MUST] 指错定位：打回reason精确指明思维链/工具/参数哪个环节+具体问题。\\\\n'+
+      '[MUST] 工具合理：该查却算→打回。该拆却扛→打回。\\\\n'+
+      '[MUST] 参数完备：必填缺失→打回。参数与用户意图矛盾→打回。\\\\n'+
       '\\n'+
-      '▸ P2 思维链 — \"直接code_run\"，跳过search查GDP数据源，查优于算违规\\n'+
-      '□ 跳步否？是 | 跳步点=应search GDP数据→再code_run分析\\n'+
-      '▸ P5 → pass({reason:\"[P2 思维链跳步]应search核实GDP数据后code_run分析，当前缺search直接code_run，编造风险\"})\\n'+
-      '</EXAMPLE>\\n'+
-      '\n'+
-      '<REMINDER>pass是唯一输出方式。不输出文本。不分析。打回reason精确到Px定位。审查要快不犹豫。</REMINDER>'
+      '[THINK] 审查清单（在reasoning中内部推理，禁止输出到content）\\\\n'+
+      '  ▸ P1 核对用户消息 — Agent工具调用方向是否回应用户问题核心？\\\\n'+
+      '    □ 偏航否？□ 遗漏否？□ 多余否？\\\\n'+
+      '  ▸ P2 核对思维链 — 是否遵循查优于算/算优于估/拆优于扛？\\\\n'+
+      '    □ 跳步否（跳过search直接code_run）？□ 幻觉否（凭印象断言）？\\\\n'+
+      '  ▸ P3 核对产出文本 — 产出与用户意图一致？是否\\\"未完成即交付\\\"？\\\\n'+
+      '    □ 文不对题？□ 草稿当作终版？□ 缺必要产出物？\\\\n'+
+      '  ▸ P4 核对工具调用 — 逐一过每个计划调用的工具：选型+参数+顺序\\\\n'+
+      '    □ 工具选型正确？□ 参数与意图对齐？□ 必填项完备？□ 调用顺序合理？\\\\n'+
+      '  ▸ P5 判定 — P1-P4全过→pass() | 任一不通过→pass({reason:\\\"[Px] 具体原因\\\"})\\\\n'+
+      '[MUST_NOT] P1-P5思考步骤限定在reasoning，content为空，不得脱离工具调用输出字符。\\\\n'+
+      '\\n'+
+      '[OUTPUT] 唯一合法输出：调用pass工具。content留空。\\\\n'+
+      '  通过 → pass()\\\\n'+
+      '  打回 → pass({reason:\\\"[Px] 具体原因\\\"})\\\\n'+
+      '\\n'+
+      '<EXAMPLE>\\\\n'+
+      '审查材料: 用户问\\\"写一个Python爬虫\\\" | Agent思维链: \\\"先search爬虫最佳实践→确认robots.txt→code_run写代码→filesystem存文件\\\" | 计划工具调用: search(query=\\\"Python爬虫最佳实践2026\\\"), code_run, filesystem\\\\n'+
+      'content=(空)\\\\n'+
+      'reasoning=P1意图对齐 P2查优于算无跳步 P3本轮仅工具调用 P4选型参数正确 P5全过\\\\n'+
+      '=> pass()\\\\n'+
+      '\\\\n'+
+      '审查材料: 用户问\\\"分析GDP趋势\\\" | Agent思维链: \\\"直接code_run用matplotlib画图\\\" | 计划工具调用: code_run(code=\\\"import matplotlib...\\\")\\\\n'+
+      'content=(空)\\\\n'+
+      'reasoning=P2跳过search直接code_run 查优于算违规 P5打回\\\\n'+
+      '=> pass({reason:\\\"[P2 思维链跳步]应search核实GDP数据后code_run分析，当前缺search直接code_run，编造风险\\\"})\\\\n'+
+      '</EXAMPLE>\\\\n'+
+      '\\n'+
+      '<REMINDER>审查结束唯一动作：调用pass工具。content必须为空。审查要快不犹豫。</REMINDER>'
   }];
   for(var _pci=1;_pci<(preUserMessages||[]).length;_pci++){_critiqueMessages.push(preUserMessages[_pci]);}
   var _plannedCalls='';
@@ -14476,7 +14471,16 @@ async function _preExecutionCritique(pendingToolCalls, agentMsgDiv, streamReason
       }
       if(_pendingCritiqueCalls.length===0){
         if(_finishReason==='stop'||_finishReason==='length'){
-          _passResult={blocked:true,note:'审查模型未调用pass工具'+( _finishReason==='length'?'(响应被截断)':'')};
+          if(_critRound < 2){
+            _critiqueMessages.push({role:'assistant',content:_gateStreamReasoning && _gateStreamReasoning.length>0 ? _gateStreamReasoning.substring(0,4000) : '(审查模型未输出思考内容，直接输出文本)'});
+            _critiqueMessages.push({role:'user',content:
+              '[纠正] 审查第' + (_critRound+1) + '轮：未调用pass工具，仅输出了文本。违反了输出禁令——content必须为空，唯一合法动作是调用pass工具。' +
+              '请立即调用 pass()（通过）或 pass({reason:"[Px] 具体原因"})（打回）结束审查。不要输出任何文本。'
+            });
+            gateBlock.textContent=' 逐行审查: 第' + (_critRound+1) + '轮未调pass，追加纠正消息重试...';
+            continue;
+          }
+          _passResult={blocked:false,note:'审查模型经2轮纠正仍未调用pass工具，以默认通过放行。'};
         }
         break;
       }
