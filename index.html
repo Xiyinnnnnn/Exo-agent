@@ -1225,14 +1225,15 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'  ▸ P4 起草并自检 — 逐块产出。每块过 □：\n'
 +'    □ 缺概念需补？□ 有漏洞或绝对化？□ 分清了必须做/建议做？□ 可操作？\n'
 +'    [MUST] 发现问题→当场修正→标注修正\n'
-+'    [MUST] 代码/数据→filesystem create→code_run→read确认\n'
++'    [MUST] 新建→filesystem create→code_run→read确认 | 改现有→先filesystem copy备份(.bak)→再改→code_run→exitCode≠0→copy备份覆盖回滚→read确认\n'
 +'  ▸ P5 润色 — 通读+修冗余+验递进+确无矛盾\n'
 +'[MUST] 交付格式（写入<answer>内，用户可见）：\n'
 +'  ▸ P6 交付 — 一句核心原则开头→清单式正文→常见误区收尾\n'
 +'    [MUST] 交付前过 [DELIVER] 核对\n'
 +'[MUST] 不得跳过任一阶段。P4自检未过→不回退。缺信息→回P2搜索。\n'
 +'[MUST_NOT] <answer>内容不得含思考步骤、不得为草稿。必须是可直接使用的终版。\n'
-+'[MUST_NOT] 严禁在<think>标签外输出▸P1-▸P5格式的思考文本。\n\n'
++'[MUST_NOT] 严禁在<think>标签外输出▸P1-▸P5格式的思考文本。\n'
++'[MUST_NOT] 无备份直接覆写/行编辑已有文件。\n\n'
 +'[DELIVER] 交付前逐项核对(缺一项不交付，回[THINK]继续)：\n'
 +'  □ 记忆已查 — longterm_memory query 已执行\n'
 +'  □ 知识已查 — knowledge_base query 已执行\n'
@@ -2182,8 +2183,10 @@ chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / 
 
 ### 【铁律】行操作排序
 同一文件连续多次 replace_lines / delete_lines / insert 必须按行号从大到小排序执行！每次操作后行号全局偏移，从底向上才能杜绝错位和重复。
+[MUST] 改前备份 → 修改已有文件先 filesystem copy 备份(.bak) → 改后 code_run 失败 → copy 备份覆盖回滚。
 
 ### 路径说明
+
 - /uploads/ — 用户上传文件(code_run中只读)
 - /downloads/ — 生成产物(chart/PDF/Word等,code_run中可读写)
 - /sandbox/ — 代码执行工作区(code_run中可读写)
@@ -6383,6 +6386,7 @@ function getMarkdownRenderer(){
 }
 
 function renderMarkdown(text){
+  text=text.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/<\/?answer>/gi,'');
   var md=getMarkdownRenderer();
   var html=md.render(text);
   if(window.katex){
