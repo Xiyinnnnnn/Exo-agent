@@ -1956,8 +1956,8 @@ var TOOL_REGISTRY={
     parameters:{type:'object',properties:{headers:{type:'array',items:{type:'string'}},rows:{type:'array',items:{type:'array',items:{type:'string'}}},download_format:{type:'string',enum:['csv','xlsx',null]}},required:['headers','rows']}},
   'word_generator':{name:'word_generator',description:'生成Word(.docx)。content用Markdown。',executor:'main_thread',
     parameters:{type:'object',properties:{title:{type:'string'},content:{type:'string',description:'Markdown'},filename:{type:'string',description:'不含扩展名'}},required:['title','content']}},
-  'fuzzy_search':{name:'fuzzy_search',description:'文件读取第一步：模糊搜索定位。有file搜文件内容(Fuse.js+行号)，仅path搜该路径下文件名。用filesystem read按行号精读。',executor:'task_worker',
-    parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词。有file搜内容，仅path搜文件名'},file:{type:'string',description:'搜文件内容(传此搜内容+行号)'},path:{type:'string',default:'/',description:'搜文件名(仅无file时生效)'},limit:{type:'number',default:10,description:'返回条数默认10'}},required:['query']}},
+  'fuzzy_search':{name:'fuzzy_search',description:'模糊搜索定位。mode:filename(搜文件名)/content(搜文件内部内容,Fuse.js+行号)。用filesystem read按行号精读。',executor:'task_worker',
+    parameters:{type:'object',properties:{mode:{type:'string',enum:['filename','content'],description:'必选。filename=搜文件名 | content=搜文件内部内容'},query:{type:'string',description:'搜索关键词'},file:{type:'string',description:'mode=content时必传。要搜索的文件完整路径'},path:{type:'string',default:'/',description:'mode=filename时限定目录前缀'},limit:{type:'number',default:10,description:'返回条数默认10'}},required:['query','mode']}},
   'mcts_plan':{name:'mcts_plan',description:'MCTS多步规划。mode:fast(150sims)/standard(600sims,thinking)。',executor:'main_thread',
     parameters:{type:'object',properties:{problem:{type:'string'},goal:{type:'string'},constraints:{type:'string'},mode:{type:'string',enum:['fast','standard'],default:'fast'}},required:['problem','goal']}},
   'read_image':{name:'read_image',description:'读图。将已上传图片发送给模型进行视觉理解。',executor:'main_thread',
@@ -2442,13 +2442,31 @@ SVG会被安全检查，禁止: on*事件、<script>、javascript:、<foreignObj
 - 输出路径: /downloads/{filename}.docx (或 .doc)`,
 
   'fuzzy_search':`## fuzzy_search — 模糊搜索
-两种模式：①传file搜文件内容(Fuse.js,返回行号) ②仅传path搜该路径下文件名。
+
+★ mode 区分两种模式：
+
+| mode | 用途 | 必传字段 | 返回 |
+|------|------|----------|------|
+| filename | 搜文件名 | query + path | 匹配的文件路径列表 |
+| content | 搜文件内部内容 | query + file | 行号+匹配片段+相关性评分 |
 
 ### 参数
-- **query**: 搜索关键词。有file→搜内容,仅path→搜文件名(大小写不敏感)
-- **file**: 搜文件内容(传此进入内容搜索模式,返回行号)
-- **path**: 搜文件名(仅在无file时生效,前缀匹配), 默认 /
-- **limit**: 返回条数, 默认10
+- **mode** (必选): "filename" 或 "content"
+- **query** (必填): 搜索关键词
+- **file**: mode=content 时必传。文件完整路径
+- **path**: mode=filename 时的目录前缀，默认 /
+- **limit**: 返回条数，默认10
+
+### 最小示例
+`+…`+`fuzzy_search mode="filename" query="index" path="/uploads"`+…`+`
+`+…`+`fuzzy_search mode="content" query="数据库" file="/uploads/doc.md"`+…`+`
+`+…`+`fuzzy_search mode="content" query="API" file="/uploads/api.js" limit=5`+…`+`
+
+### 注意事项
+- filename → 返回文件路径列表，下一步用 filesystem read 精读
+- content → 返回 {path, score, line, snippet}，下一步按行号精读
+- 原则：fuzzy_search 定位 → read 精读 → 必要时才 full 全文`,
+
 
 ### 最小示例
 `+"`"+`fuzzy_search query="index" path="/uploads"`+"`"+` (搜文件名)
@@ -6381,7 +6399,7 @@ function getMarkdownRenderer(){
   if(mdRenderer)return mdRenderer;
   if(window.markdownit){
     mdRenderer=window.markdownit({
-      html:true,linkify:true,typographer:true,
+      html:true,linkify:true,typographer:false,
       highlight:function(str,lang){
         if(lang&&window.hljs){
           try{return hljs.highlight(str,{language:lang}).value;}catch(e){}
@@ -6396,7 +6414,7 @@ function getMarkdownRenderer(){
 }
 
 function renderMarkdown(text){
-  text=text.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/<\/?answer>/gi,'');
+  text=text.replace(/<\s*think\b[^>]*>[\s\S]*?<\s*\/\s*think\s*>/gi,'').replace(/<\s*\/\s*think\s*>/gi,'').replace(/<\s*\/?\s*answer\s*>/gi,'');
   var md=getMarkdownRenderer();
   var html=md.render(text);
   if(window.katex){
