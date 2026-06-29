@@ -4037,6 +4037,15 @@ async function _compressOldMessages(messages,modelMaxTokens){
       }
       if(_dropCount>0)debugLogger.warn(' 极端回退: 压缩后仍超限，丢弃最旧'+_dropCount+'条 | est:'+_compEst+'/'+limit);
     }
+    for(var _oci=compressed.length-1;_oci>=1;_oci--){
+      if(compressed[_oci].role==='tool'){
+        var _ocaller=false;
+        for(var _otp=_oci-1;_otp>=0;_otp--){
+          if(compressed[_otp].role==='assistant'&&compressed[_otp].tool_calls){_ocaller=true;break;}
+        }
+        if(!_ocaller)compressed.splice(_oci,1);
+      }
+    }
 
     debugLogger.info(' 智能压缩: '+messages.length+'条→'+compressed.length+'条 | est:'+totalEst+'→~'+_compEst+' | 触发:'+limit+' | 保留'+keepCount+'条');
     return compressed;
@@ -8635,6 +8644,15 @@ function _buildLLMRequest(messages,tools,stream,source){
       var _dropped=cleanedMessages.splice(_dropIdx,1)[0];
       _estMsgTotal-=(_dropped._tokens||_estimateTokens((_dropped.content||'')+(_dropped.reasoning_content||'')));
       debugLogger.warn(' 极端丢弃: 丢弃1条旧消息('+_dropped.role+') | 剩余est:'+_estMsgTotal+'/'+_safeMsgTokens);
+    }
+    for(var _ocj=cleanedMessages.length-1;_ocj>=1;_ocj--){
+      if(cleanedMessages[_ocj].role==='tool'){
+        var _ocaller2=false;
+        for(var _otq=_ocj-1;_otq>=0;_otq--){
+          if(cleanedMessages[_otq].role==='assistant'&&cleanedMessages[_otq].tool_calls){_ocaller2=true;break;}
+        }
+        if(!_ocaller2)cleanedMessages.splice(_ocj,1);
+      }
     }
     // 【修复】有工具调用时自动翻倍；384K兜底，杜绝多轮工具调用中token耗尽被截断
     var effectiveMaxTokens=settings.max_tokens||384000;
@@ -19465,9 +19483,11 @@ function initEventBindings(){
     var pres=container.querySelectorAll('pre code');
     for(var pi=0;pi<pres.length;pi++){
       var pre=pres[pi].parentNode;
-      var newPre=pre.cloneNode(true);
-      pre.parentNode.replaceChild(newPre,pre);
-      pre=newPre;
+      if(pre.querySelector('.code-copy-btn'))continue;
+      var wrapper=document.createElement('div');
+      wrapper.style.cssText='position:relative';
+      pre.parentNode.insertBefore(wrapper,pre);
+      wrapper.appendChild(pre);
       if(!pre.style.position||pre.style.position=='static')pre.style.position='relative';
       var btn=document.createElement('button');
       btn.className='code-copy-btn';
@@ -19478,7 +19498,7 @@ function initEventBindings(){
         thePre.addEventListener('mouseenter',function(){theBtn.style.opacity='1';});
         thePre.addEventListener('mouseleave',function(){theBtn.style.opacity='0';});
       })(pre,btn);
-      pre.appendChild(btn);
+      wrapper.appendChild(btn);
     }
   };
 
@@ -20225,6 +20245,7 @@ function _collectBubbles(msgList){
       }
     }
     _addMsgActions(b,isUser);
+    if(!isUser&&cd)_injectCodeCopyButtons(cd);
     items.push(entry);
   }
   return items;
