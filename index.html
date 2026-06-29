@@ -15511,6 +15511,7 @@ async function processUserMessage(userText,taskId){
     var toolResultHistory=[]; // 用于追踪工具执行状态，提供给用户可见的进度
     // ★ RAF节流：每帧最多一次渲染+一次滚动，仅近底时自动跟底
     var _renderPending=false,_scrollPending=false,_latestAgentContent='',_userScrolledUp=false;
+    var _streamingActive=true;
     var _lastKnownScrollTop=messagesDiv.scrollTop;
     function _isNearBottom(el){return el.scrollHeight-el.scrollTop-el.clientHeight<120;}
     // 基于滚动方向判断用户意图：向上滚立即停跟底，滚回最底部才恢复
@@ -15536,6 +15537,7 @@ async function processUserMessage(userText,taskId){
         var _wasAtBottom=!_userScrolledUp&&_isNearBottom(messagesDiv);  // 内容变化前快照
         requestAnimationFrame(function(){
           _renderPending=false;
+          if(!_streamingActive)return;
           var body2=contentDiv.querySelector('.msg-body');
           if(body2)body2.innerHTML=renderMarkdown(_latestAgentContent);
           else contentDiv.innerHTML=renderMarkdown(_latestAgentContent);
@@ -16317,7 +16319,8 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
       }
     }
 
-
+    
+    _streamingActive = false;
     // 最终渲染
     var body3=contentDiv.querySelector('.msg-body');
     // ★ 修复：若正文仅为[GRADE:Lx]标签，回退到思考内容
