@@ -16187,6 +16187,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
               if(_revRenderPending)return;_revRenderPending=true;
               requestAnimationFrame(function(){
                 _revRenderPending=false;
+                if(!_streamingActive)return;
                 var bodyR=contentDiv.querySelector('.msg-body');
                 if(bodyR)bodyR.innerHTML=renderMarkdown(_revLatestContent);
                 else contentDiv.innerHTML=renderMarkdown(_revLatestContent);
