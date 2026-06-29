@@ -16340,6 +16340,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
         else contentDiv.innerHTML='<em style=\"color:#888\">（无响应内容）</em>';
       }
     }
+    _injectCodeCopyButtons(contentDiv);
 
     // ★ 立即重启 SVG 动画：body3.innerHTML 替换触发的回流会杀死 CSS animation
     // ★ 立即重启动画，但只处理 有 <style> 子元素 的 wrapper（流式期间已注入的）
