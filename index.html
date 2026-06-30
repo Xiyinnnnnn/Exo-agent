@@ -8705,6 +8705,17 @@ async function streamChatCompletion(messages,tools,onChunk,source){
   source=source||'user';
   var attempt=0;
 
+  // ★ 可中断延迟：等待期间每200ms检查暂停标志 → 暂停按钮即时响应
+  async function _interruptibleSleep(ms, cs){
+    var waited=0;
+    while(waited<ms){
+      if(cs&&cs.stopRequested)throw new Error('用户已中止');
+      var step=Math.min(200, ms-waited);
+      await new Promise(function(r){setTimeout(r,step);});
+      waited+=step;
+    }
+  }
+
   while(true){
     var cs=_ensureConvState(currentConversationId);
     if(cs&&cs.stopRequested){throw new Error('用户已中止');}
@@ -8712,7 +8723,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
     if(attempt>0){
       var delay=Math.min(attempt*1000,5000);
       debugLogger.warn('流式调用网络中断，第 '+attempt+' 次全量重试，等待'+delay+'ms');
-      await new Promise(function(r){setTimeout(r,delay);});
+      await _interruptibleSleep(delay, cs);
     }
     attempt++;
 
@@ -8721,7 +8732,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
     var req=_buildLLMRequest(messages,tools,true,source);
     var response;
     var lastFetchError=null;
-    for(var fetchAttempt=0;fetchAttempt<5;fetchAttempt++){
+    for(var fetchAttempt=0;fetchAttempt<12;fetchAttempt++){
       if(cs&&cs.stopRequested){throw new Error('用户已中止');}
       var controller=new AbortController();
       activeLLMController=controller;
@@ -8741,25 +8752,28 @@ async function streamChatCompletion(messages,tools,onChunk,source){
           activeLLMController=null;
           throw new Error('用户已中止');
         }
-        if(e instanceof TypeError&&fetchAttempt<4){
-          await new Promise(function(r){return setTimeout(r,600);});
+        if(e instanceof TypeError&&fetchAttempt<11){
+          await _interruptibleSleep(250, cs);
           continue;
         }
         break;
       }
     }
-    if(!response){
+    // ★ 提取 HTTP 错误文本（供 !ok 分支复用）
+    var _httpErrText='';
+    if(response&&!response.ok){
+      try{_httpErrText=await response.text();}catch(_e){_httpErrText=''+response.status;}
+      lastFetchError=new Error('API请求失败 ('+response.status+'): '+_httpErrText);
+    }
+    if(!response||(response&&!response.ok)){
       activeLLMController=null;
       if(lastFetchError instanceof TypeError)continue;
-      if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_failure',payload:{taskId:currentConversationId||'',errorType:'NetworkError',relevantSkills:skillCache.activeSkillIds||[],summary:(lastFetchError?lastFetchError.message:'API请求失败').substring(0,200)}});}
+      // 可恢复 HTTP 状态码 → 外层退避重试
+      if(response&&(response.status===429||response.status===502||response.status===503||response.status===504))continue;
+      if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_failure',payload:{taskId:currentConversationId||'',errorType:response?'HTTP_'+response.status:'NetworkError',relevantSkills:skillCache.activeSkillIds||[],summary:(lastFetchError?lastFetchError.message:'API请求失败').substring(0,200)}});}
       throw lastFetchError||new Error('API请求失败');
     }
     activeLLMController=null;
-    if(!response.ok){
-      var errText=await response.text();
-      if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_failure',payload:{taskId:currentConversationId||'',errorType:'HTTP_'+response.status,relevantSkills:skillCache.activeSkillIds||[],summary:errText.substring(0,200)}});}
-      throw new Error('API请求失败 ('+response.status+'): '+errText);
-    }
     if(attempt===1){
       await budgetManager.recordCall(source);
     }
@@ -8833,6 +8847,8 @@ async function streamChatCompletion(messages,tools,onChunk,source){
 
     if(streamError instanceof TypeError){
       debugLogger.warn(' 流读取中断('+(totalStreamContent?totalStreamContent.length+'字已收':'空收')+')，将重试');
+      await onChunk({_streamReset:true});
+      totalStreamContent='';
       continue;
     }
     if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_failure',payload:{taskId:currentConversationId||'',errorType:'StreamError',relevantSkills:skillCache.activeSkillIds||[],summary:(streamError?streamError.message:'').substring(0,200)}});}
@@ -15106,6 +15122,7 @@ async function _preExecutionCritique(pendingToolCalls, agentMsgDiv, streamReason
       _gateContentDiv.parentNode.insertBefore(_gateThinkBlock,gateToggle);
       var _streamCalls={};
       var _finishReason=await streamChatCompletion(_critiqueMessages,_critiqueTools,function(chunk){
+        if(chunk._streamReset){_gateStreamReasoning='';_streamCalls={};return;}
         var _delta=chunk.choices?chunk.choices[0].delta:null;
         if(_delta&&_delta.reasoning_content){
           _gateStreamReasoning+=_delta.reasoning_content;
@@ -15323,6 +15340,7 @@ _critiqueMessages.push({
         if (_activeTools[_tkn]) _critiqueTools[_tkn] = _activeTools[_tkn];
       }
       await streamChatCompletion(_critiqueMessages, _critiqueTools, function(chunk) {
+        if(chunk._streamReset){_cStreamReasoning='';_cStreamContent='';_critiqueContent='';_cStreamTools={};return;}
         var delta = chunk.choices ? chunk.choices[0].delta : null;
         if (delta && delta.reasoning_content) {
           _cStreamReasoning += delta.reasoning_content;
@@ -15588,6 +15606,12 @@ async function processUserMessage(userText,taskId){
       var finishReason=await streamChatCompletion(messages, // 【修复】接收 finish_reason
         activeTools,
         async function(chunk){
+          if(chunk._streamReset){
+            var dupLen=streamContent.length;
+            agentContent=agentContent.substring(0, agentContent.length-dupLen);
+            streamContent='';streamReasoning='';streamToolCalls={};
+            return;
+          }
           var delta=chunk.choices?chunk.choices[0].delta:null;
           // 捕获reasoning_content（DeepSeek thinking模式必需）— 实时显示思考过程
           if(delta&&delta.reasoning_content){
@@ -16018,6 +16042,11 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
             for(var _tkb=0;_tkb<_critiqueWhitelist.length;_tkb++){var _tkn=_critiqueWhitelist[_tkb];if(activeTools[_tkn])_critiqueTools[_tkn]=activeTools[_tkn];}
             var critFinishReason=await streamChatCompletion(critiqueMessages,_critiqueTools,
               function(chunk){
+                if(chunk._streamReset){
+                  critiqueContent=critiqueContent.substring(0, critiqueContent.length-critStreamContent.length);
+                  critStreamContent='';critStreamReasoning='';critStreamTools={};
+                  return;
+                }
                 var delta=chunk.choices?chunk.choices[0].delta:null;
                 if(delta&&delta.reasoning_content){
                   critStreamReasoning+=delta.reasoning_content;
@@ -16219,6 +16248,12 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
             for(var _tkb=0;_tkb<_revWhitelist.length;_tkb++){var _tkn=_revWhitelist[_tkb];if(activeTools[_tkn])_revTools[_tkn]=activeTools[_tkn];}
             var revFinishReason=await streamChatCompletion(revisionMessages,_revTools,
               function(chunk){
+                if(chunk._streamReset){
+                  var dupLen=revStreamContent.length;
+                  agentContent=agentContent.substring(0, agentContent.length-dupLen);
+                  revStreamContent='';revStreamReasoning='';revStreamTools={};
+                  return;
+                }
                 var delta=chunk.choices?chunk.choices[0].delta:null;
                 if(delta&&delta.reasoning_content){
                   revStreamReasoning+=delta.reasoning_content;
@@ -16500,6 +16535,9 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
     if(error.message==='用户已中止'){
       processingError=null;
       debugLogger.info('用户主动停止了处理');
+      contentDiv.classList.remove('streaming-cursor');
+      var indicator=contentDiv.querySelector('.thinking-indicator');
+      if(indicator)indicator.remove();
       var stopBubble=document.createElement('div');
       stopBubble.style.cssText='...';
       stopBubble.textContent=' 已停止';
@@ -16776,6 +16814,12 @@ async function streamChatCompletionForFlow(messages, activeTools, cs, messagesDi
       var finishReason = await streamChatCompletion(
         messages,activeTools,
         function(chunk){
+          if(chunk._streamReset){
+            var dupLen=streamContent.length;
+            agentContent=agentContent.substring(0, agentContent.length-dupLen);
+            streamContent='';streamReasoning='';streamTools={};
+            return;
+          }
           var delta=chunk.choices?chunk.choices[0].delta:null;
           if(delta&&delta.reasoning_content){
             streamReasoning+=delta.reasoning_content;
@@ -16887,6 +16931,12 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
       var finishReason = await streamChatCompletion(
         messages,activeTools,
         function(chunk){
+          if(chunk._streamReset){
+            var dupLen=streamContent.length;
+            agentContent=agentContent.substring(0, agentContent.length-dupLen);
+            streamContent='';streamReasoning='';streamTools={};
+            return;
+          }
           var delta=chunk.choices?chunk.choices[0].delta:null;
           if(delta&&delta.reasoning_content){
             streamReasoning+=delta.reasoning_content;
