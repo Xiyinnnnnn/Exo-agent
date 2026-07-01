@@ -15340,7 +15340,7 @@ _critiqueMessages.push({
         if (_activeTools[_tkn]) _critiqueTools[_tkn] = _activeTools[_tkn];
       }
       await streamChatCompletion(_critiqueMessages, _critiqueTools, function(chunk) {
-        if(chunk._streamReset){_cStreamReasoning='';_cStreamContent='';_critiqueContent='';_cStreamTools={};return;}
+        if(chunk._streamReset){_cStreamReasoning='';_critiqueContent=_critiqueContent.substring(0,_critiqueContent.length-_cStreamContent.length);_cStreamContent='';_cStreamTools={};return;}
         var delta = chunk.choices ? chunk.choices[0].delta : null;
         if (delta && delta.reasoning_content) {
           _cStreamReasoning += delta.reasoning_content;
@@ -18304,8 +18304,29 @@ async function importAllData(jsonData){
 }
 
 async function resetSystem(){
-  var confirmed=await showConfirmDialog(' 这将删除所有数据（对话历史、技能、设置、上传文件等）。\n\n此操作不可撤销！','重置系统确认');
-  if(!confirmed)return;
+  var resetResult=await new Promise(function(resolve){
+    var overlay=document.createElement('div');
+    overlay.className='modal-overlay';
+    var dialog=document.createElement('div');
+    dialog.className='modal-dialog';
+    dialog.innerHTML='<h3> 重置系统确认</h3>'
+      +'<p style="margin-bottom:12px;font-size:14px;color:var(--color-text-secondary)"> 这将删除所有数据（对话历史、技能、设置、上传文件等）。此操作不可撤销！</p>'
+      +'<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;-webkit-user-select:none;user-select:none;padding:10px 14px;background:#fff3cd;border-radius:8px;margin-bottom:16px">'
+      +'<input type="checkbox" id="resetIncludeKeys" style="width:18px;height:18px;cursor:pointer;accent-color:var(--color-primary)">'
+      +'<span><strong> 同时清除 API Key</strong><br><small style="color:#856404">将清除 DeepSeek Key、Tavily Key、环境变量等敏感凭据。清除后需重新配置才能使用。</small></span>'
+      +'</label>'
+      +'<div class="modal-actions"><button class="btn btn-outline" id="resetCancel">取消</button><button class="btn btn-danger" id="resetOk"> 确认重置</button></div>';
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    dialog.querySelector('#resetCancel').addEventListener('click',function(){overlay.remove();resolve(null);});
+    dialog.querySelector('#resetOk').addEventListener('click',function(){
+      var includeKeys=dialog.querySelector('#resetIncludeKeys').checked;
+      overlay.remove();
+      resolve(includeKeys);
+    });
+    overlay.addEventListener('click',function(e){if(e.target===overlay){overlay.remove();resolve(null);}});
+  });
+  if(resetResult===null)return;
   try{
     if(evoWorkerManager){evoWorkerManager.terminate();evoWorker=null;}
     if(taskWorkerManager){taskWorkerManager.terminate();taskWorker=null;}
@@ -18365,8 +18386,8 @@ async function resetSystem(){
     conversationDB.entries=[{id:currentConversationId,title:'新对话',createdAt:Date.now(),activeSkillIds:[]}];
     localStorage.setItem('exo_last_conv', currentConversationId);
     settings={
-      deepseek_api_key:settings.deepseek_api_key||'',
-      tavily_api_keys:settings.tavily_api_keys||[],
+      deepseek_api_key:resetResult?'' : settings.deepseek_api_key||'',
+      tavily_api_keys:resetResult?[] : settings.tavily_api_keys||[],
       base_url:settings.base_url||'https://api.deepseek.com',
       model:settings.model||'deepseek-v4-flash',
       daily_limit:100000,
