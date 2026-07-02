@@ -7241,7 +7241,7 @@ function buildTaskWorkerSource(){
   src+='        if(_pyNew!==fsSnapshot[_fp3].content)_pyChanges.push({type:"write",path:_fp3,content:_pyNew});\n';
   src+='      }catch(_e2){_pyChanges.push({type:"delete",path:_fp3});}\n';
   src+='    }\n';
-  src+='    return {result:pyOut+(result!==undefined?String(result):""),fs_changes:_pyChanges};\n';
+  src+='    return {result:pyOut+(result!==undefined&&result!==null?String(result):""),fs_changes:_pyChanges};\n';
   src+='  }\n';
   src+='  throw new Error("不支持的语言: "+language);\n';
   src+='}\n';
@@ -9147,7 +9147,7 @@ async function toolFilesystem(args){
       // ★ 选择性回写：只回写 readwrite 目录的变更
       var output=runResp.data;
       var fsChanges=(output&&output.fs_changes)?output.fs_changes:[];
-      var resultText=(output&&output.result)?output.result:(typeof output==='string'?output:JSON.stringify(output));
+      var resultText=(output&&output.result!==undefined&&output.result!==null)?output.result:(typeof output==='string'?output:JSON.stringify(output));
       var writeCount=0,skipCount=0;
       for(var ci=0;ci<fsChanges.length;ci++){
         var change=fsChanges[ci];
