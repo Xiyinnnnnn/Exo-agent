@@ -1195,7 +1195,7 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'  ④ longterm_memory query 用户偏好+项目上下文 ▸ 已知什么？\n'
 +'  ⑤ knowledge_base query 问题关键词           ▸ 用户传过什么？\n'
 +'  ⑥ 分析问题复杂度→确定[GRADE]  ▸ L1简/L2中/L3复/L4项目/L5改进\n'
-+'  ⑦ 按分级预载工具包            ▸ L1:直接处理 | L2:search+code_run | L3:拆步验证+todo create | L4:todo create+flow_mode start | L5:longterm_memory\n'
++'  ⑦ 按分级预载工具包            ▸ L1:直接处理 | L2:search+code_runner | L3:拆步验证+todo create | L4:todo create+flow_mode start | L5:longterm_memory\n'
 +'  ⑧ 在思考开头标记 [GRADE:Lx]\n'
 +'  ⑨ 立即输出 ▸ P1-P6（本轮初次评估）\n\n'
 +'[MUST] 第③步 help get grade_guide 是分级硬性前置——工具返回前禁止输出[GRADE]标记。跳过=分级必错。\n'
@@ -1206,7 +1206,7 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'[MUST_NOT] 口头交付。产出物（代码/报告/文档/数据）→写文件。简单问答→直接回复。\n'
 +'[MUST_NOT] 正文当草稿。回复给用户的就是最终版，不得"先给你看看""后续完善"。未完成→继续干活，不输出。\n'
 +'[MUST] 查优于猜：记忆→知识库→网络→才推理。不跳。\n'
-+'[MUST] 算优于估：calculator/code_run精确算，不目测。\n'
++'[MUST] 算优于估：calculator/code_runner精确算，不目测。\n'
 +'[MUST] 拆优于扛：大任务拆小步，每步可验证。\n\n'
 +'[MEMORY_LOOP] 回答前检索·回答后存储 — 每轮闭环，漏→不交付：\n'
 +'  前·· longterm_memory action="query" → 命中复用+标源 | 未中→标"无历史"\n'
@@ -1228,7 +1228,7 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'  ▸ P4 起草并自检 — 逐块产出。每块过 □：\n'
 +'    □ 缺概念需补？□ 有漏洞或绝对化？□ 分清了必须做/建议做？□ 可操作？\n'
 +'    [MUST] 发现问题→当场修正→标注修正\n'
-+'    [MUST] 新建→filesystem create→code_run→read确认 | 改现有→先filesystem copy备份(.v{N}.bak，N从1递增，首次.v1.bak)→再改→code_run→exitCode≠0→copy最新备份(.v{N}.bak)覆盖回滚→read确认 | 多次迭代保留全版本链(.v1.bak,.v2.bak,.v3.bak...)，回滚时可选择任意历史版本\n'
++'    [MUST] 新建→filesystem create→code_runner→read确认 | 改现有→先filesystem copy备份(.v{N}.bak，N从1递增，首次.v1.bak)→再改→code_runner→exitCode≠0→copy最新备份(.v{N}.bak)覆盖回滚→read确认 | 多次迭代保留全版本链(.v1.bak,.v2.bak,.v3.bak...)，回滚时可选择任意历史版本\n'
 +'  ▸ P5 润色 — 通读+修冗余+验递进+确无矛盾\n'
 +'[MUST] 交付格式（写入<answer>内，用户可见）：\n'
 +'  ▸ P6 交付 — 一句核心原则开头→清单式正文→常见误区收尾\n'
@@ -1241,7 +1241,7 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'[DELIVER] 交付前逐项核对(缺一项不交付，回[THINK]继续)：\n'
 +'  □ 记忆已查 — longterm_memory query 已执行\n'
 +'  □ 知识已查 — knowledge_base query 已执行\n'
-+'  □ 代码已跑通 — code_run返回exitCode:0\n'
++'  □ 代码已跑通 — code_runner返回exitCode:0\n'
 +'  □ 备份已留 — 修改前已copy .v{N}.bak版本备份\n'
 +'  □ 文件已验证 — read确认内容正确\n'
 +'  □ 数据已核实 — search/calculator一致性确认\n'
@@ -1275,11 +1275,11 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'▸ P4 起草并自检 — 分Agent产出，逐块过□:\n'
 +'  [AgentA] □API异常处理? →补timeout+retry □数据缓存? →存Map TTL=10min\n'
 +'  →filesystem create /d/weather-server/index.js\n'
-+'  →filesystem code_run /d/weather-server/index.js → exitCode:0 | 端点200\n'
++'  →code_runner path="/d/weather-server/index.js" → exitCode:0 | 端点200\n'
 +'  [AgentB] □移动端适配? →补responsive □预警阈值可配? →补config.js\n'
 +'  →filesystem copy /d/weather-client/index.html /d/weather-client/index.v1.bak\n'
 +'  →filesystem create /d/weather-client/index.html\n'
-+'  →filesystem code_run(静态) → 渲染正常\n'
++'  →code_runner path="/d/weather-client/index.html" → 渲染正常\n'
 +'（监工接管→逐条验证→干活Agent执行→可选pipeline并行编排独立条目）\n'
 +'→pipeline create dag /d/weather_pipeline.json → pipeline run\n'
 +'→AgentA 通过 AgentB 通过 AgentC 通过 | 集成测试:3/3通过\n'
@@ -1342,7 +1342,7 @@ var FLOW_SUPERVISOR_STATIC='[ROLE] 监工 | [NOTE] 干活Agent不知道你存在
 +'[MUST_NOT] ▸P1-▸P4步骤不得出现在<answer>内\n'
 +'[MUST] 内部推理流程（<think>内）：\n'
 +'  ▸ P1 全局 — N总:X个目标 | M达标:Y | K未达标:Z(逐条列)\n'
-+'  ▸ P2 检视 — 读产出(filesystem read)+跑测试(filesystem code_run)\n'
++'  ▸ P2 检视 — 读产出(filesystem read)+跑测试(code_runner)\n'
 +'  ▸ P3 判定 — 逐goal评分→达标:todo done | 未达标→反馈(具体问题+修正方向)\n'
 +'  ▸ P4 本步 — 工具名+原因\n'
 +'  然后→调用工具\n\n'
@@ -1356,7 +1356,7 @@ var FLOW_SUPERVISOR_STATIC='[ROLE] 监工 | [NOTE] 干活Agent不知道你存在
 +'[MUST] 干活Agent调todo done后，核对evidence与filesystem read结果一致才可确认。\n\n'
 +'[MONITOR] 每轮逐条清单：\n'
 +'  □ 读产出 → filesystem read 最新文件\n'
-+'  □ 跑测试 → filesystem code_run → 看exitCode+输出\n'
++'  □ 跑测试 → code_runner → 看exitCode+输出\n'
 +'  □ 对照goal评分 → 达标:todo done evidence=... | 未达标:反馈(具体问题+建议)\n'
 +'  □ 干活Agent调了todo done? → 核对evidence是否与产出一致\n'
 +'  □ 全达标? → flow_deliver\n'
@@ -1372,7 +1372,7 @@ var FLOW_SUPERVISOR_STATIC='[ROLE] 监工 | [NOTE] 干活Agent不知道你存在
 +'→ help get grade_guide\n'
 +'▸ P1 全局 — N:2(auth+CRUD) | M:0 | K:2(均未产出)\n'
 +'▸ P2 检视 — filesystem read /d/auth.py → 内容完整\n'
-+'▸ P3 判定 — code_run /d/auth.py → exitCode:0 ✓ → 达标\n'
++'▸ P3 判定 — code_runner path="/d/auth.py" → exitCode:0 ✓ → 达标\n'
 +'▸ P4 本步 — todo done todo_id="t_001" item_id="1" evidence="/d/auth.py exitCode:0"\n'
 +'→ todo done todo_id="t_001" item_id="1" evidence="/d/auth.py exitCode:0"\n'
 +'▸ P1 全局 — N:2 | M:2 | K:0\n'
@@ -1936,8 +1936,10 @@ function getCodeRunPermission(filePath){
 var TOOL_REGISTRY={
   'help':{name:'help',description:'工具管理。action:query/list/set/get/unset。扩展工具需help set载入后才可调用。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['query','list','set','get','unset'],default:'list'},query:{type:'string',description:'语义搜索(action=query必填)'},limit:{type:'number',default:5,maximum:10},tool_name:{type:'string',description:'工具名(action=set/get/unset时必填)'},id:{type:'string',description:'工具名别名(同tool_name)'}},required:[]}},
-  'filesystem':{name:'filesystem',description:'文件系统。先用fuzzy_search搜文件名或搜内容定位，再用read按行号精读，必要时才全文。action:create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/code_run/rename。行操作从大到小排序。code_run沙箱可读写文件系统。',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','code_run','rename','move','copy']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'},timeout:{type:'number',default:10000},sandbox_dir:{type:'string',description:'沙箱工作目录(默认/sandbox/)'}},required:['action','path']}},
+  'filesystem':{name:'filesystem',description:'文件系统。先用fuzzy_search搜文件名或搜内容定位，再用read按行号精读，必要时才全文。action:create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/rename。行操作从大到小排序。运行代码请用code_runner。',executor:'main_thread',
+    parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','rename','move','copy']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'}},required:['action','path']}},
+  'code_runner':{name:'code_runner',description:'代码执行器。仅支持JS(.js)和Python(.py)。JS为轻量沙箱引擎(非Node.js),无npm生态仅内置fs/path/os/url/crypto/util/assert+CDN(lodash/dayjs/marked/qs)。主模式:先用filesystem create创建代码文件再传path运行。次要模式:不传path直接传code代码片段+language自动创建临时文件。沙箱可读写/downloads/、/sandbox/、/tmp/。',executor:'main_thread',
+    parameters:{type:'object',properties:{path:{type:'string',description:'代码文件路径(.js或.py)。主模式:与code二选一,优先path'},code:{type:'string',description:'代码片段字符串。次要模式:不传path时使用,需搭配language'},language:{type:'string',enum:['js','python'],description:'语言。传code时必填;传path时可省略(从扩展名自动推断)'},timeout:{type:'number',default:10000,description:'超时ms。JS默认10s,Python默认60s'},sandbox_dir:{type:'string',description:'沙箱工作目录,默认/sandbox/'}},required:[]}},
   'search':{name:'search',description:'网络搜索(Tavily)。返回标题/URL/摘要。可选include_raw_content抓原文。',executor:'task_worker',
     parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词'},max_results:{type:'number',default:5,maximum:10},search_depth:{type:'string',enum:['basic','advanced'],default:'advanced'},include_raw_content:{type:'boolean',default:false},include_domains:{type:'array',items:{type:'string'}},exclude_domains:{type:'array',items:{type:'string'}}},required:['query']}},
   'calculator':{name:'calculator',description:'数学计算(mathjs)。四则/三角/对数/矩阵/统计/组合/单位/复数/分数。',executor:'main_thread',
@@ -2031,8 +2033,8 @@ var _SHARED_GRADE=
 +'[GRADE:L2] 单次产出\n'
 +'一次做对，不返工。\n'
 +'前·· longterm_memory query→knowledge_base query\n'
-+'  →命中复用模板/同类→确认需求→生产→验证(code_run exitCode:0)→read确认→文件归档\n'
-+'  改现有→先copy .v{N}.bak备份再改→code_run验证→exitCode≠0回滚\n'
++'  →命中复用模板/同类→确认需求→生产→验证(code_runner exitCode:0)→read确认→文件归档\n'
++'  改现有→先copy .v{N}.bak备份再改→code_runner验证→exitCode≠0回滚\n'
 +'缺口: 缺模板/方法→help list→help set→仍未→邀用户给参考。| 升级: 需多步→L3 | 需对齐→L4\n'
 +'后·· 产出路径→longterm_memory store | 可复用模板→knowledge_base store\n'
 +'□自检: 前··执行？模板/同类查了？exitCode:0？read验证内容正确？备份已留？后··执行？\n'
@@ -2042,7 +2044,7 @@ var _SHARED_GRADE=
 +'这是使用最多的等级。任务拆开，每步验证，高级特性全开，多轮修正直到通过。\n'
 +'前·· longterm_memory query→knowledge_base query→复用经验/已知约束\n'
 +'  →todo create拆子步(逐条标depends_on)→flow_mode start接管→每步S-A-O-C循环:\n'
-+'    Spec定目标+验收标准→Action执行工具(search/API/code_run/filesystem/pipeline)→Observe观察exitCode+read内容+数据一致→Correct不通过回Action重来\n'
++'    Spec定目标+验收标准→Action执行工具(search/API/code_runner/filesystem/pipeline)→Observe观察exitCode+read内容+数据一致→Correct不通过回Action重来\n'
 +'  →calculator精算→reqalign对齐需求(有疑即问)→generatespec生成文档(review≥5)→mcts_plan standard选最优→world_validator仿真→组装→深度一致性检查→交付\n'
 +'触发: ≥2步→flow_mode | 选方案→mcts_plan standard | 独立并行→pipeline create | 需求模糊→reqalign | 反复修改>2轮→flow_mode深度纠偏\n'
 +'缺口: S-A-O-C未闭环→回Spec重来 | 缺数据→search/API | 缺工具→help set→仍未→手动替代+store标记 | 知识盲区→标清+邀输入 | 仿真未过→回修正 | 升级: spec+多模块+生产部署→L4\n'
@@ -2145,8 +2147,8 @@ var TOOL_DOCS={
 chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / read_image / pdf_generate / custom_api_call / mcp_connect / user_function_call / convert_format / geo_search / geo_geocode / geo_ip / send_email / sql_db / browser_notify / archive / speech_tts / speech_stt / calendar / pipeline / reqalign / generatespec / world_validator / flow_mode`,
 
 
-  'filesystem':`## filesystem — 虚拟文件系统
-统一虚拟文件系统，支持文件 CRUD、目录浏览、精确行编辑、代码执行。用户上传文件在 /uploads/ 目录。
+  'filesystem':`## filesystem — 文件系统
+文件系统，支持文件 CRUD、目录浏览、精确行编辑。用户上传文件在 /uploads/ 目录。代码执行请用 code_runner。
 
 ### action 一览
 | action | 说明 | 关键参数 |
@@ -2164,7 +2166,6 @@ chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / 
 | rename | 重命名 | path, new_name, overwrite |
 | move | 移动文件 | path, new_path, overwrite |
 | copy | 复制文件 | path, new_path, overwrite |
-| code_run | 执行代码(可读写文件系统) | path(.js或.py), timeout(默认10s), sandbox_dir |
 
 ### read 读取策略（推荐流程：fuzzy_search mode="content" 全量grep定位 → chunked按行号精读 → 必要时full全文）
 - **chunked**: 按行号分块精读, 需 line/maxLines, 带行号。fuzzy_search mode="content"(不传file则grep全量)返回行号后据此读取
@@ -2181,31 +2182,67 @@ chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / 
 `+"`"+`filesystem action="rename" path="/downloads/old.txt" new_name="new.txt"`+"`"+`
 `+"`"+`filesystem action="move" path="/downloads/temp.txt" new_path="/archive/temp.txt"`+"`"+`
 `+"`"+`filesystem action="copy" path="/uploads/ref.txt" new_path="/downloads/ref_copy.txt"`+"`"+`
-`+"`"+`filesystem action="code_run" path="/downloads/script.py"`+"`"+`
+
+### 【铁律】行操作排序
+同一文件连续多次 replace_lines / delete_lines / insert 必须按行号从大到小排序执行！每次操作后行号全局偏移，从底向上才能杜绝错位和重复。
+[MUST] 改前备份 → 修改已有文件先 filesystem copy 备份(.bak) → 改后 code_runner 失败 → copy 备份覆盖回滚。
+
+### 路径说明
+
+- /uploads/ — 用户上传文件
+- /downloads/ — 生成产物(chart/PDF/Word等)
+- /sandbox/ — 代码执行工作区
+- /tmp/ — 临时文件(执行后自动清理)
+- /trash/ — 回收站(安全删除)
+- /memory/ — 系统记忆存储
+- /config/ — 配置文件`,
+
+  'code_runner':`## code_runner — 代码执行器
+
+仅支持 JavaScript(.js) 和 Python(.py)。沙箱内代码可读写文件系统。
+
+### JS 沙箱说明（非 Node.js）
+- 轻量沙箱引擎，基于 `+"`"+`new Function()`+"`"+` 执行，非 Node.js 运行时
+- 内置模块: fs/path/os/url/querystring/crypto/util/assert
+- CDN 可用: `+"`"+`require('lodash')`+"`"+` / `+"`"+`require('dayjs')`+"`"+` / `+"`"+`require('marked')`+"`"+` / `+"`"+`require('qs')`+"`"+`
+- 不支持: npm 任意包、http/https 模块（请用 fetch()）、child_process、Buffer
+- 支持顶级 await（async IIFE 包装），但 setTimeout/Promise 回调需在 timeout 内完成
+- 需要完整 npm 生态请使用 Python (Pyodide) 沙箱
 
 
-### code_run 文件系统权限
+### 两种运行模式
+| 模式 | 方式 | 示例 |
+|------|------|------|
+| 主模式 | 先 filesystem create 创建代码文件, 再传 path 运行 | `+"`"+`code_runner path="/downloads/script.py"`+"`"+` |
+| 次要模式 | 不传 path, 直接传 code + language | `+"`"+`code_runner code="print('hello')" language="python"`+"`"+` |
+
+### 参数
+- **path**: 代码文件路径(.js或.py)。与code二选一,优先path
+- **code**: 代码片段字符串。不传path时使用,需搭配language
+- **language**: "js" 或 "python"。传code时必填;传path时可省略(从扩展名自动推断)
+- **timeout**: 超时ms。JS默认10s,Python默认60s
+- **context_files**: 额外上下文文件 {别名:路径}
+- **sandbox_dir**: 沙箱工作目录,默认/sandbox/
+
+### 文件系统权限
 沙箱内代码可读写文件系统，受权限控制：
-- /config/、/memory/、/pipelines/、/trash/ —  不可见
-- /uploads/ —  只读可读取
-- /downloads/、/sandbox/、/tmp/ —  可读写
+- /config/、/memory/、/pipelines/、/trash/ — 不可见
+- /uploads/ — 只读可读取
+- /downloads/、/sandbox/、/tmp/ — 可读写
 - /tmp/ 下的文件在代码执行后自动清理
 - JS代码内用 fs.read(path) 和 fs.write(path,content) 读写（同步）
 - Python代码内用原生 open(path).read() 和 open(path,'w').write(content)
 
-### 【铁律】行操作排序
-同一文件连续多次 replace_lines / delete_lines / insert 必须按行号从大到小排序执行！每次操作后行号全局偏移，从底向上才能杜绝错位和重复。
-[MUST] 改前备份 → 修改已有文件先 filesystem copy 备份(.bak) → 改后 code_run 失败 → copy 备份覆盖回滚。
+### 最小示例
+`+"`"+`code_runner path="/downloads/process_data.py"`+"`"+`
+`+"`"+`code_runner code="console.log('Hello World')" language="js"`+"`"+`
+`+"`"+`code_runner code="import json; print(json.dumps({'ok':True}))" language="python"`+"`"+`
+`+"`"+`code_runner path="/sandbox/main.js" timeout=5000`+"`"+`
 
-### 路径说明
-
-- /uploads/ — 用户上传文件(code_run中只读)
-- /downloads/ — 生成产物(chart/PDF/Word等,code_run中可读写)
-- /sandbox/ — 代码执行工作区(code_run中可读写)
-- /tmp/ — 临时文件(code_run中可读写,执行后自动清理)
-- /trash/ — 回收站(安全删除)
-- /memory/ — 系统记忆存储
-- /config/ — 配置文件`,
+### 注意事项
+- 仅支持 .js 和 .py，其他语言不支持
+- Python首次运行需加载Pyodide WASM(约6MB),耗时5-15秒,后续秒开
+- [MUST] 改前备份 → 修改已有文件先 filesystem copy 备份(.bak) → code_runner → 失败则 copy 备份覆盖回滚`,
 
   'search':`## search — 网络搜索
 搜索网络信息+爬取页面原文（需 Tavily API Key）。
@@ -3063,7 +3100,7 @@ flow_mode action="start" task="完整任务描述"
   "todo_id": "t_001",
   "title": "数据分析任务",
   "items": [
-    {"id":"1","desc":"读取并清洗数据","status":"done","evidence":"/data/clean.csv (code_run exitCode:0)"},
+    {"id":"1","desc":"读取并清洗数据","status":"done","evidence":"/data/clean.csv (code_runner exitCode:0)"},
     {"id":"2","desc":"聚合计算","status":"doing","evidence":""},
     {"id":"3","desc":"生成图表","status":"todo","evidence":"","depends_on":["2"]}
   ],
@@ -3073,7 +3110,7 @@ flow_mode action="start" task="完整任务描述"
 ### 各 action 最小示例
 todo action="create" title="数据分析" items=[{"id":"1","desc":"读取数据"},{"id":"2","desc":"聚合"},{"id":"3","desc":"生成图表"}]
 todo action="start" todo_id="t_001" item_id="1"
-todo action="done" todo_id="t_001" item_id="1" evidence="/data/clean.csv, code_run exitCode:0"
+todo action="done" todo_id="t_001" item_id="1" evidence="/data/clean.csv, code_runner exitCode:0"
 todo action="fail" todo_id="t_001" item_id="3" reason="chart工具未载入" fallback="help set chart后再试"
 todo action="add" todo_id="t_001" item={"id":"4","desc":"导出PDF","depends_on":["3"]}
 todo action="reorder" todo_id="t_001" item_ids=["1","3","2","4"]
@@ -3840,7 +3877,7 @@ function resetFlowSession(workingDir){
 }
 
 // 【动态工具集】核心工具列表 — 每轮对话首轮必定载入
-var CORE_TOOL_NAMES=['help','skill_manager','filesystem','search','calculator','precise_time','fuzzy_search','semantic_memory','longterm_memory','knowledge_base','todo','calendar'];
+var CORE_TOOL_NAMES=['help','skill_manager','filesystem','code_runner','search','calculator','precise_time','fuzzy_search','semantic_memory','longterm_memory','knowledge_base','todo','calendar'];
 
 // 每个对话独立扩展工具激活集 — 对齐 skill 的 per-conversation 模式
 var convActiveTools={};
@@ -7104,6 +7141,17 @@ function buildTaskWorkerSource(){
   src+='var modelLoading=false;\n';
 	// 【重构】importScripts优先 + Blob-import降级，彻底移除eval依赖
 	src+='var _scriptCache={};\n';
+	src+='(async function _preloadCDNs(){\n';
+	src+='  var _libs=[{url:"https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js",g:"_"},{url:"https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js",g:"dayjs"},{url:"https://cdn.jsdelivr.net/npm/marked/marked.min.js",g:"marked"},{url:"https://cdn.jsdelivr.net/npm/qs/dist/qs.js",g:"Qs"}];\n';
+	src+='  var _cache=null;try{_cache=await caches.open("libs");}catch(e){}\n';
+	src+='  for(var _i=0;_i<_libs.length;_i++){\n';
+	src+='    var _l=_libs[_i];if(self[_l.g])continue;\n';
+	src+='    var _blobUrl=null;\n';
+	src+='    if(_cache){try{var _cr=await _cache.match(_l.url);if(_cr){var _blob=await _cr.blob();_blobUrl=URL.createObjectURL(_blob);self.postMessage({type:"log",payload:{level:"info",message:"命中本地缓存 → "+_l.url.replace(/https?:\\/\\/[^/]+\\//,"")}});}}catch(e){}}\n';
+	src+='    if(!_blobUrl){try{var _fr=await fetch(_l.url);if(!_fr.ok)throw new Error("HTTP "+_fr.status);var _blob=await _fr.blob();_blobUrl=URL.createObjectURL(_blob);if(_cache){try{_cache.put(_l.url,new Response(_blob,{status:200,statusText:"OK",headers:{"Content-Type":"application/javascript","Cache-Control":"max-age=31536000,immutable"}}));self.postMessage({type:"log",payload:{level:"info",message:"已写入本地 → "+_l.url.replace(/https?:\\/\\/[^/]+\\//,"")}});}catch(e){}}}catch(e){}}\n';
+	src+='    if(_blobUrl){try{importScripts(_blobUrl);URL.revokeObjectURL(_blobUrl);}catch(e){URL.revokeObjectURL(_blobUrl);}}\n';
+	src+='  }\n';
+	src+='})();\n';
 	src+='async function loadScript(key,urls,globalName,timeout){\n';
 	src+='  if(_scriptCache[key])return _scriptCache[key];\n';
 	src+='  if(typeof urls==="string")urls=[urls];\n';
@@ -7112,13 +7160,27 @@ function buildTaskWorkerSource(){
 	src+='  for(var u=0;u<urls.length;u++){\n';
 	src+='    for(var attempt=0;attempt<2;attempt++){\n';
 	src+='      try{\n';
-	src+='        // 路径1：importScripts — Worker原生同步加载，带超时保护\n';
-	src+='        await new Promise(function(res,rej){\n';
-	src+='          var done=false;\n';
-	src+='          var tid=setTimeout(function(){if(!done){done=true;rej(new Error("importScripts超时"))}},timeout);\n';
-	src+='          try{importScripts(urls[u]);if(!done){done=true;clearTimeout(tid);res();}}\n';
-	src+='          catch(e){if(!done){done=true;clearTimeout(tid);rej(e);}}\n';
-	src+='        });\n';
+	src+='        // 路径1：Cache-first importScripts — 命中本地缓存免网络\n';
+	src+='        var _cache=null;try{_cache=await caches.open("libs");}catch(e){}\n';
+	src+='        var _cachedResp=_cache?await _cache.match(urls[u]):null;\n';
+	src+='        if(_cachedResp){\n';
+	src+='          var _cachedBlob=await _cachedResp.blob();\n';
+	src+='          var _cachedBlobUrl=URL.createObjectURL(_cachedBlob);\n';
+	src+='          try{importScripts(_cachedBlobUrl);URL.revokeObjectURL(_cachedBlobUrl);self.postMessage({type:"log",payload:{level:"info",message:"命中本地缓存 → "+urls[u].replace(/https?:\\/\\/[^/]+\\//,"")}});}\n';
+	src+='          catch(e){URL.revokeObjectURL(_cachedBlobUrl);throw e;}\n';
+	src+='        }else{\n';
+	src+='          var _resp=await fetch(urls[u]);\n';
+	src+='          if(!_resp.ok)throw new Error("HTTP "+_resp.status);\n';
+	src+='          var _blob2=await _resp.blob();\n';
+	src+='          var _blobUrl2=URL.createObjectURL(_blob2);\n';
+	src+='          if(_cache){try{_cache.put(urls[u],new Response(_blob2,{status:200,statusText:"OK",headers:{"Content-Type":"application/javascript","Cache-Control":"max-age=31536000,immutable"}}));self.postMessage({type:"log",payload:{level:"info",message:"已写入本地 → "+urls[u].replace(/https?:\\/\\/[^/]+\\//,"")}});}catch(e){}}\n';
+	src+='          await new Promise(function(res,rej){\n';
+	src+='            var done=false;\n';
+	src+='            var tid=setTimeout(function(){if(!done){done=true;URL.revokeObjectURL(_blobUrl2);rej(new Error("importScripts超时"))}},timeout);\n';
+	src+='            try{importScripts(_blobUrl2);if(!done){done=true;clearTimeout(tid);URL.revokeObjectURL(_blobUrl2);res();}}\n';
+	src+='            catch(e){if(!done){done=true;clearTimeout(tid);URL.revokeObjectURL(_blobUrl2);rej(e);}}\n';
+	src+='          });\n';
+	src+='        }\n';
 	src+='      }catch(e1){\n';
 	src+='        // 路径2(降级)：fetch + Blob + dynamic import（用于ESM模块）\n';
 	src+='        try{\n';
@@ -7136,7 +7198,7 @@ function buildTaskWorkerSource(){
 	src+='      }\n';
 	src+='      if(globalName&&typeof self[globalName]==="undefined")throw new Error("全局变量 "+globalName+" 未暴露");\n';
 	src+='      _scriptCache[key]=true;\n';
-	src+='      self.postMessage({type:"log",payload:{level:"info",message:"[任务Worker] CDN加载成功: "+key+" from "+urls[u]}});\n';
+	src+='      self.postMessage({type:"log",payload:{level:"info",message:"CDN加载成功: "+key+" from "+urls[u]}});\n';
 	src+='      return true;\n';
 	src+='    }\n';
 	src+='  }\n';
@@ -7217,7 +7279,7 @@ function buildTaskWorkerSource(){
   src+='        if(m.charAt(0)==="."){var _rp=m;if(_rp.indexOf("./")===0)_rp=_rp.slice(2);else if(_rp.indexOf("../")===0){_rp=_rp.slice(3)}var _candidates=[];_vfs.forEach(function(_v,_k){if(_v!=="__DIR__"&&_k.indexOf(_rp)===_k.length-_rp.length)_candidates.push(_k)});for(var _ci=0;_ci<_candidates.length;_ci++){var _tp=_candidates[_ci];var _msrc=_vfs.get(_tp);var _m={exports:{}};var _mdir="";var _si=_tp.lastIndexOf("/");if(_si>=0)_mdir=_tp.substring(0,_si);var _mf=new Function("module","exports","require","__dirname","__filename","console","api",_msrc);var _mr=function(x){if(x.charAt(0)==="."){if(x.indexOf("./")===0)x=_mdir+"/"+x.slice(2);else if(x.indexOf("../")===0){var _d=_mdir;while(x.indexOf("../")===0){x=x.slice(3);var _li=_d.lastIndexOf("/");_d=_li>=0?_d.substring(0,_li):""}x=_d?(_d+"/"+x):x}}return api.require(x)};_mf(_m,_m.exports,_mr,_mdir,_tp,api.console,api);return _rc[m]=_m.exports}throw new Error("模块未找到: "+m+" (沙箱VFS候选: "+JSON.stringify(_candidates)+")")}\n';
   src+='        var _map={lodash:{url:"https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js",g:"_"},dayjs:{url:"https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js",g:"dayjs"},marked:{url:"https://cdn.jsdelivr.net/npm/marked/marked.min.js",g:"marked"},qs:{url:"https://cdn.jsdelivr.net/npm/qs/dist/qs.js",g:"Qs"}};\n';
   src+='        var _e=_map[m];\n';
-  src+='        if(_e){try{importScripts(_e.url);if(self[_e.g])return _rc[m]=self[_e.g]}catch(e){throw new Error("加载 "+m+" CDN失败: "+e.message)}}\n';
+	src+='        if(_e){if(self[_e.g])return _rc[m]=self[_e.g];try{importScripts(_e.url);if(self[_e.g])return _rc[m]=self[_e.g]}catch(e){throw new Error("加载 "+m+" CDN失败: "+e.message)}}\n';
   src+='        var _urls=["https://cdn.jsdelivr.net/npm/"+m+"/dist/umd/index.min.js","https://unpkg.com/"+m+"/dist/umd/index.min.js"];\n';
   src+='        for(var _i2=0;_i2<_urls.length;_i2++){try{importScripts(_urls[_i2]);if(self[m])return _rc[m]=self[m];var _nl=m.toLowerCase();for(var _k in self){if(_k.toLowerCase()===_nl)return _rc[m]=self[_k]}}catch(e){}}\n';
   src+='        throw new Error("require(\'"+m+"\') 浏览器沙箱不支持。\\n已内置: fs/path/os/url/querystring/crypto/util/assert\\nhttp/https 请使用 fetch() 替代\\nCDN支持: lodash/dayjs/marked/qs\\n其他npm包请使用Python执行。");\n';
@@ -7225,7 +7287,12 @@ function buildTaskWorkerSource(){
   src+='      setTimeout:self.setTimeout\n';
   src+='    };\n';
   src+='    var _result=await Promise.race([\n';
-  src+='      Promise.resolve(new Function("api","var require=api.require;var console=api.console;return (function(){"+code+"})()")(api)),\n';
+  src+='      (async function(){\n';
+  src+='        var fn=new Function("api","var require=api.require;var console=api.console;return (async function(){"+code+"})()");\n';
+  src+='        var ret=await fn(api);\n';
+  src+='        await new Promise(function(r){setTimeout(r,0)});\n';
+  src+='        return ret;\n';
+  src+='      })(),\n';
   src+='      new Promise(function(_,reject){setTimeout(function(){reject(new Error("执行超时"))},timeout);})\n';
   src+='    ]);\n';
   src+='    var _fsChanges=[];\n';
@@ -7242,7 +7309,7 @@ function buildTaskWorkerSource(){
   src+='    return {result:_out+(_result!==undefined&&_result!==null?String(_result):""),fs_changes:_fsChanges};\n';
   src+='  }else if(language==="python"){\n';
   src+='    if(!pyodide){\n';
-  src+='      try{await loadScript("pyodide",["https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js","https://unpkg.com/pyodide@0.25.0/pyodide.js"],"loadPyodide");pyodide=await loadPyodide({indexURL:"https://cdn.jsdelivr.net/pyodide/v0.25.0/full/"})}catch(e){throw new Error("Python执行需要加载Pyodide，当前环境不支持。请使用JavaScript。")}\n';
+  src+='      try{await loadScript("pyodide",["https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js","https://unpkg.com/pyodide@0.25.0/pyodide.js"],"loadPyodide");pyodide=await loadPyodide({indexURL:"https://cdn.jsdelivr.net/pyodide/v0.25.0/full/",lockFileURL:"https://cdn.jsdelivr.net/pyodide/v0.25.0/full/repodata.json"})}catch(e){throw new Error("Python执行需要加载Pyodide，当前环境不支持。请使用JavaScript。")}\n';
   src+='    }\n';
   src+='    for(var _fp2 in fsSnapshot){\n';
   src+='      var _entry=fsSnapshot[_fp2];\n';
@@ -7719,7 +7786,7 @@ src+='  }\n';
   src+='    var fuse=new Fuse(files,{keys:["content"],threshold:th,includeScore:true,includeMatches:true,minMatchCharLength:Math.min(query.length,4),ignoreLocation:true,distance:100});\n';
   src+='    var results=fuse.search(query).slice(0,limit);\n';
   src+='    return results.map(function(r){return {file:r.item.name,path:r.item.path,score:Math.round(r.score*100)/100,line:r.item._line||1,snippet:(r.item.content||"").substring(0,300)}});\n';
-  src+='  }catch(e){self.postMessage({type:"log",payload:{level:"warn",message:"[任务Worker] fuzzy_search 执行失败: "+e.message}});return [{file:"(搜索错误)",path:"",score:0,line:1,snippet:"fuzzy_search 内部错误: "+e.message}]}\n';
+  src+='  }catch(e){self.postMessage({type:"log",payload:{level:"warn",message:"fuzzy_search 执行失败: "+e.message}});return [{file:"(搜索错误)",path:"",score:0,line:1,snippet:"fuzzy_search 内部错误: "+e.message}]}\n';
   src+='}\n';
   src+='\n';
   
@@ -7783,13 +7850,13 @@ src+='  }\n';
   src+='  if(!imgData)throw new Error(\"缺少图片数据\");\n';
   src+='  await ensureTesseract();\n';
   src+='  var startTime=Date.now();\n';
-  src+='  self.postMessage({type:\"log\",payload:{level:\"info\",message:\"[任务Worker] OCR开始识别，语言:\"+language+\"，图片大小:\"+imgData.length+\"字符\"}});\n';
+  src+='  self.postMessage({type:\"log\",payload:{level:\"info\",message:\"OCR开始识别，语言:\"+language+\"，图片大小:\"+imgData.length+\"字符\"}});\n';
   src+='  var result=await Promise.race([\n';
   src+='    Tesseract.recognize(imgData,language,{\n';
   src+='      workerPath:\"https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js\",\n';
   src+='      logger:function(m){\n';
   src+='        if(m.status===\"recognizing text\"&&m.progress){\n';
-   src+='          self.postMessage({type:\"log\",payload:{level:\"info\",message:\"[任务Worker] OCR进度:\"+Math.round(m.progress*100)+\"%\"}});\n';
+   src+='          self.postMessage({type:\"log\",payload:{level:\"info\",message:\"OCR进度:\"+Math.round(m.progress*100)+\"%\"}});\n';
   src+='        }\n';
   src+='      }\n';
   src+='    }),\n';
@@ -7798,7 +7865,7 @@ src+='  }\n';
   src+='  var text=result.data.text||\"\";\n';
   src+='  var confidence=result.data.confidence||0;\n';
   src+='  var elapsed=Date.now()-startTime;\n';
-  src+='  self.postMessage({type:\"log\",payload:{level:\"info\",message:\"[任务Worker] OCR完成，耗时:\"+elapsed+\"ms，置信度:\"+Math.round(confidence)+\"%，文字量:\"+text.replace(/\\\\s/g,\"\").length+\"字\"}});\n';
+  src+='  self.postMessage({type:\"log\",payload:{level:\"info\",message:\"OCR完成，耗时:\"+elapsed+\"ms，置信度:\"+Math.round(confidence)+\"%，文字量:\"+text.replace(/\\\\s/g,\"\").length+\"字\"}});\n';
   src+='  if(!text.trim())throw new Error(\"OCR完成但未识别到文字。图片可能为空白或语言选择不匹配。\");\n';
   src+='  return {text:text,confidence:confidence,elapsed_ms:elapsed,language:language};\n';
   src+='}\n';
@@ -9141,65 +9208,82 @@ async function toolFilesystem(args){
       return await _renderFileTree(path||'/', args.depth||5);
     case 'tree':
       return await _renderFileTree(path||'/', args.depth||0);
-    case 'code_run':{
-      var runExt=(path.split('.').pop()||'').toLowerCase();
-      var runLang=runExt==='py'?'python':runExt==='js'?'javascript':null;
-      if(!runLang)throw new Error('code_run 不支持 .'+runExt+' 文件。仅 .js 和 .py');
-      var runCode=await readFile(path);
-      if(runCode===null)throw new Error('文件不存在: '+path+'。请先 create 创建。');
-
-      // ★ 构建文件系统快照：按白名单收集文件，注入沙箱
-      var sandboxDir=args.sandbox_dir||('/sandbox/'+(currentConversationId||'default')+'/');
-      if(!sandboxDir.endsWith('/'))sandboxDir+='/';
-      var vfsSnapshot=await collectVfsSnapshot(sandboxDir);
-
-      var runTimeout=runLang==='python'?60000:10000;
-      var runResp=await sendToTaskWorker('code_run',{
-        language:runLang,
-        code:runCode,
-        timeout:args.timeout||runTimeout,
-        context_files:args.context_files||{},
-        fs_snapshot:vfsSnapshot,
-        sandbox_dir:sandboxDir
-      });
-      if(!runResp||!runResp.success)throw new Error(runResp?runResp.error:'代码执行失败');
-
-      // ★ 选择性回写：只回写 readwrite 目录的变更
-      var output=runResp.data;
-      var fsChanges=runResp.fs_changes||(output&&output.fs_changes)||[];
-      var resultText=(output&&output.result!==undefined&&output.result!==null)?output.result:(typeof output==='string'?output:JSON.stringify(output));
-      var writeCount=0,skipCount=0;
-      for(var ci=0;ci<fsChanges.length;ci++){
-        var change=fsChanges[ci];
-        var perm=getCodeRunPermission(change.path);
-        if(perm!=='readwrite'){skipCount++;continue;}
-        try{
-          if(change.type==='write'||change.type==='create'){
-            await createFile(change.path,change.content||'');
-            writeCount++;
-          }else if(change.type==='delete'){
-            await deleteFile(change.path);
-            writeCount++;
-          }
-        }catch(e){debugLogger.warn('code_run 回写失败: '+change.path+' '+e.message);}
-      }
-
-      // ★ 清理 /tmp/ 目录
-      for(var ti=0;ti<fsChanges.length;ti++){
-        var tc=fsChanges[ti];
-        if(tc.path.indexOf('/tmp/')===0){
-          try{await deleteFile(tc.path);}catch(e){}
-        }
-      }
-
-      var metaNote='';
-      if(writeCount>0)metaNote+='\n[文件系统回写: '+writeCount+'个文件]';
-      if(skipCount>0)metaNote+='\n[文件系统跳过(只读): '+skipCount+'个文件]';
-      return resultText+metaNote;
-    }
-
     default:throw new Error('未知的文件操作: '+action);
   }
+}
+
+async function toolCodeRunner(args){
+  var path=args.path||null;
+  var code=args.code||null;
+  var language=(args.language||'').toLowerCase();
+
+  // ── 主模式: path → 读取文件, 扩展名推断语言 ──
+  if(path){
+    var ext=(path.split('.').pop()||'').toLowerCase();
+    var lang=ext==='py'?'python':ext==='js'?'javascript':null;
+    if(!lang)throw new Error('code_runner 仅支持 .js 和 .py 文件。不支持 .'+ext);
+    if(language&&((language==='js'&&lang!=='javascript')||(language==='python'&&lang!=='python')))
+      throw new Error('language('+language+')与文件扩展名(.'+ext+')不匹配');
+    language=lang;
+    code=await readFile(path);
+    if(code===null)throw new Error('文件不存在: '+path+'。请先 filesystem create 创建');
+  }
+  // ── 次要模式: 无path有code → 自动创建临时文件 ──
+  else if(code){
+    var langLower=(language||'js').toLowerCase();
+    if(langLower!=='js'&&langLower!=='python')
+      throw new Error('code_runner 仅支持 JS 和 Python。请指定 language:"js" 或 "python"');
+    language=langLower==='python'?'python':'javascript';
+    path='/tmp/_snippet_'+Date.now()+'_'+Math.random().toString(36).substr(2,6)+(language==='python'?'.py':'.js');
+    await createFile(path,code);
+  }else{
+    throw new Error('code_runner: 必须提供 path 或 code');
+  }
+
+  // ── 公共执行逻辑 ──
+  var sandboxDir=args.sandbox_dir||('/sandbox/'+(currentConversationId||'default')+'/');
+  if(!sandboxDir.endsWith('/'))sandboxDir+='/';
+  var vfsSnapshot=await collectVfsSnapshot(sandboxDir);
+
+  var isPython=(language==='python');
+  var runTimeout=args.timeout||(isPython?60000:10000);
+  var runResp=await sendToTaskWorker('code_run',{
+    language:isPython?'python':'javascript',
+    code:code,
+    timeout:runTimeout,
+    context_files:args.context_files||{},
+    fs_snapshot:vfsSnapshot,
+    sandbox_dir:sandboxDir
+  });
+  if(!runResp||!runResp.success)throw new Error(runResp?runResp.error:'代码执行失败');
+
+  var output=runResp.data;
+  var fsChanges=runResp.fs_changes||(output&&output.fs_changes)||[];
+  var resultText=(output&&output.result!==undefined&&output.result!==null)?output.result:(typeof output==='string'?output:JSON.stringify(output));
+  var writeCount=0,skipCount=0;
+  for(var ci=0;ci<fsChanges.length;ci++){
+    var change=fsChanges[ci];
+    var perm=getCodeRunPermission(change.path);
+    if(perm!=='readwrite'){skipCount++;continue;}
+    try{
+      if(change.type==='write'||change.type==='create'){
+        await createFile(change.path,change.content||'');
+        writeCount++;
+      }else if(change.type==='delete'){
+        await deleteFile(change.path);
+        writeCount++;
+      }
+    }catch(e){debugLogger.warn('code_runner 回写失败: '+change.path+' '+e.message);}
+  }
+  for(var ti=0;ti<fsChanges.length;ti++){
+    var tc=fsChanges[ti];
+    if(tc.path.indexOf('/tmp/')===0)try{await deleteFile(tc.path);}catch(e){}
+  }
+
+  var metaNote='[文件: '+path+']';
+  if(writeCount>0)metaNote+='\n[文件系统回写: '+writeCount+'个文件]';
+  if(skipCount>0)metaNote+='\n[文件系统跳过(只读): '+skipCount+'个文件]';
+  return resultText+'\n'+metaNote;
 }
 
 async function toolCalculator(args){
@@ -10740,6 +10824,7 @@ function _toolType(name, result) {
     case 'filesystem':
       return result.indexOf('[文件:')===0 ? 'file_content' :
              result.indexOf('目录树')>=0 ? 'file_tree' : 'file_operation';
+    case 'code_runner':    return 'code_execution';
     case 'calculator':     return 'calculation';
     case 'help':           return 'tool_documentation';
     case 'semantic_memory': case 'longterm_memory': case 'knowledge_base':
@@ -10807,6 +10892,7 @@ async function executeTool(toolCall,artifacts){
 async function executeMainThreadTool(toolName,args){
   switch(toolName){
     case 'filesystem':return await toolFilesystem(args);
+    case 'code_runner':return await toolCodeRunner(args);
     case 'calculator':return await toolCalculator(args);
     case 'chart':return await toolChart(args);
     case 'diagram':return await toolDiagram(args);
