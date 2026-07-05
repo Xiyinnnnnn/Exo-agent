@@ -18649,6 +18649,7 @@ async function handleSkillUpload(file){
 function startHeartbeat(){
   if(heartbeatIntervalId)clearInterval(heartbeatIntervalId);
   heartbeatIntervalId=setInterval(function(){
+    if(document.hidden)return;
     if(evoWorker){
       try{
         var stats=getBudgetStats();
@@ -18665,6 +18666,7 @@ function startHeartbeat(){
 function startHealthCheck(){
   if(healthCheckIntervalId)clearInterval(healthCheckIntervalId);
   healthCheckIntervalId=setInterval(async function(){
+    if(document.hidden)return;
     try{
       if(evoWorker){
         var evoAlive=false;
@@ -18762,16 +18764,33 @@ window.addEventListener('beforeunload',function(){
 // 第39部分：窗口可见性处理
 // ================================================================
 
+var _bgTimestamp=0;
 document.addEventListener('visibilitychange',function(){
   if(document.hidden){
+    _bgTimestamp=Date.now();
     if(evoWorker){try{evoWorker.postMessage({type:'pause_evo',payload:{}});}catch(e){}}
     debugLogger.debug('页面隐藏，进化已暂停');
   }else{
+    var bgDuration=Date.now()-_bgTimestamp;
     if(evoWorker){try{evoWorker.postMessage({type:'resume_evo',payload:{}});}catch(e){}}
     updateBudgetDisplay();
     updateTokenDisplay();
     updateStorageInfo();
-    debugLogger.debug('页面可见，进化已恢复');
+    debugLogger.debug('页面可见，后台时长: '+(bgDuration/1000).toFixed(1)+'s');
+
+    // 后台超2分钟，强制释放processing防止卡死
+    if(bgDuration>120000){
+      var _cs2=_ensureConvState(currentConversationId);
+      if(_cs2&&_cs2.isProcessing){
+        debugLogger.warn('后台超2分钟，强制重置processing');
+        _cs2.isProcessing=false;
+        _cs2.stopRequested=false;
+        _cs2.llmController=null;
+        _cs2.streamReader=null;
+        updateSendButton();
+        setStatus('idle');
+      }
+    }
   }
 });
 
