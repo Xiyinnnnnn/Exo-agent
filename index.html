@@ -9053,17 +9053,27 @@ async function _renderFileTree(dirPath, maxDepth, _depth){
   return lines.join('\n');
 }
 
+
+function _registerDownloadable(path,content){
+  var _blob=new Blob([content||''],{type:'application/octet-stream'});
+  var _fn=path.split('/').pop();
+  recentDownloads.push({filename:_fn,size:_blob.size,type:_blob.type,blob:_blob,time:Date.now()});
+  _artifactRegistry[_fn]={blob:_blob,filename:_fn,mimeType:_blob.type,size:_blob.size,time:Date.now()};
+  if(_recentFileBlobs)_recentFileBlobs[_fn]=_blob;
+}
+
 async function toolFilesystem(args){
   var action=args.action,path=args.path,content=args.content;
   switch(action){
     case 'create':
       var existed=await readFile(path);
       await createFile(path,content||'');
-	var totalLen=(content||'').length;
-	var preview=totalLen>5000?(content||'').substring(0,5000)+'\n...(以上为前5000字摘要，文件共'+totalLen+'字符。使用 filesystem read '+path+' 读取完整内容)':(content||'');
-	var prefix=existed!==null?' 文件已覆盖: ':' 文件已创建: ';
-	return prefix+path+' ('+totalLen+'字符)\n---内容预览---\n'+preview;
-
+      _registerDownloadable(path,content||'');
+		var totalLen=(content||'').length;
+		var preview=totalLen>5000?(content||'').substring(0,5000)+'\n...(以上为前5000字摘要，文件共'+totalLen+'字符。使用 filesystem read '+path+' 读取完整内容)':(content||'');
+		var prefix=existed!==null?' 文件已覆盖: ':' 文件已创建: ';
+		return prefix+path+' ('+totalLen+'字符)\n---内容预览---\n'+preview;
+	
     case 'read':
       var fc=await readFile(path);
       if(fc===null)return ' 文件不存在: '+path;
@@ -9113,14 +9123,8 @@ async function toolFilesystem(args){
       else info+=' |  已读完]';
       return info+']\n---\n'+numbered;
     case 'update':await updateFile(path,content);
-	// ★ 如果更新 /downloads/ 目录文件，同步更新产物注册表
-	if(path.indexOf('/downloads/')===0){
-	  var _ufn=path.split('/').pop();
-	  var _ublob=new Blob([content],{type:'application/octet-stream'});
-	  _artifactRegistry[_ufn]={blob:_ublob,filename:_ufn,mimeType:'application/octet-stream',size:_ublob.size,time:Date.now()};
-	  if(_recentFileBlobs)_recentFileBlobs[_ufn]=_ublob;
-	}
-	return ' 文件已更新: '+path;
+      _registerDownloadable(path,content);
+		return ' 文件已更新: '+path;
     case 'delete':
       if(args.safe!==false){
         // 安全删除：移到回收站
@@ -9145,7 +9149,7 @@ async function toolFilesystem(args){
       if(oldContent===null) return ' 源文件不存在: '+path;
       await createFile(newPath,oldContent);
       await deleteFile(path);
-      if(newPath.indexOf('/downloads/')===0){recentDownloads.push({filename:newPath.split('/').pop(),size:new Blob([oldContent||'']).size,type:'application/octet-stream',blob:new Blob([oldContent||''],{type:'application/octet-stream'}),time:Date.now()});}
+      _registerDownloadable(newPath,oldContent||'');
       return ' 已重命名: '+path+' → '+newPath;
     case 'move':
       if(!args.new_path) throw new Error('move 需要 new_path 参数');
@@ -9157,7 +9161,7 @@ async function toolFilesystem(args){
       await createFile(moveDest,moveContent);
       await deleteFile(path);
       if(path.indexOf('/uploads/')===0){uploadedFiles=uploadedFiles.filter(function(f){return f.path!==path;});}
-      if(moveDest.indexOf('/downloads/')===0){recentDownloads.push({filename:moveDest.split('/').pop(),size:new Blob([moveContent||'']).size,type:'application/octet-stream',blob:new Blob([moveContent||''],{type:'application/octet-stream'}),time:Date.now()});}
+      _registerDownloadable(moveDest,moveContent||'');
       return ' 已移动: '+path+' → '+moveDest;
     case 'copy':
       if(!args.new_path) throw new Error('copy 需要 new_path 参数');
@@ -9167,12 +9171,14 @@ async function toolFilesystem(args){
       var copyContent=await readFile(path);
       if(copyContent===null) return ' 源文件不存在: '+path;
       await createFile(copyDest,copyContent);
-      if(copyDest.indexOf('/downloads/')===0){recentDownloads.push({filename:copyDest.split('/').pop(),size:new Blob([copyContent||'']).size,type:'application/octet-stream',blob:new Blob([copyContent||''],{type:'application/octet-stream'}),time:Date.now()});}
+      _registerDownloadable(copyDest,copyContent||'');
       return ' 已复制: '+path+' → '+copyDest;
     case 'append':
       if(!content)throw new Error('append 需要 content 参数');
       var current=await readFile(path)||'';
-      await updateFile(path,current+content);
+      var _apNew=current+content;
+      await updateFile(path,_apNew);
+      _registerDownloadable(path,_apNew);
       return '内容已追加到文件末尾: '+path;
     case 'insert':
       if(content==null)throw new Error('insert 需要 content 参数');
@@ -9182,7 +9188,9 @@ async function toolFilesystem(args){
       if(line<1)line=1;
       if(line>lines.length+1)line=lines.length+1;
       lines.splice(line-1,0,...content.split('\n'));
-      await updateFile(path,lines.join('\n'));
+      var _insNew=lines.join('\n');
+      await updateFile(path,_insNew);
+      _registerDownloadable(path,_insNew);
       return '已在第 '+line+' 行插入内容: '+path;
     case 'delete_lines':
       var dlStart=(args.line!=null?args.line:1)-1;
@@ -9193,7 +9201,9 @@ async function toolFilesystem(args){
       if(dlStart>=lines2.length)return '行号超出文件范围: '+path;
       if(dlEnd<=0||dlEnd>lines2.length)dlEnd=lines2.length;
       lines2.splice(dlStart,dlEnd-dlStart);
-      await updateFile(path,lines2.join('\n'));
+      var _dlNew=lines2.join('\n');
+      await updateFile(path,_dlNew);
+      _registerDownloadable(path,_dlNew);
       return '已删除第 '+(dlStart+1)+' 到第 '+dlEnd+' 行: '+path;
     case 'replace_lines':
       if(!content&&content!=='')throw new Error('replace_lines 需要 content 参数（空字符串=清空指定行）');
@@ -9205,7 +9215,9 @@ async function toolFilesystem(args){
       if(rlStart>=lines3.length)return '行号超出文件范围: '+path;
       if(rlEnd<=0||rlEnd>lines3.length)rlEnd=lines3.length;
       lines3.splice(rlStart,rlEnd-rlStart,...content.split('\n'));
-      await updateFile(path,lines3.join('\n'));
+      var _rlNew=lines3.join('\n');
+      await updateFile(path,_rlNew);
+      _registerDownloadable(path,_rlNew);
       return '已替换第 '+(rlStart+1)+' 到第 '+rlEnd+' 行: '+path;
     case 'list':
       return await _renderFileTree(path||'/', args.depth||5);
