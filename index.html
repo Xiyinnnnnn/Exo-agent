@@ -18483,6 +18483,14 @@ async function resetSystem(){
     overlay.addEventListener('click',function(e){if(e.target===overlay){overlay.remove();resolve(null);}});
   });
   if(resetResult===null)return;
+  // ★ 清库前保存敏感凭据快照，避免清库过程中 settings 被意外修改
+  var _oldApiKey=settings.deepseek_api_key||'';
+  var _oldTavilyKeys=(settings.tavily_api_keys||[]).slice();
+  var _oldEnvVars=settings.environment_variables?JSON.parse(JSON.stringify(settings.environment_variables)):{};
+  var _oldSmtpUser=settings.smtp_user||'';
+  var _oldSmtpPass=settings.smtp_pass||'';
+  var _oldSmtpRelayUrl=settings.smtp_relay_url||'';
+  var _oldSttEndpoint=settings.stt_endpoint||'';
   try{
     if(evoWorkerManager){evoWorkerManager.terminate();evoWorker=null;}
     if(taskWorkerManager){taskWorkerManager.terminate();taskWorker=null;}
@@ -18555,14 +18563,14 @@ async function resetSystem(){
     conversationDB.entries=[{id:currentConversationId,title:'新对话',createdAt:Date.now(),activeSkillIds:[]}];
     localStorage.setItem('exo_last_conv', currentConversationId);
     settings={
-      deepseek_api_key:resetResult?'' : settings.deepseek_api_key||'',
-      tavily_api_keys:resetResult?[] : settings.tavily_api_keys||[],
+      deepseek_api_key:resetResult?'':_oldApiKey,
+      tavily_api_keys:resetResult?[]:_oldTavilyKeys,
       base_url:settings.base_url||'https://api.deepseek.com',
       model:settings.model||'deepseek-v4-flash',
       daily_limit:100000,
       daily_token_limit:222000000,
       reserve_ratio:0.5,
-      environment_variables:{},
+      environment_variables:resetResult?{}:_oldEnvVars,
       evolution_enabled:true,
       debug_level:'warn',      reasoning_effort:'max',
       max_tokens:384000,
@@ -18577,9 +18585,9 @@ async function resetSystem(){
       email_enabled:false,
       smtp_host:'smtp.gmail.com',
       smtp_port:587,
-      smtp_user:'',
-      smtp_pass:'',
-      smtp_relay_url:'',
+      smtp_user:resetResult?'':_oldSmtpUser,
+      smtp_pass:resetResult?'':_oldSmtpPass,
+      smtp_relay_url:resetResult?'':_oldSmtpRelayUrl,
       geo_enabled:false,
       sql_enabled:false,
       notify_enabled:false,
@@ -18601,7 +18609,7 @@ async function resetSystem(){
       calendar_auto_wake:false,
       calendar_wake_prompt:'',
       calendar_wake_interval:30,
-      stt_endpoint:'',
+      stt_endpoint:resetResult?'':_oldSttEndpoint,
       pipeline_enabled:true,
       mcts_fast_token_budget:22200000,
       mcts_standard_token_budget:44400000,
