@@ -753,7 +753,10 @@ button,label,[role="button"],.file-upload-btn{
         <div class="settings-field">
           <label>Tavily API Keys（多Key轮换，超额自动切换）</label>
           <div id="tavilyKeysContainer" style="display:flex;flex-direction:column;gap:6px;"></div>
-          <button type="button" id="btnAddTavilyKey" style="margin-top:8px;font-size:13px;padding:4px 12px;border-radius:6px;border:1px dashed var(--color-border);background:var(--color-bg);cursor:pointer;color:var(--color-primary);">+ 添加 Key</button>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button type="button" id="btnAddTavilyKey" style="flex:1;font-size:13px;padding:4px 12px;border-radius:6px;border:1px dashed var(--color-border);background:var(--color-bg);cursor:pointer;color:var(--color-primary);">+ 添加 Key</button>
+            <button class="btn btn-outline btn-sm" id="btnVerifyAllTavilyKeys" style="flex:1;font-size:12px">验证全部Key</button>
+          </div>
           <input type="hidden" id="settingTavilyKeys" value="[]">
           <div class="help-text">支持多个Tavily API Key。单个Key超额(429/403)时自动轮换下一个，直到全部额度用完。</div>
         </div>
@@ -5305,10 +5308,12 @@ function addTavilyKeyInput(value){
   if(!container)return;
   var row=document.createElement('div');
   row.style.display='flex';row.style.gap='4px';row.style.alignItems='center';
-  row.innerHTML='<input type="password" class="tavily-key-input" placeholder="tvly-..." value="'+_escapeAttr(value)+'" style="flex:1;padding:7px 10px;border:1px solid var(--color-border);border-radius:6px;font-size:14px;background:var(--color-surface);color:var(--color-text)"><button type="button" class="btn-remove-tavily-key" title="移除" style="background:none;border:none;cursor:pointer;color:var(--color-danger);font-size:18px;padding:0 4px;line-height:1">&times;</button>';
+  row.innerHTML='<input type="password" class="tavily-key-input" placeholder="tvly-..." value="'+_escapeAttr(value)+'" style="flex:1;padding:7px 10px;border:1px solid var(--color-border);border-radius:6px;font-size:14px;background:var(--color-surface);color:var(--color-text)"><button type="button" class="btn-verify-tavily-key btn btn-outline btn-sm" style="flex-shrink:0;font-size:11px;padding:3px 8px">验证</button><button type="button" class="btn-remove-tavily-key" title="移除" style="background:none;border:none;cursor:pointer;color:var(--color-danger);font-size:18px;padding:0 4px;line-height:1">&times;</button>';
   var _inputEl=row.querySelector('.tavily-key-input');
+  var _verifyEl=row.querySelector('.btn-verify-tavily-key');
   var _btnEl=row.querySelector('.btn-remove-tavily-key');
   if(_inputEl)_inputEl.addEventListener('input',_syncTavilyKeys);
+  if(_verifyEl)_verifyEl.addEventListener('click',function(){verifyTavilyKey(_verifyEl);});
   if(_btnEl)_btnEl.addEventListener('click',function(){removeTavilyKeyInput(_btnEl);});
   container.appendChild(row);
   _syncTavilyKeys();
@@ -5338,6 +5343,24 @@ function _renderTavilyKeyInputs(){
   if(keys.length===0){addTavilyKeyInput('');}
 }
 function _escapeAttr(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+async function verifyTavilyKey(btnEl){
+  var row=btnEl.parentElement;
+  var input=row.querySelector('.tavily-key-input');
+  var key=(input.value||'').trim();
+  if(!key){showToast('请先输入Tavily API Key','warning');return;}
+  btnEl.disabled=true;btnEl.textContent='验证中...';
+  try{
+    var resp=await fetch('https://api.tavily.com/search',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({api_key:key,query:'test',max_results:1})
+    });
+    if(resp.ok){showToast('Tavily Key 有效','success');}
+    else{var t=await resp.text();showToast('失败: HTTP '+resp.status+' '+(t||'').slice(0,80),'error');}
+  }catch(e){showToast('网络错误: '+e.message,'error');}
+  btnEl.disabled=false;btnEl.textContent='验证';
+}
 
 var _btnTestTTS_bound=false;
 
@@ -18904,6 +18927,12 @@ function initEventBindings(){
   if(btnSaveSettings)btnSaveSettings.addEventListener('click',saveSettings);
   var btnAddTavilyKey=document.getElementById('btnAddTavilyKey');
   if(btnAddTavilyKey)btnAddTavilyKey.addEventListener('click',function(){addTavilyKeyInput();});
+  var btnVerifyAllTavilyKeys=document.getElementById('btnVerifyAllTavilyKeys');
+  if(btnVerifyAllTavilyKeys)btnVerifyAllTavilyKeys.addEventListener('click',function(){
+    var btns=document.querySelectorAll('#tavilyKeysContainer .btn-verify-tavily-key');
+    if(!btns.length){showToast('没有可验证的Key','warning');return;}
+    for(var i=0;i<btns.length;i++){verifyTavilyKey(btns[i]);}
+  });
 
   // === 设置面板折叠/展开 ===
   window.toggleSettingsSection=function(headerEl){
