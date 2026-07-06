@@ -3171,7 +3171,7 @@ var LOG_LEVELS={ERROR:0,WARN:1,INFO:2,DEBUG:3};
 
 var EXTERNAL_LIBRARIES={
   'markdown-it':{urls:['https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js','https://unpkg.com/markdown-it@14/dist/markdown-it.min.js','https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js'],global:'markdownit',required:true,loadOnStart:true},
-  'katex':{urls:['https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js','https://unpkg.com/katex@0.16/dist/katex.min.js','https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js'],cssUrls:['https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css','https://unpkg.com/katex@0.16/dist/katex.min.css','https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css'],global:'katex',required:false,loadOnStart:false},
+  'katex':{urls:['https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js','https://unpkg.com/katex@0.16/dist/katex.min.js','https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js'],cssUrls:['https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css','https://unpkg.com/katex@0.16/dist/katex.min.css','https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css'],global:'katex',required:false,loadOnStart:true},
   'highlight':{urls:['https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js','https://unpkg.com/@highlightjs/cdn-assets@11.9.0/highlight.min.js','https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'],cssUrls:['https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github.min.css','https://unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/github.min.css','https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css'],global:'hljs',required:false,loadOnStart:false},
   'mermaid':{urls:['https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js','https://unpkg.com/mermaid@10/dist/mermaid.min.js','https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js'],global:'mermaid',required:false,loadOnStart:false},
   'dompurify':{urls:['https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js','https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js','https://unpkg.com/dompurify@3.2.4/dist/purify.min.js'],global:'DOMPurify',required:true,loadOnStart:true},
@@ -6508,7 +6508,7 @@ function renderMarkdown(text){
   }
   // ★ 代码块复制按钮（HTML注入后调用 _injectCodeCopyButtons 操作DOM）
   html=html.replace(/<pre><code/g,'<pre class="code-block-wrapper"><code');
-  if(window.DOMPurify){html=DOMPurify.sanitize(html);}
+  if(window.DOMPurify){html=DOMPurify.sanitize(html,{ADD_ATTR:['mathvariant','mathsize','displaystyle','scriptlevel','linethickness','columnspacing','rowspacing','fractionrule','lspace','rspace','selection','minsize','maxsize']});}
   return html;
 }
 
@@ -6526,12 +6526,14 @@ var _SAFE_ATTRS={class:1,id:1,style:1,alt:1,title:1,href:1,src:1,
   points:1,'font-size':1,'font-family':1,'text-anchor':1,'dominant-baseline':1,
   'data-target':1,'data-expand-label':1,'data-collapse-label':1,'data-filename':1,
   'data-chart-config':1,'data-vis-nodes':1,'data-vis-edges':1,'data-svg-animation':1,'data-processed':1,
-  'type':1,'clip-path':1,'stroke-dasharray':1};
+  'type':1,'clip-path':1,'stroke-dasharray':1,
+  'mathvariant':1,'mathsize':1,'displaystyle':1,'scriptlevel':1,
+  'linethickness':1,'lspace':1,'rspace':1,'selection':1,'minsize':1,'maxsize':1,'aria-hidden':1};
 var _DANGEROUS_HREF=/^(javascript|data\s*:|vbscript):/i;
 
 function sanitizeArtifactHTML(html){
   if(!html||typeof html!=='string')return '';
-  if(window.DOMPurify){return DOMPurify.sanitize(html);}
+  if(window.DOMPurify){return DOMPurify.sanitize(html,{ADD_TAGS:['math','semantics','annotation','mrow','mi','mo','mn','msup','msub','mfrac','msqrt','mover','munder'],ADD_ATTR:['mathvariant','mathsize','displaystyle','scriptlevel','linethickness','lspace','rspace','selection','minsize','maxsize','aria-hidden']});}
   var doc=new DOMParser().parseFromString(html,'text/html');
   var body=doc.body;
   _sanitizeNode(body);
@@ -20015,6 +20017,10 @@ async function initApp(){
     // 1. 预加载必要库（markdown-it 等）
     try{await preloadRequiredLibraries();}
     catch(e){debugLogger.warn('库预加载部分失败: '+e.message);}
+
+    // 1b. 预加载 KaTeX（数学公式渲染，非 required 故单独加载）
+    try{await loadLibrary('katex');}
+    catch(e){debugLogger.warn('KaTeX 预加载失败: '+e.message);}
 
     // 2. 初始化IndexedDB
     try{await getDB();debugLogger.info('数据库就绪');}
