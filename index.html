@@ -2012,7 +2012,7 @@ var TOOL_REGISTRY={
     parameters:{type:'object',properties:{action:{type:'string',enum:['define','list','load','step','run','transition','status','delete','export','diff','edit','reset','history','flush_pending','clear_pending']},world_id:{type:'string'},format:{type:'string',enum:['json','yaml','nl','csv','uml'],default:'json'},def:{type:'object'},def_text:{type:'string'},entity_id:{type:'string'},event:{type:'string'},events:{type:'array',items:{type:'string'}},context:{type:'object'},max_ticks:{type:'number',default:100,maximum:1000},snapshot_id:{type:'string'},target_snapshot:{type:'string'},export_format:{type:'string',enum:['mermaid','plantuml','graphviz','csv','json','matrix']},changes:{type:'object'},tick_limit:{type:'number',default:50,maximum:500}},required:['action']}},
   'flow_mode':{name:'flow_mode',description:'心流深度工作模式。复杂任务时载入使用。action:start。启动后监工接管，自主迭代直至达标交付。',executor:'main_thread',flow_role:'root',
     parameters:{type:'object',properties:{action:{type:'string',enum:['start']},task:{type:'string',description:'任务描述，为空时自动从对话上下文提取'}},required:['action']}},
-  'todo':{name:'todo',description:'目标清单。action:create/start/done/fail/add/reorder/list。复杂任务[MUST]先建清单，逐条完成逐条done。',executor:'main_thread',
+  'todo':{name:'todo',description:'目标清单。action:create/start/done/fail/add/reorder/list。每会话仅一个活跃清单，start/done/fail只需item_id无需todo_id。复杂任务[MUST]先建清单，逐条完成逐条done。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['create','start','done','fail','add','reorder','list']},todo_id:{type:'string'},title:{type:'string',description:'清单标题(action=create)'},items:{type:'array',items:{type:'object',properties:{id:{type:'string'},desc:{type:'string'},depends_on:{type:'array',items:{type:'string'}}}}},item_id:{type:'string',description:'条目id(action=start/done/fail)'},item:{type:'object',properties:{id:{type:'string'},desc:{type:'string'},depends_on:{type:'array',items:{type:'string'}}}},evidence:{type:'string',description:'完成证据:文件路径/exitCode/输出摘要(action=done)'},reason:{type:'string',description:'受阻原因(action=fail)'},fallback:{type:'string',description:'替代方案(action=fail)'},item_ids:{type:'array',items:{type:'string'},description:'新顺序(action=reorder)'}},required:['action']}},
   'flow_context_new':{name:'flow_context_new',description:'[监工]创建新的干活Agent上下文。summary=前情摘要,first_task=第一条任务指令。',executor:'main_thread',flow_role:'supervisor',
     parameters:{type:'object',properties:{summary:{type:'string',description:'前情摘要(完成了什么/文件在哪/剩余问题)'},first_task:{type:'string',description:'第一条任务指令'}},required:['summary','first_task']}},
@@ -17394,7 +17394,7 @@ function _executeTodo(args, convId){
       return{ok:true,todo_id:todo_id,stats:todos.stats};
 
     case'start':
-      if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
+      if(!todos)return{ok:false,error:'无清单，请先 todo create'};
       var startItem=null;
       for(var i=0;i<todos.items.length;i++){if(todos.items[i].id===args.item_id){startItem=todos.items[i];break;}}
       if(!startItem)return{ok:false,error:'条目不存在: '+args.item_id};
@@ -17413,7 +17413,7 @@ function _executeTodo(args, convId){
       todos._dirty=true;
       _recalcStats(todos);
       _setTodos(convId,todos);
-      return{ok:true,item_id:args.item_id,stats:todos.stats};
+      return{ok:true,item_id:args.item_id,item_desc:startItem.desc,status:'doing',stats:todos.stats};
 
     case'done':
       if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
@@ -17428,7 +17428,7 @@ function _executeTodo(args, convId){
       todos._dirty=true;
       _recalcStats(todos);
       _setTodos(convId,todos);
-      return{ok:true,item_id:args.item_id,stats:todos.stats};
+      return{ok:true,item_id:args.item_id,item_desc:doneItem.desc,status:'done',stats:todos.stats};
 
     case'fail':
       if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
@@ -17442,7 +17442,7 @@ function _executeTodo(args, convId){
       todos._dirty=true;
       _recalcStats(todos);
       _setTodos(convId,todos);
-      return{ok:true,item_id:args.item_id,stats:todos.stats};
+      return{ok:true,item_id:args.item_id,item_desc:failItem.desc,status:'failed',stats:todos.stats};
 
     case'add':
       if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
@@ -17466,7 +17466,7 @@ function _executeTodo(args, convId){
       todos._dirty=true;
       _recalcStats(todos);
       _setTodos(convId,todos);
-      return{ok:true,item_id:args.item.id,stats:todos.stats};
+      return{ok:true,item_id:args.item.id,item_desc:args.item.desc,status:'todo',stats:todos.stats};
 
     case'reorder':
       if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
@@ -17503,7 +17503,7 @@ function _recalcStats(todos){
     else stats.todo++;
   }
   todos.stats=stats;
-  if(stats.total===stats.done)todos.active=false;
+  if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
 }
 
 function _detectCycle(items){
