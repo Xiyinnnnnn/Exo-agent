@@ -5353,8 +5353,8 @@ async function verifyTavilyKey(btnEl){
   try{
     var resp=await fetch('https://api.tavily.com/search',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({api_key:key,query:'test',max_results:1})
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
+      body:JSON.stringify({query:'test',max_results:1,search_depth:'basic'})
     });
     if(resp.ok){showToast('Tavily Key 有效','success');}
     else{var t=await resp.text();showToast('失败: HTTP '+resp.status+' '+(t||'').slice(0,80),'error');}
