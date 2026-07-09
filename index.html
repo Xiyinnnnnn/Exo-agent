@@ -4363,14 +4363,24 @@ var debugLogger={
   clear:function(){this.entries=[];this.render();},
   setLevel:function(levelName){
     var lv=LOG_LEVELS[levelName];
-    if(lv!==undefined)this.level=lv;
+    if(lv!==undefined){
+      this.level=lv;
+    }
+    // 无论是否有效级别名，都持久化。有效级别如 WARN/INFO，无效如 ALL（选择"全部"时使用）
+    var persistName=levelName.toLowerCase();
+    try{localStorage.setItem('exo_debug_level',persistName);settings.debug_level=persistName;}catch(e){}
+    // 更新 DOM 下拉框（修复：ALL 也对应设置 value="all"）
     var sel=document.getElementById('logLevel');
     if(sel){
-      var self=this;
-      var v=Object.keys(LOG_LEVELS).find(function(k){return LOG_LEVELS[k]===self.level;});
-      if(v)sel.value=v.toLowerCase();
+      if(lv!==undefined){
+        // 有效级别名：如 WARN→'warn', INFO→'info'
+        var v=Object.keys(LOG_LEVELS).find(function(k){return LOG_LEVELS[k]===lv;});
+        if(v)sel.value=v.toLowerCase();
+      }else{
+        // 无效级别名（如 ALL）：直接将下拉框设为 value="all"
+        sel.value='all';
+      }
     }
-    try{localStorage.setItem('exo_debug_level',levelName.toLowerCase());settings.debug_level=levelName.toLowerCase();}catch(e){}
   },
   render:function(){
     var container=document.getElementById('logEntries');
@@ -19651,9 +19661,8 @@ function initEventBindings(){
   var logLevelSelect=document.getElementById('logLevel');
   if(logLevelSelect){
     logLevelSelect.addEventListener('change',function(){
-      if(this.value!=='all'){
-        debugLogger.setLevel(this.value.toUpperCase());
-      }
+      // ★【修复】始终调用 setLevel，包括"全部"（ALL），持久化用户选择
+      debugLogger.setLevel(this.value.toUpperCase());
       debugLogger.render();
     });
   }
@@ -19692,12 +19701,8 @@ function initEventBindings(){
       for(var ti=0;ti<allTags.length;ti++)allTags[ti].classList.remove('active');
       tag.classList.add('active');
       _activeFileCat=tag.getAttribute('data-cat')||'all';
-      var sq=document.getElementById('filePolicySearch');
-      renderFileManager(_activeFileCat,sq?sq.value.trim():'');
     });
   }
-  var logLevel=document.getElementById('logLevel');
-  if(logLevel)logLevel.addEventListener('change',function(){debugLogger.setLevel(this.value.toUpperCase());});
 
   // 设置面板内 range 变化
   var reserveRatio=document.getElementById('settingReserveRatio');
