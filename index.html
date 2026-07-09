@@ -9085,8 +9085,24 @@ function _registerDownloadable(path,content){
   if(_recentFileBlobs)_recentFileBlobs[_fn]=_blob;
 }
 
+var _fileWriteLocks=new Map();
+
 async function toolFilesystem(args){
   var action=args.action,path=args.path,content=args.content;
+  // ★ 文件写操作互斥锁：per-path Promise链，同路径写操作串行执行
+  var _writeActions=['create','update','replace_lines','delete_lines','insert','append','copy','move','rename','delete'];
+  if(_writeActions.indexOf(action)>=0&&path&&!args._locked){
+    var _np=normalizePath(path);
+    var _prev=_fileWriteLocks.get(_np)||Promise.resolve();
+    args._locked=true;
+    var _next=_prev.then(function(){return toolFilesystem(args);},function(){return toolFilesystem(args);});
+    var _cleanup=_next.catch(function(){}).then(function(){
+      if(_fileWriteLocks.get(_np)===_cleanup)_fileWriteLocks.delete(_np);
+    });
+    _fileWriteLocks.set(_np,_cleanup);
+    return _next;
+  }
+
   switch(action){
     case 'create':
       var existed=await readFile(path);
@@ -9166,6 +9182,11 @@ async function toolFilesystem(args){
       if(!args.new_name) throw new Error('rename 需要 new_name 参数');
       var oldDir=path.substring(0,path.lastIndexOf('/')+1);
       var newPath=oldDir+args.new_name;
+      // ★ 等待目标路径的写操作完成，防 rename + 其他写操作并发
+      var _destNP_n=normalizePath(newPath);
+      var _destLock_n=_fileWriteLocks.get(_destNP_n);
+      if(_destLock_n) await _destLock_n;
+
       var existingNew=await readFile(newPath);
       if(existingNew!==null && !args.overwrite) return ' 目标已存在: '+newPath+'。使用 overwrite=true 覆盖';
       var oldContent=await readFile(path);
@@ -9177,6 +9198,11 @@ async function toolFilesystem(args){
     case 'move':
       if(!args.new_path) throw new Error('move 需要 new_path 参数');
       var moveDest=args.new_path;
+      // ★ 等待目标路径的写操作完成，防 move + 其他写操作并发
+      var _destNP_m=normalizePath(moveDest);
+      var _destLock_m=_fileWriteLocks.get(_destNP_m);
+      if(_destLock_m) await _destLock_m;
+
       var moveExisting=await readFile(moveDest);
       if(moveExisting!==null && !args.overwrite) return ' 目标已存在: '+moveDest+'。使用 overwrite=true 覆盖';
       var moveContent=await readFile(path);
@@ -9189,6 +9215,11 @@ async function toolFilesystem(args){
     case 'copy':
       if(!args.new_path) throw new Error('copy 需要 new_path 参数');
       var copyDest=args.new_path;
+      // ★ 等待目标路径的写操作完成，防 copy + 其他写操作并发
+      var _destNP_c=normalizePath(copyDest);
+      var _destLock_c=_fileWriteLocks.get(_destNP_c);
+      if(_destLock_c) await _destLock_c;
+
       var copyExisting=await readFile(copyDest);
       if(copyExisting!==null && !args.overwrite) return ' 目标已存在: '+copyDest+'。使用 overwrite=true 覆盖';
       var copyContent=await readFile(path);
@@ -9223,7 +9254,9 @@ async function toolFilesystem(args){
       var lines2=src2.split('\n');
       if(dlStart>=lines2.length)return '行号超出文件范围: '+path;
       if(dlEnd<=0||dlEnd>lines2.length)dlEnd=lines2.length;
-      lines2.splice(dlStart,dlEnd-dlStart);
+      var dlDeleteCount=dlEnd-dlStart;
+      if(dlDeleteCount<=0)return '行号参数无效：endLine('+dlEnd+')必须≥line('+(dlStart+1)+')，当前deleteCount='+dlDeleteCount+'，未执行删除。';
+      lines2.splice(dlStart,dlDeleteCount);
       var _dlNew=lines2.join('\n');
       await updateFile(path,_dlNew);
       _registerDownloadable(path,_dlNew);
@@ -9237,7 +9270,9 @@ async function toolFilesystem(args){
       var lines3=src3.split('\n');
       if(rlStart>=lines3.length)return '行号超出文件范围: '+path;
       if(rlEnd<=0||rlEnd>lines3.length)rlEnd=lines3.length;
-      lines3.splice(rlStart,rlEnd-rlStart,...content.split('\n'));
+      var deleteCount=rlEnd-rlStart;
+      if(deleteCount<=0)return '行号参数无效：endLine('+rlEnd+')必须≥line('+(rlStart+1)+')，当前deleteCount='+deleteCount+'。如需单行替换请确保line=endLine。如需删除后插入，可先delete_lines再insert。';
+      lines3.splice(rlStart,deleteCount,...content.split('\n'));
       var _rlNew=lines3.join('\n');
       await updateFile(path,_rlNew);
       _registerDownloadable(path,_rlNew);
