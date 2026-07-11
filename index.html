@@ -5086,7 +5086,10 @@ async function saveSettings(){
   if(newSettings.mcts_fast_token_budget===5000000||newSettings.mcts_fast_token_budget===_oldFastProp)
     newSettings.mcts_fast_token_budget=Math.round(newSettings.daily_token_limit/10);
   if(newSettings.mcts_standard_token_budget===10000000||newSettings.mcts_standard_token_budget===_oldStdProp)
+  if(newSettings.mcts_standard_token_budget===10000000||newSettings.mcts_standard_token_budget===_oldStdProp)
     newSettings.mcts_standard_token_budget=Math.round(newSettings.daily_token_limit/5);
+  // ★ 保留缓存的模型列表（由获取模型按钮填充，无对应 DOM 元素）
+  newSettings.cached_models = settings.cached_models || null;
   settings=newSettings;
   var hasKeys=(newSettings.tavily_api_keys&&newSettings.tavily_api_keys.length>0)||(newSettings.tavily_api_key&&newSettings.tavily_api_key.trim());
   TOOL_REGISTRY['search'].disabled=!(newSettings.tavily_enabled&&hasKeys);
@@ -5307,6 +5310,25 @@ function applySettingsToUI(){
           showToast('语音列表已更新','success');
         }catch(e){showToast('语音查询失败: '+e.message,'warning');}
       });
+    }
+  }
+  // ★ 恢复缓存的模型列表：cached_models 存在则直接渲染 <select>，无需重新请求 API
+  var _cachedModels = settings.cached_models;
+  if (_cachedModels && Array.isArray(_cachedModels) && _cachedModels.length > 0) {
+    var _modelInput = document.getElementById('settingModel');
+    if (_modelInput && _modelInput.tagName === 'INPUT') {
+      var _parent = _modelInput.parentNode;
+      var _sel = document.createElement('select');
+      _sel.id = 'settingModel';
+      _sel.style.cssText = 'width:100%;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;outline:none';
+      for (var _mi = 0; _mi < _cachedModels.length; _mi++) {
+        var _o = document.createElement('option');
+        _o.value = _cachedModels[_mi];
+        _o.textContent = _cachedModels[_mi];
+        if (_cachedModels[_mi] === settings.model) _o.selected = true;
+        _sel.appendChild(_o);
+      }
+      _parent.replaceChild(_sel, _modelInput);
     }
   }
 }
@@ -19177,7 +19199,10 @@ function initEventBindings(){
         sel.appendChild(o);
       }
       parent.replaceChild(sel,modelEl);
-      showToast('已获取 '+models.length+' 个模型','success');
+      // ★ 将模型列表持久化缓存到 settings 中，下次直接复用无需 API 请求
+      settings.cached_models = models.map(function(m){ return m.id; });
+      saveSettings();
+      showToast('已获取 '+models.length+' 个模型并缓存','success');
     }catch(e){showToast('网络错误: '+e.message,'error');}
     btnFetchModels.disabled=false;btnFetchModels.textContent='获取模型';
   });
