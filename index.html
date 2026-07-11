@@ -47,6 +47,11 @@ body{
 .status-dot.processing{background:#f39c12;animation:pulse 1s infinite}
 .status-dot.error{background:#e74c3c}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.toolbar-left{display:flex;align-items:center;gap:6px}
+.token-counter{font-size:11px;color:var(--color-text-secondary);padding:1px 6px;background:var(--color-bg);border-radius:4px;font-family:monospace;white-space:nowrap;line-height:1.6;margin-left:6px;user-select:none;cursor:pointer;transition:background .2s,color .2s,border-color .2s;border:1px solid transparent}
+.token-counter:hover{border-color:var(--color-primary);color:var(--color-text);background:#e9ecef}
+.token-counter.warning{color:#e67e22;border-color:#e67e22}
+.token-counter.danger{color:#e74c3c;border-color:#e74c3c}
 .toolbar-right{display:flex;gap:4px}
 .toolbar-right button{
   background:none;border:none;min-width:44px;min-height:44px;width:44px;height:44px;
@@ -648,6 +653,7 @@ button,label,[role="button"],.file-upload-btn{
   <div class="toolbar-left">
     <span class="app-logo">Exo</span>
     <span class="status-dot idle" id="statusDot" title="系统就绪"></span>
+    <span class="token-counter" id="tokenCounter" title="当前上下文累计Token量，点击触发压缩">0 tok</span>
   </div>
   <div class="toolbar-right">
     <button id="btnToggleSidebar" title="对话历史" aria-label="对话历史">
@@ -3868,6 +3874,94 @@ function _updateTokenAccumulator(convId,tokens){
 function _getCumulativeTokens(convId){
   return _convTokenAccumulator[convId||currentConversationId]||0;
 }
+/* ===== Token持久化 (按对话隔离) ===== */
+async function _saveTokenCounts(){
+  try{
+    var raw=await readFile('/config/token_counts.json');
+    var data=raw?JSON.parse(raw):{};
+    data[currentConversationId]=_getCumulativeTokens(currentConversationId);
+    var meta=await getFileMeta('/config/token_counts.json');
+    if(meta)await updateFile('/config/token_counts.json',JSON.stringify(data));
+    else await createFile('/config/token_counts.json',JSON.stringify(data));
+  }catch(e){}
+}
+async function _loadTokenCounts(){
+  try{
+    var raw=await readFile('/config/token_counts.json');
+    if(raw){
+      var data=JSON.parse(raw);
+      for(var k in data)_updateTokenAccumulator(k,data[k]);
+    }
+  }catch(e){}
+}
+/* ===== 工具栏Token显示 & 点击压缩 ===== */
+function _updateToolbarTokenDisplay(){
+  var el=document.getElementById('tokenCounter');
+  if(!el)return;
+  var tokens=_getCumulativeTokens(currentConversationId)||0;
+  var limit=settings.daily_token_limit||222000000;
+  var display=tokens>=1000000?(tokens/1000000).toFixed(1)+'M':tokens>=1000?(tokens/1000).toFixed(0)+'K':tokens+'';
+  el.textContent=display+' tok';
+  el.className='token-counter';
+  var pct=limit>0?tokens/limit:0;
+  if(pct>0.15)el.classList.add('warning');
+  if(pct>0.30)el.classList.add('danger');
+}
+var _compressingLock=false;
+async function _triggerManualCompression(){
+  if(_compressingLock){showToast('正在压缩中，请稍候...','warning');return;}
+  var convId=currentConversationId;
+  if(!convId)return;
+  var cs=_ensureConvState(convId);
+  if(cs&&cs.isProcessing){showToast('正在处理中，无法压缩','warning');return;}
+  var msgs=window._persistentMessages&&window._persistentMessages[convId];
+  if(!msgs||msgs.length<3){showToast('对话太短(<3条)，无需压缩','info');return;}
+  _compressingLock=true;
+  var container=document.getElementById('toastContainer');
+  var toast=document.createElement('div');
+  toast.className='toast info';
+  toast.textContent='正在压缩上下文';
+  if(container)container.appendChild(toast);
+  var dots=0,dotTimer=setInterval(function(){
+    dots=(dots+1)%4;
+    toast.textContent='正在压缩上下文'+'.'.repeat(dots);
+  },500);
+  try{
+    var compressed=await _compressOldMessages(msgs,0);
+    clearInterval(dotTimer);
+    if(compressed){
+      window._persistentMessages[convId]=compressed;
+      _updateTokenAccumulator(convId,_estimateTokens(JSON.stringify(compressed)));
+      _updateToolbarTokenDisplay();
+      _saveTokenCounts();
+      toast.className='toast success';
+      toast.textContent='上下文已成功压缩 → '+compressed.length+' 条消息';
+    }else{
+      toast.className='toast info';
+      toast.textContent='当前上下文无需压缩';
+    }
+  }catch(e){
+    clearInterval(dotTimer);
+    toast.className='toast error';
+    toast.textContent='压缩失败: '+e.message.substring(0,60);
+  }
+  setTimeout(function(){
+    toast.style.opacity='0';
+    toast.style.transition='opacity 0.3s ease';
+    setTimeout(function(){if(toast.parentNode)toast.remove();},300);
+  },3000);
+  _compressingLock=false;
+}
+
+/* ===== 定时刷新Token显示 + 启动 ===== */
+function _startTokenDisplayTimer(){
+  if(window._tokenTimer)clearInterval(window._tokenTimer);
+  window._tokenTimer=setInterval(function(){
+    _updateToolbarTokenDisplay();
+  },5000);
+}
+
+
 
 function resetFlowSession(workingDir){
   var sess = {
@@ -3978,8 +4072,11 @@ async function _compressOldMessages(messages,modelMaxTokens){
   // ★ 压缩积极度→触发阈值：0=宽松(664K), 100=保守(524K), 默认50=适中(594K)
   var aggressiveness=settings.compression_aggressiveness!=null?settings.compression_aggressiveness:50;
   var limit=Math.floor(_MODEL_CTX*(0.5+(100-aggressiveness)/100*0.134));
-  if(totalEst<=limit)return null;
-  if(messages.length<=2)return null;
+  // ★ modelMaxTokens===0 表示强制压缩（手动触发），跳过阈值检查
+  if(modelMaxTokens!==0){
+    if(totalEst<=limit)return null;
+    if(messages.length<=2)return null;
+  }
 
   // ★ 动态保留：从最新往前累加，直到超过 limit*60%，保留≥2条
   var keepCount=0,keepSum=0;
@@ -15738,16 +15835,36 @@ async function processUserMessage(userText,taskId){
   }catch(e){debugLogger.warn('上下文构建异常: '+e.message);}
   // 长对话自动压缩（由压缩阈值滑条控制，与上下文条数无关）
   // ★ 防二次压缩：标记已压缩状态，避免压缩后的摘要再次触发压缩循环
+  var _autoToast=document.createElement('div');
+  _autoToast.className='toast info';
+  _autoToast.textContent='正在压缩上下文';
+  var _autoC=document.getElementById('toastContainer');
+  if(_autoC)_autoC.appendChild(_autoToast);
+  var _autoDots=0,_autoTimer=setInterval(function(){
+    _autoDots=(_autoDots+1)%4;
+    _autoToast.textContent='正在压缩上下文'+'.'.repeat(_autoDots);
+  },500);
   var compressed=await _compressOldMessages(messages,1048565);
+  clearInterval(_autoTimer);
   if(compressed){
-    showToast('上下文较大，已自动压缩历史对话','info',2000);
+    _autoToast.className='toast success';
+    _autoToast.textContent='已自动压缩 → '+compressed.length+' 条消息';
     var _summaryEntry = compressed[0];
     var _historyEntries = compressed.slice(1);
     for(var _ci=0;_ci<_historyEntries.length;_ci++)_historyEntries[_ci]._compressed=true;
     messages = _historyEntries;
     messages.push(_summaryEntry);
+  }else{
+    _autoToast.className='toast info';
+    _autoToast.textContent='当前上下文无需压缩';
   }
+  setTimeout(function(){
+    _autoToast.style.opacity='0';
+    _autoToast.style.transition='opacity 0.3s ease';
+    setTimeout(function(){if(_autoToast.parentNode)_autoToast.remove();},300);
+  },3000);
   var _preUserMessages = messages.slice();
+
   // ★ 技能/工具推荐以 _injected user 消息注入到真正用户消息的上方（尾部效应）
   var triggered = getTriggeredSkillFragments(userText||'');
   if(triggered.length > 0){
@@ -16030,8 +16147,11 @@ async function processUserMessage(userText,taskId){
         }
       }
 
+
       // ★ TODO 注入 — 累计token消耗>50K或dirty标记时注入当前进度
       _updateTokenAccumulator(currentConversationId,_estimateTokens(JSON.stringify(messages)));
+      _updateToolbarTokenDisplay();
+      _saveTokenCounts();
       var _todoCard=_buildTodoUserInjection(currentConversationId,'main');
       if(_todoCard){
         messages.push({role:'user',content:_todoCard,_injected:true});
@@ -20176,10 +20296,19 @@ function initEventBindings(){
   // 初始加载后自动滚底
   if(msgListDel){msgListDel.scrollTop=msgListDel.scrollHeight;}
 
-// ★ 关闭/刷新前保存当前对话
-window.addEventListener('beforeunload',function(){
-  saveCurrentMessages();
-});
+  // ★ Token计数器点击触发压缩
+  var tokenCounter=document.getElementById('tokenCounter');
+  if(tokenCounter){
+    tokenCounter.addEventListener('click',function(e){
+      e.stopPropagation();
+      _triggerManualCompression();
+    });
+  }
+  
+  // ★ 关闭/刷新前保存当前对话
+  window.addEventListener('beforeunload',function(){
+    saveCurrentMessages();
+  });
 
 // ================================================================
 // 第42部分：启动初始化
@@ -20258,6 +20387,10 @@ async function initApp(){
 
     // 启动日历定时唤醒
     if(settings.calendar_auto_wake){_startCalendarWakeScheduler();}
+    // 加载Token持久化 + 启动定时刷新
+    await _loadTokenCounts();
+    _startTokenDisplayTimer();
+    setTimeout(function(){_updateToolbarTokenDisplay();},500);
 
     debugLogger.info('Exo 就绪');
 
