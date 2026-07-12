@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>PEE × LLM — 提示词进化引擎 V2</title>
+<style>
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;
+  --text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--gold:#e3b341;
+  --green:#3fb950;--warn:#d2991d;--danger:#f85149;--purple:#a371f7;
+  --font:13px/1.5 system-ui,'Segoe UI',sans-serif;
+  --radius:6px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:var(--font);height:100vh;overflow:hidden}
+#app{display:grid;grid-template-columns:360px 1fr 320px;grid-template-rows:1fr auto;height:100vh;gap:1px;background:var(--border)}
+#left-panel{background:var(--bg2);overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
+#center-panel{background:var(--bg);overflow-y:auto;display:flex;flex-direction:column}
+#right-panel{background:var(--bg2);overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
+#bottom-panel{grid-column:1/-1;background:var(--bg2);max-height:320px;overflow-y:auto;padding:12px 16px;border-top:1px solid var(--border);display:none}
+.panel-title{font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:4px}
+.card-header{font-weight:600;font-size:12px;margin-bottom:6px}
+label{font-size:12px;color:var(--text2);display:block;margin-bottom:2px}
+input,textarea,select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:7px 9px;color:var(--text);font:var(--font);resize:vertical}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(88,166,255,.12)}
+textarea{min-height:56px}
+button,.btn{padding:7px 14px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font:var(--font);font-weight:500;transition:all .12s;white-space:nowrap}
+button:hover{background:var(--bg);border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover{background:#4090e0}
+button.gold{background:var(--gold);border-color:var(--gold);color:#000}
+button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+button:disabled{opacity:.35;cursor:not-allowed}
+.btn-row{display:flex;gap:6px;flex-wrap:wrap}
+.badge{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600}
+.badge-ok{background:rgba(63,185,80,.15);color:var(--green)}
+.badge-warn{background:rgba(210,153,29,.15);color:var(--warn)}
+.badge-info{background:rgba(88,166,255,.15);color:var(--accent)}
+.phase-steps{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px}
+.phase-step{padding:3px 10px;border-radius:12px;font-size:11px;background:var(--bg);color:var(--text2);border:1px solid var(--border);transition:all .3s}
+.phase-step.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.phase-step.done{background:rgba(63,185,80,.15);color:var(--green);border-color:var(--green)}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.stat-item{background:var(--bg);border-radius:5px;padding:7px;text-align:center}
+.stat-value{font-size:17px;font-weight:700;color:var(--accent)}
+.stat-label{font-size:10px;color:var(--text2)}
+.log-stream{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:8px;max-height:200px;overflow-y:auto;font-family:'Cascadia Code',Consolas,monospace;font-size:11px;line-height:1.45}
+.log-entry{padding:1px 0;border-bottom:1px solid rgba(48,54,61,.35)}
+.log-entry .ts{color:var(--text2);margin-right:5px}
+.log-entry.battle{color:var(--accent)} .log-entry.breed{color:var(--green)} .log-entry.elim{color:var(--danger)} .log-entry.cv{color:var(--purple)} .log-entry.conv{color:var(--gold)} .log-entry.info{color:var(--text2)} .log-entry.err{color:var(--danger);background:rgba(248,81,73,.08)}
+.progress-bar{height:4px;background:var(--bg);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;background:var(--accent);transition:width .2s;border-radius:2px}
+.elo-table{width:100%;font-size:11px;border-collapse:collapse}
+.elo-table th,.elo-table td{padding:4px 8px;border-bottom:1px solid var(--border);text-align:left}
+.elo-table th{color:var(--text2);font-weight:600}
+.elo-table .rank{width:28px;color:var(--text2)} .elo-table .elo{color:var(--accent);font-weight:600;width:55px} .elo-table .wins{color:var(--green);width:35px} .elo-table .cv{color:var(--purple);width:50px}
+.elo-table .prompt-preview{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:550px;width:90%;max-height:85vh;overflow-y:auto}
+/* 题库卡片 */
+.question-card{border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--bg3);padding:8px}
+.qcard-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
+.qcard-hdr .qnum{font-weight:700;font-size:13px;color:var(--accent)}
+.qcard-body label{font-size:11px;margin-top:3px}
+.qcard-body textarea{min-height:38px;font-size:11px}
+.tool-cat-summary{cursor:pointer;font-size:11px;font-weight:600;color:var(--accent);padding:2px 0;user-select:none;list-style:none}
+.tool-cat-summary::-webkit-details-marker{display:none}
+.tool-cat-summary::before{content:'▶ ';font-size:9px;display:inline-block;transition:transform .15s;width:14px}
+details[open]>.tool-cat-summary::before{transform:rotate(90deg)}
+.tool-sub-items{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px;padding-left:8px}
+.tool-tag-item{display:flex;align-items:center;gap:2px;font-size:10px;cursor:pointer;padding:1px 5px;border-radius:4px;background:var(--bg);border:1px solid var(--border);transition:all .1s}
+.tool-tag-item:hover{border-color:var(--accent)}
+.tool-tag-item input[type="checkbox"]{width:11px;height:11px;margin:0}
+.sel-tools-preview{font-size:10px;color:var(--gold);margin-top:3px;min-height:14px;word-break:break-all}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+@media(max-width:768px){
+  body{overflow:hidden;position:fixed;inset:0}
+  #app{grid-template-columns:1fr;grid-template-rows:1fr auto}
+  #left-panel,#right-panel{position:fixed;top:0;width:85vw;max-width:340px;height:100vh;z-index:30;transition:transform .3s;padding-bottom:52px}
+  #left-panel{transform:translateX(-100%)}
+  #right-panel{right:0;transform:translateX(100%)}
+  #left-panel.mob-open{transform:translateX(0)}
+  #right-panel.mob-open{transform:translateX(0)}
+  #mob-nav{display:flex!important;position:fixed;bottom:0;left:0;right:0;height:44px;background:var(--bg2);border-top:1px solid var(--border);z-index:40;gap:4px;padding:4px 8px}
+  #mob-nav button{flex:1;font-size:11px;padding:4px;border-radius:4px;background:var(--bg3);border:1px solid var(--border);color:var(--text)}
+  #mob-nav button.active{background:var(--accent);color:#fff}
+  #center-panel{height:calc(100vh - 44px)}
+}
+</style>
+</head>
+<body>
+
+<div class="modal-overlay" id="settings-modal" style="display:none">
+  <div class="modal">
+    <h3 style="margin-bottom:12px">⚙️ API 设置</h3>
+    <div style="margin-bottom:8px"><label>API Key</label><input type="password" id="api-key-input" placeholder="sk-..."></div>
+    <div style="margin-bottom:8px"><label>Base URL</label><input type="text" id="base-url-input" value="https://api.deepseek.com"></div>
+    <div style="margin-bottom:8px"><label>默认模型</label><select id="default-model-select"><option value="deepseek-v4-pro" selected>deepseek-v4-pro (深度推理)</option><option value="deepseek-v4-flash">deepseek-v4-flash (快速)</option></select></div>
+    <div style="margin-bottom:8px"><label>思考模式</label><select id="thinking-select"><option value="disabled" selected>禁用</option><option value="enabled">启用</option></select></div>
+    <div style="margin-bottom:8px"><label>思考强度</label><select id="effort-select"><option value="high" selected>high</option><option value="max">max</option></select></div>
+    <div class="btn-row"><button onclick="PEE.saveSettings()" class="primary">保存</button><button onclick="PEE.closeSettings()">取消</button></div>
+  </div>
+</div>
+
+<div id="app">
+  <!-- LEFT -->
+  <div id="left-panel">
+    <div class="panel-title">🧬 PEE × LLM V2</div>
+    <div class="phase-steps" id="phase-steps">
+      <span class="phase-step active">① 题库</span>
+      <span class="phase-step">② 参数</span>
+      <span class="phase-step">③ 进化</span>
+      <span class="phase-step">④ 报告</span>
+    </div>
+    <div class="card"><div class="card-header" id="form-header">📝 题库编辑器</div><div id="form-body" style="max-height:calc(100vh - 180px);overflow-y:auto"></div></div>
+    <div class="btn-row" id="action-buttons"></div>
+  </div>
+
+  <!-- CENTER -->
+  <div id="center-panel">
+    <div style="flex:1;overflow-y:auto;padding:16px" id="center-content">
+      <div style="text-align:center;color:var(--text2);padding:60px 20px">
+        <div style="font-size:48px;margin-bottom:16px">🧬</div>
+        <div style="font-size:18px;font-weight:600;color:var(--accent);margin-bottom:8px">提示词进化引擎 V2</div>
+        <div style="font-size:13px">Prompt Evolution Engine</div>
+        <div style="font-size:12px;margin-top:12px;color:var(--text2)">72虚拟工具 · 7维裁判 · 工具链拦截 · 可视化出卷</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div id="right-panel">
+    <div class="panel-title">📋 实时日志</div>
+    <div class="log-stream" id="log-stream"><div class="log-entry"><span class="ts">--:--:--</span>72个虚拟工具已加载 | 18个分类</div></div>
+    <div class="stats-grid" style="margin-top:8px" id="stats-grid">
+      <div class="stat-item"><div class="stat-value" id="s-round">0</div><div class="stat-label">轮数</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-pop">0</div><div class="stat-label">种群</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-battles">0</div><div class="stat-label">对战</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-best">-</div><div class="stat-label">最优Elo</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-cv">-</div><div class="stat-label">CV得分</div></div>
+      <div class="stat-item"><div class="stat-value" id="s-calls">0</div><div class="stat-label">API调用</div></div>
+    </div>
+    <div class="btn-row" style="margin-top:6px">
+      <button onclick="PEE.openSettings()">⚙️ 设置</button>
+      <button id="btn-pause" onclick="PEE.togglePause()" disabled>⏯️ 暂停</button>
+      <button id="btn-stop" onclick="PEE.stopEvolution()" class="danger" disabled>⏹️ 停止</button>
+    </div>
+  </div>
+
+  <!-- BOTTOM -->
+  <div id="bottom-panel"><div class="panel-title">🏆 进化报告</div><div id="report-content"></div></div>
+</div>
+
+  <div id="mob-nav" style="display:none">
+    <button onclick="PEE.mobToggle('left-panel')">📝 出卷</button>
+    <button onclick="PEE.mobToggle('center-panel')">📊 排行</button>
+    <button onclick="PEE.mobToggle('right-panel')">📋 日志</button>
+  </div>
+
+<script>
+// =====================================================================
+// 72 VIRTUAL TOOLS — 18 categories
+// =====================================================================
+var VIRTUAL_TOOLS=[
+ // 搜索 (5)
+ {name:"search_accurate",type:"搜索",desc:"准确结果",ex:function(q){return{ok:true,results:['关于"'+q+'"的权威解读','详细数据：增长12%']}}},
+ {name:"search_conflict",type:"搜索",desc:"矛盾结果",ex:function(q){return{ok:true,results:['A说'+q+'=X','B说'+q+'=Y']}}},
+ {name:"search_empty",type:"搜索",desc:"无结果",ex:function(q){return{ok:true,results:[]}}},
+ {name:"search_timeout",type:"搜索",desc:"搜索超时",ex:function(q){return{ok:false,error:"Search request timed out after 10s"}}},
+ {name:"search_rate_limited",type:"搜索",desc:"被限流(429)",ex:function(q){return{ok:false,error:"429 Too Many Requests"}}},
+ // 文件系统 (10)
+ {name:"file_list",type:"文件系统",desc:"列出目录",ex:function(d){return{ok:true,files:["report.docx","data.xlsx","scan.pdf","code.py"]}}},
+ {name:"file_read",type:"文件系统",desc:"读取文件(成功)",ex:function(p){return{ok:true,content:"[文件] "+p+":\n姓名,销售额\n张三,1200\n李四,950"}}},
+ {name:"file_read_missing",type:"文件系统",desc:"文件不存在",ex:function(p){return{ok:false,error:"文件 "+p+" 不存在"}}},
+ {name:"file_create",type:"文件系统",desc:"创建文件(成功)",ex:function(p,c){return{ok:true,path:p}}},
+ {name:"file_create_error",type:"文件系统",desc:"创建失败(权限)",ex:function(p){return{ok:false,error:"Permission denied: "+p}}},
+ {name:"file_modify",type:"文件系统",desc:"修改文件(成功)",ex:function(p,c){return{ok:true,path:p}}},
+ {name:"file_modify_error",type:"文件系统",desc:"修改失败(只读)",ex:function(p){return{ok:false,error:"File is read-only: "+p}}},
+ {name:"file_delete",type:"文件系统",desc:"删除文件(成功)",ex:function(p){return{ok:true,path:p}}},
+ {name:"file_delete_error",type:"文件系统",desc:"删除失败(权限)",ex:function(p){return{ok:false,error:"Access denied: "+p}}},
+ {name:"file_move",type:"文件系统",desc:"移动/重命名(成功)",ex:function(s,d){return{ok:true,from:s,to:d}}},
+ // 办公文档 (9)
+ {name:"excel_read",type:"办公文档",desc:"读Excel(成功)",ex:function(p){return{ok:true,data:[["产品","销量"],["A",100],["B",250]]}}},
+ {name:"excel_read_error",type:"办公文档",desc:"Excel损坏",ex:function(p){return{ok:false,error:"Excel file is corrupted"}}},
+ {name:"excel_create",type:"办公文档",desc:"生成Excel",ex:function(d,f){return{ok:true,url:"https://files.example.com/"+f}}},
+ {name:"word_read",type:"办公文档",desc:"读Word(成功)",ex:function(p){return{ok:true,content:"[Word] 这是文档的完整文本内容..."}}},
+ {name:"word_read_error",type:"办公文档",desc:"Word格式不兼容",ex:function(p){return{ok:false,error:"Unsupported Word format"}}},
+ {name:"word_create",type:"办公文档",desc:"生成Word",ex:function(c,f){return{ok:true,url:"https://files.example.com/"+f}}},
+ {name:"pdf_reader",type:"办公文档",desc:"读PDF(成功)",ex:function(p,pg){return{ok:true,text:"[PDF第"+(pg||1)+"页] 报告摘要：本季度营收增长8.5%..."}}},
+ {name:"pdf_reader_error",type:"办公文档",desc:"PDF加密",ex:function(p){return{ok:false,error:"PDF is password protected"}}},
+ {name:"pdf_ocr",type:"办公文档",desc:"PDF OCR识别",ex:function(p,l){return{ok:true,text:(l==='cn'?'识别结果：发票金额￥1,200':'Invoice amount: \$1,200')}}},
+ // OCR (3)
+ {name:"ocr_image",type:"OCR",desc:"图片OCR(成功)",ex:function(u){return{ok:true,text:"图片中的文字内容...",confidence:0.92}}},
+ {name:"ocr_image_error",type:"OCR",desc:"OCR失败(模糊)",ex:function(u){return{ok:false,error:"Image too blurry for OCR"}}},
+ {name:"pdf_ocr_error",type:"OCR",desc:"PDF无文本层",ex:function(p){return{ok:false,error:"No visible text found in PDF"}}},
+ // 代码执行 (3)
+ {name:"code_success",type:"代码执行",desc:"执行成功",ex:function(c){return{ok:true,output:"结果: [1,4,9,16,25]"}}},
+ {name:"code_error",type:"代码执行",desc:"运行时错误",ex:function(c){return{ok:false,error:"TypeError: foo is not a function"}}},
+ {name:"code_timeout",type:"代码执行",desc:"执行超时",ex:function(c){return{ok:false,error:"Execution timeout after 30s"}}},
+ // 数据库 (3)
+ {name:"db_query",type:"数据库",desc:"查询(有结果)",ex:function(s){return{ok:true,rows:[{id:1,name:"Alice"},{id:2,name:"Bob"}]}}},
+ {name:"db_empty",type:"数据库",desc:"查询(空)",ex:function(s){return{ok:true,rows:[]}}},
+ {name:"db_error",type:"数据库",desc:"连接失败",ex:function(s){return{ok:false,error:"Connection refused: too many clients"}}},
+ // API (3)
+ {name:"api_success",type:"API",desc:"调用成功",ex:function(u){return{ok:true,data:{temp:22.5,humidity:60}}}},
+ {name:"api_error",type:"API",desc:"503错误",ex:function(u){return{ok:false,error:"503 Service Unavailable"}}},
+ {name:"api_timeout",type:"API",desc:"调用超时",ex:function(u){return{ok:false,error:"Request timed out after 10s"}}},
+ // 向量/知识库 (3)
+ {name:"vector_search",type:"向量搜索",desc:"语义搜索",ex:function(q,k){return{ok:true,results:[{text:q+"的常见方案...",score:0.91},{text:q+"的进阶技巧...",score:0.87}]}}},
+ {name:"vector_search_error",type:"向量搜索",desc:"服务离线",ex:function(q){return{ok:false,error:"Vector search service unavailable"}}},
+ {name:"rag_search",type:"向量搜索",desc:"知识库RAG",ex:function(q){return{ok:true,chunks:["根据知识库，标准答案是...","相关文档建议参数设为..."]}}},
+ // 多媒体/FFmpeg (12)
+ {name:"ffprobe_info",type:"多媒体",desc:"获取媒体信息",ex:function(f){return{ok:true,info:{format:"mp4",duration:120.5,bitrate:1500000,streams:[{codec:"h264",type:"video",w:1920,h:1080,fps:30},{codec:"aac",type:"audio",sr:44100,ch:2}]}}}},
+ {name:"ffprobe_error",type:"多媒体",desc:"媒体信息失败",ex:function(f){return{ok:false,error:"File not found or unsupported format"}}},
+ {name:"ffmpeg_transcode",type:"多媒体",desc:"音视频转码",ex:function(i,o,op){return{ok:true,output:o||"output.mp4",duration:35.2,codec:(op&&op.vcodec)||"h264"}}},
+ {name:"ffmpeg_transcode_error",type:"多媒体",desc:"转码失败(编码不支持)",ex:function(i,o,op){return{ok:false,error:"Unknown encoder '"+(op&&op.vcodec||"libx265")+"'"}}},
+ {name:"ffmpeg_trim",type:"多媒体",desc:"剪辑片段",ex:function(i,s,e,o){return{ok:true,output:o||"trimmed.mp4",trimmed_duration:parseFloat(e)-parseFloat(s)}}},
+ {name:"ffmpeg_trim_error",type:"多媒体",desc:"剪辑失败(时长无效)",ex:function(i,s,e){return{ok:false,error:"Invalid duration: start="+s+" must be < end="+e}}},
+ {name:"ffmpeg_merge",type:"多媒体",desc:"合并视频",ex:function(fl,o){return{ok:true,output:o||"merged.mp4",total_duration:fl.length*30}}},
+ {name:"ffmpeg_merge_error",type:"多媒体",desc:"合并失败(分辨率不一致)",ex:function(fl){return{ok:false,error:"Resolution mismatch: cannot merge"}}},
+ {name:"ffmpeg_extract_audio",type:"多媒体",desc:"提取音频",ex:function(i,o,f){return{ok:true,output:o||"audio.mp3",codec:f||"mp3"}}},
+ {name:"ffmpeg_extract_audio_error",type:"多媒体",desc:"提取失败(无音频流)",ex:function(i){return{ok:false,error:"No audio stream found"}}},
+ {name:"ffmpeg_watermark",type:"多媒体",desc:"添加水印",ex:function(v,img,pos,o){return{ok:true,output:o||"watermarked.mp4",overlay:img,at:pos||"bottom-right"}}},
+ {name:"ffmpeg_subtitle",type:"多媒体",desc:"烧录字幕",ex:function(v,sf,o){return{ok:true,output:o||"subtitled.mp4",subtitles:sf}}},
+ // 可视化 (2)
+ {name:"chart_generate",type:"可视化",desc:"生成图表",ex:function(t,d){return{ok:true,type:t,url:"https://charts.example.com/"+Date.now()+".png"}}},
+ {name:"chart_generate_error",type:"可视化",desc:"图表失败(数据格式错误)",ex:function(t,d){return{ok:false,error:"Invalid data format: expected array"}}},
+ // 翻译 (3)
+ {name:"translate",type:"翻译",desc:"文本翻译(成功)",ex:function(t,f,to){return{ok:true,translated:"[译至"+to+"] "+t,from:f,to:to}}},
+ {name:"translate_error",type:"翻译",desc:"语言不支持",ex:function(t,f,to){return{ok:false,error:"Unsupported language: "+to}}},
+ {name:"translate_timeout",type:"翻译",desc:"翻译超时",ex:function(t,f,to){return{ok:false,error:"Translation service timed out"}}},
+ // 系统控制 (3)
+ {name:"shell_exec",type:"系统控制",desc:"执行Shell(模拟)",ex:function(c){return{ok:true,stdout:"simulated output for: "+c,stderr:""}}},
+ {name:"shell_exec_error",type:"系统控制",desc:"命令未找到",ex:function(c){return{ok:false,error:"Command not found: "+c.split(" ")[0]}}},
+ {name:"shell_exec_permission",type:"系统控制",desc:"权限拒绝",ex:function(c){return{ok:false,error:"Permission denied"}}},
+ // 通信 (3)
+ {name:"send_email",type:"通信",desc:"发送邮件(成功)",ex:function(to,sub,body){return{ok:true,messageId:"<"+Date.now()+"@mail>"}}},
+ {name:"send_email_error",type:"通信",desc:"SMTP认证失败",ex:function(){return{ok:false,error:"SMTP authentication failed"}}},
+ {name:"send_email_timeout",type:"通信",desc:"邮件发送超时",ex:function(){return{ok:false,error:"SMTP connection timeout"}}},
+ // 加密 (3)
+ {name:"crypto_hash",type:"加密",desc:"计算哈希",ex:function(d,a){return{ok:true,algorithm:a||"sha256",hash:"e3b0c44298fc..."}}},
+ {name:"crypto_hash_error",type:"加密",desc:"算法不支持",ex:function(d,a){return{ok:false,error:"Unknown algorithm: "+a}}},
+ {name:"crypto_encrypt",type:"加密",desc:"加密数据",ex:function(d,k){return{ok:true,ciphertext:"AES256:CIPHER..."}}},
+ // 时间/日期/天气 (4)
+ {name:"get_current_time",type:"时间日期",desc:"获取当前时间",ex:function(){return{ok:true,datetime:new Date().toISOString(),timezone:"UTC"}}},
+ {name:"calculate_date",type:"时间日期",desc:"日期计算",ex:function(b,op,v){return{ok:true,result:"2026-06-05"}}},
+ {name:"get_weather",type:"时间日期",desc:"天气查询",ex:function(l){return{ok:true,location:l,temp:22,condition:"sunny"}}},
+ {name:"get_weather_error",type:"时间日期",desc:"城市不存在",ex:function(l){return{ok:false,error:"Location '"+l+"' not found"}}},
+ // 正则/工具 (2)
+ {name:"regex_match",type:"正则",desc:"正则匹配/提取",ex:function(pat,txt){return{ok:true,matches:["matched"],groups:{}}}},
+ {name:"regex_match_error",type:"正则",desc:"正则无效",ex:function(pat,txt){return{ok:false,error:"Invalid regular expression"}}},
+ // 环境变量 (2)
+ {name:"env_read",type:"环境变量",desc:"读环境变量",ex:function(v){
+   if(v==="SECRET_KEY")return{ok:false,error:"Permission denied (sensitive variable)"};
+   return{ok:true,var:v,value:"simulated_value_of_"+v};
+ }},
+ {name:"env_read_not_set",type:"环境变量",desc:"变量未定义",ex:function(v){return{ok:false,error:"Environment variable '"+v+"' not set"}}},
+ // 真实计算器
+ {name:"calculator",type:"实用工具",desc:"真实数学计算",ex:function(e){try{return{ok:true,result:eval(e)}}catch(err){return{ok:false,error:err.message}}}}
+];
+
+// Build category tree
+var TOOL_CATEGORIES={};
+VIRTUAL_TOOLS.forEach(function(t){
+  var cat=t.type||"其他";
+  if(!TOOL_CATEGORIES[cat])TOOL_CATEGORIES[cat]=[];
+  TOOL_CATEGORIES[cat].push(t);
+});
+var CAT_ORDER=["搜索","文件系统","办公文档","OCR","代码执行","数据库","API","向量搜索","多媒体","可视化","翻译","系统控制","通信","加密","时间日期","正则","环境变量","实用工具"];
+var TOOL_CATEGORIES_SORTED={};
+CAT_ORDER.forEach(function(k){if(TOOL_CATEGORIES[k])TOOL_CATEGORIES_SORTED[k]=TOOL_CATEGORIES[k]});
+Object.keys(TOOL_CATEGORIES).forEach(function(k){if(!TOOL_CATEGORIES_SORTED[k])TOOL_CATEGORIES_SORTED[k]=TOOL_CATEGORIES[k]});
+
+// =====================================================================
+// CONFIG
+// =====================================================================
+var CFG={
+  API_KEY:'',API_BASE_URL:'https://api.deepseek.com',MODEL:'deepseek-v4-pro',
+  THINKING:'disabled',EFFORT:'high',MAX_TOKENS:4096,
+  K_FACTOR:32,BASE_ELO:1000,ELO_SCALE:400,UCB_C:1.414,
+  LENGTH_PENALTY_FACTOR:50,CHEAT_WORDS:['最好','完美','高分','请给满分','最佳答案','必定','绝对正确'],
+  CV_STDDEV_THRESHOLD:0.15,CONV_CHECK_INTERVAL:5,CONV_STABLE_ROUNDS:8,
+  // 7维裁判权重
+  JUDGE_WEIGHTS:{error_handling:0.25,tool_selection:0.20,chain_composition:0.20,tool_call_spec:0.15,accuracy:0.10,clarity:0.05,helpfulness:0.05},
+  LEVELS:{
+    1:{pop:8,rounds:5,bpr:4,cv:3,breed:3,concur:4},
+    2:{pop:12,rounds:10,bpr:6,cv:5,breed:5,concur:6},
+    3:{pop:16,rounds:20,bpr:8,cv:8,breed:8,concur:8},
+    4:{pop:20,rounds:30,bpr:10,cv:10,breed:10,concur:10},
+    5:{pop:30,rounds:50,bpr:15,cv:15,breed:15,concur:15},
+    6:{pop:40,rounds:80,bpr:20,cv:20,breed:20,concur:25},
+    7:{pop:60,rounds:120,bpr:30,cv:30,breed:30,concur:40},
+    8:{pop:80,rounds:200,bpr:40,cv:40,breed:40,concur:60},
+    9:{pop:120,rounds:300,bpr:60,cv:60,breed:60,concur:100},
+    10:{pop:200,rounds:500,bpr:100,cv:80,breed:80,concur:200}
+  }
+};
+function uid(){return crypto.randomUUID?crypto.randomUUID():'xxxx-xxxx-4xxx-yxxx-xxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:r&0x3|0x8).toString(16)})}
+function ts(){var d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0')}
+
+// =====================================================================
+// STATE
+// =====================================================================
+var S={
+  phase:'IDLE',questions:[],criteria:'',level:5,cfg:CFG.LEVELS[5],
+  population:[],round:0,battlesDone:0,
+  cvResults:null,converged:false,stableCount:0,topEloHistory:[],
+  stats:{apiCalls:0,totalTokens:0},running:false,paused:false,aborter:null,pausePromise:null,pauseResolve:null,
+  _seedPrompts:null,paperName:'',trainedPrompts:[]
+};
+
+// =====================================================================
+// LLM
+// =====================================================================
+var LLM={
+  async call(systemPrompt,userPrompt,temperature,maxTokens,jsonMode,_retry){
+    if(!CFG.API_KEY)throw new Error('请先配置API Key');
+    var retries=_retry||0;
+    var body={model:CFG.MODEL,messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}],temperature:temperature,max_tokens:maxTokens||CFG.MAX_TOKENS};
+    if(jsonMode)body.response_format={type:'json_object'};
+    if(CFG.THINKING==='enabled'){body.thinking={type:'enabled'};body.reasoning_effort=CFG.EFFORT}else{body.thinking={type:'disabled'}}
+    for(;;){
+      var ctrl=new AbortController();
+      if(S.aborter){try{S.aborter.signal.addEventListener('abort',function(){ctrl.abort()})}catch(e){}}
+      var tid=setTimeout(function(){ctrl.abort()},45000);
+      try{
+        var resp=await fetch(CFG.API_BASE_URL+'/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+CFG.API_KEY},body:JSON.stringify(body),signal:ctrl.signal});
+        clearTimeout(tid);
+        var st=resp.status;
+        if(st===429||st===503||st===502){
+          if(retries<2){retries++;await new Promise(function(r){setTimeout(r,1000*Math.pow(2,retries))});continue}
+          throw new Error('API '+st+' (重试耗尽)');
+        }
+        if(!resp.ok)throw new Error('API '+st);
+        var data=await resp.json();S.stats.apiCalls++;S.stats.totalTokens+=(data.usage?.total_tokens||0);
+        var content=data.choices[0].message.content;
+        if(jsonMode){
+          try{return JSON.parse(content)}catch(e){var m=content.match(/\{[\s\S]*\}/);if(m)try{return JSON.parse(m[0])}catch(e2){}return{raw:content}}
+        }
+        return content;
+      }catch(e){
+        clearTimeout(tid);
+        var isAbort=e.name==='AbortError'||(e.message||'').indexOf('超时')>=0||(e.message||'').indexOf('AbortError')>=0;
+        if(isAbort&&retries<2){retries++;await new Promise(function(r){setTimeout(r,1000*Math.pow(2,retries))});continue}
+        if(isAbort)throw new Error('超时');
+        throw e;
+      }
+    }
+  },
+  // 7维裁判
+  async judgeBattle(question,toolsDesc,answerA,answerB){
+    var sp='You are a strict judge. Compare two AI answers. Output a JSON object with this EXACT structure:\n'
+      +'{"A":{"tool_selection":8,"tool_call_spec":7,"error_handling":9,"chain_composition":6,"accuracy":8,"clarity":7,"helpfulness":9},'
+      +'"B":{"tool_selection":6,"tool_call_spec":5,"error_handling":4,"chain_composition":7,"accuracy":6,"clarity":5,"helpfulness":6},'
+      +'"winner":"A"}\n'
+      +'Score each dimension 0-10. Set winner to "A" or "B" or "draw". Output ONLY the JSON object, no markdown, no explanation.';
+    var up='Dimensions to judge (0-10 each):\n'
+      +'1.tool_selection: Does it pick the right tools without extra calls?\n'
+      +'2.tool_call_spec: Are tool call parameters correct?\n'
+      +'3.error_handling: Does it retry/degrade/ask on failures?\n'
+      +'4.chain_composition: Is multi-tool order and parameter passing correct?\n'
+      +'5.accuracy: Is the final answer correct?\n'
+      +'6.clarity: Is the language clear?\n'
+      +'7.helpfulness: Is it ready to use?\n\n'
+      +'Tools:\n'+toolsDesc+'\n\n'
+      +'Question:\n'+question.slice(0,500)+'\n\n'
+      +'Answer A:\n'+answerA.slice(0,1500)+'\n\n'
+      +'Answer B:\n'+answerB.slice(0,1500)+'\n\n'
+      +'Now output the JSON:';
+    for(var jr=0;jr<3;jr++){
+      try{
+        var res=await this.call(sp,up,0.15,1024,true);
+        var parsed=null;
+        if(typeof res==='object'&&res.A&&res.B&&res.winner)parsed=res;
+        else if(res.raw){
+          var raw=res.raw;
+          raw=raw.replace(/```(?:json)?\s*/g,'').replace(/```\s*/g,'').trim();
+          var m=raw.match(/\{[\s\S]*\}/);
+          if(m)try{var p=JSON.parse(m[0]);if(p.A&&p.B&&p.winner)parsed=p}catch(e){}
+        }
+        if(parsed){
+          var w=String(parsed.winner).trim().toUpperCase();
+          if(w==='A'||w==='B'){parsed.winner=w;return parsed}
+          if(w==='DRAW'){parsed.winner='draw';return parsed}
+        }
+      }catch(e){if(jr>=2)throw e}
+    }
+    var coin=Math.random()<0.5?'A':'B';
+    return {A:{tool_selection:5,tool_call_spec:5,error_handling:5,chain_composition:5,accuracy:5,clarity:5,helpfulness:5},B:{tool_selection:5,tool_call_spec:5,error_handling:5,chain_composition:5,accuracy:5,clarity:5,helpfulness:5},winner:coin};
+  },
+
+  // 生成种子
+  async generateSeedPrompts(questions,criteria,n){
+    var samples=questions.slice(0,Math.min(5,questions.length)).join('\n---\n');
+    return await this.call(
+      '你是Prompt工程专家。为一个需要调用工具的AI助手生成N个不同风格的System Prompt。输出JSON: {prompts:[{text:"完整prompt",style:"风格描述"}]}。风格差异要大：有的简洁直接、有的强调推理步骤、有的强调错误处理和重试策略、有的强调结构化工具调用、有的以用户视角优先。每个prompt必须完整可独立使用。',
+      '评估标准: '+criteria+'\n\n示例问题:\n'+samples+'\n\n请生成'+n+'个不同风格的prompt。',
+      0.9,CFG.MAX_TOKENS*2,true
+    );
+  },
+  // 答案生成（带工具拦截循环,最多3轮）
+  async answerWithPrompt(systemPrompt,question,tools){
+    var msgs=[
+      {role:'system',content:systemPrompt+'\n\n【可用工具-当需要时输出JSON调用】\n'+JSON.stringify(tools.map(function(t){return{name:t.name,desc:t.desc}}))+'\n工具调用格式:{"tool_call":{"name":"工具名","params":{"arg1":"值"}}}。工具返回后会继续对话。'},
+      {role:'user',content:question}
+    ];
+    var finalAnswer='';
+    for(var turn=0;turn<3;turn++){
+      var raw=await LLM.call(msgs[0].content,msgs[msgs.length-1].content,0.7,CFG.MAX_TOKENS,false);
+      // 尝试解析工具调用
+      var tc=null;
+      try{var j=JSON.parse(raw);if(j.tool_call&&j.tool_call.name)tc=j.tool_call}
+      catch(e){var m=raw.match(/\{"tool_call"\s*:\s*\{[^}]+\}\s*\}/);if(m)try{tc=JSON.parse(m[0]).tool_call}catch(e2){}}
+      if(!tc){finalAnswer=raw;break}
+      // 执行虚拟工具
+      var tool=tools.find(function(t){return t.name===tc.name});
+      var tr;
+      if(tool){
+        try{
+          var params=tc.params||{};
+          // 按工具定义的方式传参（用 params 的 values 数组）
+          tr=tool.ex.apply(null,Object.values(params));
+        }catch(e){tr={ok:false,error:"Tool execution error: "+e.message}}
+      }else{tr={ok:false,error:"Tool not found: "+tc.name}}
+      msgs.push({role:'assistant',content:raw});
+      msgs.push({role:'user',content:'[工具返回] '+JSON.stringify(tr)});
+    }
+    return finalAnswer||raw||'';
+  }
+};
+
+// =====================================================================
+// ENGINE
+// =====================================================================
+var Engine={
+  initPopulation(prompts){
+    S.population=prompts.map(function(p,i){
+      return{id:uid(),text:p.text,style:p.style||'unknown',elo:CFG.BASE_ELO,wins:0,losses:0,draws:0,cvScore:null,cvStddev:null,generation:0,parentIds:[],age:0};
+    });
+    PEE.log('🧬 初始化种群: '+S.population.length+' 个个体','info');
+  },
+  selectUCB(){
+    var pop=S.population,totalRounds=Math.max(1,S.round);
+    var ok=[],bad=0;
+    for(var j=0;j<pop.length;j++){if(pop[j]&&typeof pop[j].elo==='number')ok.push(pop[j]);else bad++}
+    if(ok.length===0)return pop[Math.floor(Math.random()*pop.length)]||pop[0]||null;
+    if(bad>0)PEE.log('⚠️ selectUCB: '+bad+'个坏个体','warn');
+    var best=ok[0],bestVal=-Infinity;
+    for(var i=0;i<ok.length;i++){
+      var p=ok[i],exploit=p.elo,explore=CFG.UCB_C*Math.sqrt(Math.log(totalRounds)/Math.max(1,p.age));
+      var val=exploit+explore;
+      if(val>bestVal){bestVal=val;best=p}
+    }
+    return best;
+  },
+  selectPair(){
+    var a=Engine.selectUCB();
+    var b=Engine.selectUCB();
+    var tries=0;
+    while((!b||!a||b.id===a.id)&&tries<30){b=Engine.selectUCB();tries++;if(!a)a=Engine.selectUCB()}
+    if(!b||!a||b===a||b.id===a.id){
+      // 极端兜底：随机选两个不同索引
+      var pop=S.population,i1=Math.floor(Math.random()*pop.length);
+      var i2=i1;while(i2===i1&&pop.length>1)i2=Math.floor(Math.random()*pop.length);
+      a=pop[i1];b=pop[i2];
+      PEE.log('⚠️ selectPair 兜底触发','warn');
+    }
+    return{a:a,b:b};
+  },
+  // 加权维度 Elo 更新 — 精准模式 + 满级调试
+  updateEloFromJudge(winner,loser,dimsW,dimsL,isDraw,_battleNum){
+    // 防自对打：如果 winner===loser，随机选一个方向
+    if(winner===loser){
+      PEE.log('⚠️ 自对打检测! winner===loser id='+(winner?winner.id:'null'),'err');
+      var coin=Math.random()<0.5;
+      // 克隆对象以避免引用污染
+      var fakeLoser={elo:winner.elo,wins:0,losses:0,draws:0,age:0};
+      if(coin){this.updateEloFromJudge(winner,fakeLoser,dimsW,dimsL,false,_battleNum);winner.elo=fakeLoser.elo}
+      else{this.updateEloFromJudge(fakeLoser,winner,dimsL,dimsW,false,_battleNum)}
+      return;
+    }
+    function _ws(d){
+      return (d.tool_selection||0)*0.20+(d.tool_call_spec||0)*0.15+(d.error_handling||0)*0.25+(d.chain_composition||0)*0.20+(d.accuracy||0)*0.10+(d.clarity||0)*0.05+(d.helpfulness||0)*0.05;
+    }
+    var sw=_ws(dimsW),sl=_ws(dimsL);
+    // 用临时变量，防止对象引用链污染
+    var wNew=Number(winner.elo),lNew=Number(loser.elo);
+    var diff=lNew-wNew;
+    var ea=1/(1+Math.pow(10,diff/400));
+    var margin=Math.abs(sw-sl)/6;var K=32*3*(1+margin);
+    var tag=_battleNum!==undefined?'#'+_battleNum+' ':'';
+    PEE.log('🔬 '+tag+'IDs win='+winner.id.slice(-4)+' lose='+loser.id.slice(-4)+' sw='+sw.toFixed(2)+' sl='+sl.toFixed(2)+' K='+K.toFixed(0)+' ea='+ea.toFixed(3),'info');
+    if(isDraw){
+      K=K*0.5;var dd=K*(0.5-ea);
+      wNew+=dd;lNew+=dd;
+      winner.draws++;loser.draws++;
+    }else{
+      var dw=K*(1-ea);var dl=K*(ea-1)*1.25;
+      wNew+=dw;lNew+=dl;
+      winner.wins++;loser.losses++;
+    }
+    // 只在此处一次性写入
+    winner.elo=wNew;loser.elo=lNew;
+    winner.age++;loser.age++;
+    PEE.log('🔬 '+tag+'RESULT winElo='+wNew.toFixed(0)+' loseElo='+lNew.toFixed(0)+' Δw='+(dw||dd).toFixed(1)+' Δl='+(dl||dd).toFixed(1),'info');
+  },
+  penalty(prompt){
+    var p=0;
+    p+=Math.max(0,(prompt.text.length-2000)/1000)*CFG.LENGTH_PENALTY_FACTOR;
+    for(var i=0;i<CFG.CHEAT_WORDS.length;i++){if(prompt.text.indexOf(CFG.CHEAT_WORDS[i])>=0)p+=100}
+    if(prompt.cvStddev&&prompt.cvStddev>CFG.CV_STDDEV_THRESHOLD)p+=100;
+    return p;
+  },
+  breed(p1,p2){
+    var l1=p1.text.split('\n'),l2=p2.text.split('\n');
+    var s1=Math.floor(l1.length*0.3+Math.random()*l1.length*0.4);
+    var s2=Math.floor(l2.length*0.3+Math.random()*l2.length*0.4);
+    var child=l1.slice(0,s1).concat(l2.slice(s2));
+    if(Math.random()<0.4){
+      var mutations=[
+        'Before calling any tool, validate file existence or API key presence.',
+        'On tool failure: retry once with 2s backoff, then fallback or ask user.',
+        'For 429/503: wait 2s then retry. If still fail, use cache or report.',
+        'Chain tools in dependency order: check prerequisites before each call.',
+        'If a multi-step task has a failing middle step, skip it and continue.',
+        'After each tool call, verify result (non-empty, valid format).',
+        'Document every tool call and its outcome in your final response.',
+        'If uncertain about parameters, use defaults with explicit notice.',
+        'When search returns empty, try alternative queries before giving up.',
+        'Report exact error codes and messages from failed tool calls.'
+      ];
+      var m=mutations[Math.floor(Math.random()*mutations.length)];
+      var idx=Math.floor(Math.random()*child.length);
+      child.splice(idx,0,m);
+    }
+    if(Math.random()<0.2){var ri=Math.floor(Math.random()*child.length);child.splice(ri,1)}
+    // 去重相邻重复行
+    var text=child.filter(function(line,idx,arr){return idx===0||line!==arr[idx-1]}).join('\n');
+    return{
+      id:uid(),text:text,style:'hybrid',elo:CFG.BASE_ELO,
+      wins:0,losses:0,draws:0,cvScore:null,cvStddev:null,
+      generation:Math.max(p1.generation,p2.generation)+1,
+      parentIds:[p1.id,p2.id],age:0
+    };
+  },
+  eliminateAndBreed(){
+    var deathLine=750;
+    var alive=S.population.filter(function(p){return p.elo>=deathLine});
+    if(alive.length<S.population.length)PEE.log('💀 死刑: '+(S.population.length-alive.length)+'个个体elo<750被清除','elim');
+    if(alive.length<4){alive=S.population.slice().sort(function(a,b){return b.elo-a.elo}).slice(0,Math.max(4,S.population.length));PEE.log('⚠️ alive<4, 从原始种群保留top4','warn')}
+    var pop=alive.slice().sort(function(a,b){return b.elo-a.elo});
+    var keep=Math.max(4,Math.floor(pop.length*0.4));
+    var survivors=pop.slice(0,keep);
+    var elite=survivors.slice(0,Math.max(2,Math.floor(survivors.length*0.33)));
+    if(elite.length<2){elite=survivors.slice(0,2)}
+    PEE.log('🧬 繁殖: alive='+alive.length+' keep='+keep+' elite='+elite.length+' 精英elo='+elite.map(function(p){return Math.round(p.elo)}).join(','),'info');
+    var newPop=survivors.slice();
+    var needed=S.cfg.pop-newPop.length;
+    var dedupSkips=0;
+    for(var i=0;i<needed;i++){
+      var i1=Math.floor(Math.random()*elite.length);
+      var i2=i1;while(i2===i1&&elite.length>1)i2=Math.floor(Math.random()*elite.length);
+      if(i2===i1&&elite.length===1){i2=Math.floor(Math.random()*survivors.length)}
+      var p1=elite[i1],p2=elite.length>1?elite[i2]:survivors[i2]||survivors[survivors.length-1];
+      if(!p1||!p2||p1===p2){p1=elite[0];p2=survivors[Math.floor(Math.random()*survivors.length)];if(p2===p1&&survivors.length>1)p2=survivors[survivors.length-1]}
+      var child=Engine.breed(p1,p2);
+      var dup=newPop.find(function(p){return p.text===child.text});
+      if(dup){dedupSkips++;if(dedupSkips>needed*3){newPop.push(child);dedupSkips=0;PEE.log('⚠️ 去重超限, 强制接受','warn')}else{i--}continue}
+      dedupSkips=0;
+      newPop.push(child);
+    }
+    S.population=newPop;
+    var badCount=newPop.filter(function(p){return !p||typeof p.elo!=='number'}).length;
+    if(badCount>0)PEE.log('⚠️ 繁殖后种群有'+badCount+'个坏个体!','err');
+    PEE.log('🌱 精准繁殖: 留'+keep+'('+Math.round(keep/pop.length*100)+'%) 精英'+elite.length+' 新生'+needed,'breed');
+  },
+  checkConvergence(){
+    var sorted=S.population.slice().sort(function(a,b){return b.elo-a.elo});
+    var top3=Math.round(sorted.slice(0,3).reduce(function(s,p){return s+p.elo},0)/3);
+    S.topEloHistory.push(top3);
+    if(S.topEloHistory.length>CFG.CONV_STABLE_ROUNDS)S.topEloHistory.shift();
+    if(S.topEloHistory.length>=CFG.CONV_STABLE_ROUNDS){
+      var max=Math.max.apply(null,S.topEloHistory),min=Math.min.apply(null,S.topEloHistory);
+      if(max-min<15){S.stableCount++;if(S.stableCount>=CFG.CONV_STABLE_ROUNDS)S.converged=true}
+      else S.stableCount=0;
+    }
+  }
+};
+
+// =====================================================================
+// PEE MAIN
+// =====================================================================
+var PEE={
+  init(){
+    this.loadSettings();this.loadPersistedData();
+    if(S.questions.length>0){this.renderExamEditor()}else{this.renderExamEditor();this.addQuestion()}
+    this.updatePhaseUI();
+  },
+  openSettings(){document.getElementById('api-key-input').value=CFG.API_KEY;document.getElementById('base-url-input').value=CFG.API_BASE_URL;document.getElementById('default-model-select').value=CFG.MODEL;document.getElementById('thinking-select').value=CFG.THINKING;document.getElementById('effort-select').value=CFG.EFFORT;document.getElementById('settings-modal').style.display='flex'},
+  closeSettings(){document.getElementById('settings-modal').style.display='none'},
+  saveSettings(){
+    CFG.API_KEY=document.getElementById('api-key-input').value.trim();
+    CFG.API_BASE_URL=document.getElementById('base-url-input').value.trim();
+    CFG.MODEL=document.getElementById('default-model-select').value;
+    CFG.THINKING=document.getElementById('thinking-select').value;
+    CFG.EFFORT=document.getElementById('effort-select').value;
+    localStorage.setItem('pee_settings',JSON.stringify({apiKey:CFG.API_KEY,baseUrl:CFG.API_BASE_URL,model:CFG.MODEL,thinking:CFG.THINKING,effort:CFG.EFFORT}));
+    this.log('⚙️ 设置已保存','info');this.closeSettings();
+  },
+  loadSettings(){
+    try{var s=JSON.parse(localStorage.getItem('pee_settings'));if(s){CFG.API_KEY=s.apiKey||'';CFG.API_BASE_URL=s.baseUrl||'https://api.deepseek.com';CFG.MODEL=s.model||'deepseek-v4-pro';CFG.THINKING=s.thinking||'disabled';CFG.EFFORT=s.effort||'high'}}catch(e){}
+  },
+  loadPersistedData(){
+    try{
+      var paper=JSON.parse(localStorage.getItem('pee_exam_paper'));
+      if(paper){S.paperName=paper.paperName||'';S.questions=paper.questions||[];S.criteria=paper.criteria||''}
+    }catch(e){}
+    try{
+      var prompts=JSON.parse(localStorage.getItem('pee_trained_prompts'));
+      if(prompts)S.trainedPrompts=prompts;
+    }catch(e){}
+  },
+  saveExamPaper(){
+    var data={paperName:S.paperName,criteria:S.criteria,questions:S.questions,savedAt:new Date().toISOString()};
+    localStorage.setItem('pee_exam_paper',JSON.stringify(data));
+  },
+  saveTrainedPrompts(){
+    localStorage.setItem('pee_trained_prompts',JSON.stringify(S.trainedPrompts));
+  },
+
+  // ---- Phase UI ----
+  updatePhaseUI(){
+    var steps=document.querySelectorAll('.phase-step');
+    var phases=['IDLE','READY','RUNNING','COMPLETED'];
+    var eff=(S.phase==='PAUSED')?'RUNNING':S.phase;
+    var idx=phases.indexOf(eff);
+    steps.forEach(function(el,i){el.classList.remove('active','done');if(i<idx)el.classList.add('done');if(i===idx)el.classList.add('active')});
+  },
+
+  // ---- Phase 1: 可视化题库编辑器 ----
+  renderExamEditor(){
+    S.phase='IDLE';this.updatePhaseUI();
+    var html='<div style="margin-bottom:6px"><label>📝 试卷名称</label><input type="text" id="paper-name-input" value="'+this.escapeAttr(S.paperName)+'" placeholder="例如：工具调用能力测试" onchange="S.paperName=this.value;PEE.saveExamPaper()"></div>';
+    html+='<div style="margin-bottom:6px"><label>🎯 全局评估标准</label><input type="text" id="criteria-input-global" value="'+this.escapeAttr(S.criteria||'严谨性 准确性 工具使用合理性 错误处理能力')+'" onchange="S.criteria=this.value;PEE.saveExamPaper()"></div>';
+    html+='<div id="questions-container">';
+    if(S.questions.length===0){html+='<div style="color:var(--text2);font-size:12px;padding:20px;text-align:center">点击下方按钮添加题目</div>'}
+    html+='</div>';
+    document.getElementById('form-header').textContent='📝 题库编辑器';
+    document.getElementById('form-body').innerHTML=html;
+    // Render existing questions
+    var qc=document.getElementById('questions-container');
+    for(var i=0;i<S.questions.length;i++){this._appendQuestionCard(qc,i,S.questions[i])}
+    var btns=[
+      {txt:'➕ 添加题目',cls:'primary',fn:'PEE.addQuestion()'},
+      {txt:'📥 导出试卷',fn:'PEE.exportPaper()'},
+      {txt:'📤 导入',fn:"document.getElementById('import-paper-file').click()"},
+
+      {txt:'🔄 生成种子',cls:'gold',fn:'PEE.submitQuestions()'},
+      {txt:'⚙️ 设置',fn:'PEE.openSettings()'}
+    ];
+    var bc=document.getElementById('action-buttons');bc.innerHTML='';
+    for(var j=0;j<btns.length;j++){bc.innerHTML+='<button class="'+(btns[j].cls||'')+'" onclick="'+btns[j].fn+'">'+btns[j].txt+'</button>'}
+    bc.innerHTML+='<input type="file" id="import-paper-file" accept=".json" style="display:none" onchange="PEE.importPaper(event)">';
+  },
+  _appendQuestionCard(container,index,qData){
+    var card=document.createElement('div');card.className='question-card';
+    card.innerHTML='<div class="qcard-hdr"><span class="qnum">Q'+(index+1)+'</span><button style="padding:2px 8px;font-size:10px;color:var(--danger);background:none;border-color:var(--danger)" onclick="PEE.removeQuestion('+index+')">✕ 删除</button></div>'+
+      '<div class="qcard-body">'+
+      '<label>场景描述</label><textarea class="q-scenario" onchange="PEE.syncQuestionFromCard('+index+')">'+this.escapeHtml(qData.scenario||'')+'</textarea>'+
+      '<label>期望目标</label><textarea class="q-expectation" onchange="PEE.syncQuestionFromCard('+index+')">'+this.escapeHtml(qData.expectation||'')+'</textarea>'+
+      '<label>限定工具场景（展开分类勾选）</label>'+
+      '<div class="tool-categories-container"></div>'+
+      '<div class="sel-tools-preview"></div>'+
+      '</div>';
+    container.appendChild(card);
+    // 生成折叠分类
+    var tcc=card.querySelector('.tool-categories-container');
+    Object.keys(TOOL_CATEGORIES_SORTED).forEach(function(cat){
+      var tools=TOOL_CATEGORIES_SORTED[cat];
+      var details=document.createElement('details');
+      details.innerHTML='<summary class="tool-cat-summary">'+cat+' ('+tools.length+')</summary>';
+      var sub=document.createElement('div');sub.className='tool-sub-items';
+      tools.forEach(function(t){
+        var label=document.createElement('label');label.className='tool-tag-item';
+        label.innerHTML='<input type="checkbox" value="'+t.name+'" onchange="PEE.syncQuestionFromCard('+index+')"> '+t.name;
+        sub.appendChild(label);
+      });
+      details.appendChild(sub);
+      tcc.appendChild(details);
+    });
+    // 恢复已选工具
+    if(qData.relatedTools&&qData.relatedTools.length){
+      var cbs=card.querySelectorAll('input[type="checkbox"]');
+      cbs.forEach(function(cb){if(qData.relatedTools.indexOf(cb.value)>=0)cb.checked=true});
+    }
+    this._updateSelToolsPreview(card);
+  },
+  _updateSelToolsPreview(card){
+    var checked=card.querySelectorAll('input[type="checkbox"]:checked');
+    var tools=Array.from(checked).map(function(cb){return cb.value});
+    card.querySelector('.sel-tools-preview').textContent=tools.length?'🎯 限定工具: '+tools.join(', '):'⚪ 不限工具（对战随机抽取）';
+  },
+  addQuestion(){
+    S.questions.push({scenario:'',expectation:'',relatedTools:[]});
+    this.renderExamEditor();
+    this.saveExamPaper();
+  },
+  removeQuestion(index){
+    S.questions.splice(index,1);
+    this.renderExamEditor();
+    this.saveExamPaper();
+  },
+  syncQuestionFromCard(index){
+    var cards=document.querySelectorAll('.question-card');
+    var card=cards[index];if(!card)return;
+    var scenario=card.querySelector('.q-scenario');var expectation=card.querySelector('.q-expectation');
+    var checked=card.querySelectorAll('input[type="checkbox"]:checked');
+    S.questions[index]={scenario:scenario?scenario.value:'',expectation:expectation?expectation.value:'',relatedTools:Array.from(checked).map(function(cb){return cb.value})};
+    this._updateSelToolsPreview(card);
+    this.saveExamPaper();
+  },
+  // 导入导出
+  exportPaper(){
+    var data={paperName:S.paperName,criteria:S.criteria,questions:S.questions,exportedAt:new Date().toISOString(),version:'PEE-v2'};
+    var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    var url=URL.createObjectURL(blob);var a=document.createElement('a');
+    a.href=url;a.download=(S.paperName||'exam')+'.json';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url)},60000);
+    this.log('📥 试卷已导出','info');
+  },
+  importPaper(e){
+    var file=e.target.files[0];if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        var data=JSON.parse(ev.target.result);
+        S.paperName=data.paperName||'导入的试卷';S.criteria=data.criteria||'';S.questions=data.questions||[];
+        PEE.renderExamEditor();PEE.saveExamPaper();
+        document.getElementById('paper-name-input').value=S.paperName;
+        document.getElementById('criteria-input-global').value=S.criteria;
+        PEE.log('📤 导入试卷: '+S.questions.length+' 题','info');
+      }catch(err){PEE.log('❌ 导入失败: 文件格式错误','err')}
+    };
+    reader.readAsText(file);
+    e.target.value='';
+  },
+  exportPrompts(){
+    var data=S.trainedPrompts.length>0?S.trainedPrompts:S.population.slice().sort(function(a,b){return b.elo-a.elo}).slice(0,10).map(function(p){return{text:p.text,elo:p.elo,wins:p.wins}});
+    var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    var url=URL.createObjectURL(blob);var a=document.createElement('a');
+    a.href=url;a.download='trained-prompts.json';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url)},60000);
+    this.log('📥 Prompt集已导出','info');
+  },
+  importPrompts(e){
+    var file=e.target.files[0];if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        var data=JSON.parse(ev.target.result);
+        if(Array.isArray(data)){S.trainedPrompts=data;PEE.saveTrainedPrompts();PEE.log('📤 导入Prompt集: '+data.length+' 个','info')}
+      }catch(err){PEE.log('❌ 导入失败','err')}
+    };
+    reader.readAsText(file);e.target.value='';
+  },
+
+  // ---- Submit & Generate Seeds ----
+  async submitQuestions(){
+    // sync all cards first
+    for(var i=0;i<S.questions.length;i++)this.syncQuestionFromCard(i);
+    var valid=S.questions.filter(function(q){return q.scenario.trim()||q.expectation.trim()});
+    if(valid.length<2){this.log('⚠️ 至少需要2道有效题目','err');return}
+    if(!CFG.API_KEY){this.openSettings();return}
+    S.questions=valid;S.criteria=document.getElementById('criteria-input-global')?document.getElementById('criteria-input-global').value.trim():S.criteria;
+    if(!S.criteria)S.criteria='严谨性 准确性 工具使用合理性 错误处理能力';
+    this.saveExamPaper();
+    document.getElementById('form-header').textContent='🧬 生成种子...';
+    document.getElementById('form-body').innerHTML='<div style="text-align:center;padding:30px">⏳<p>LLM根据题库生成多样化初始Prompt...</p><p style="color:var(--text2);font-size:11px">'+S.questions.length+'道题 | '+Object.keys(TOOL_CATEGORIES_SORTED).length+'类工具</p></div>';
+    document.getElementById('action-buttons').innerHTML='';
+    try{
+      var result=await LLM.generateSeedPrompts(S.questions.map(function(q){return q.scenario||q.expectation}),S.criteria,Math.min(20,Math.max(8,S.questions.length*2)));
+      if(!result.prompts||result.prompts.length<4){this.log('⚠️ 生成失败，请重试','err');this.renderExamEditor();return}
+      this.log('✅ 生成 '+result.prompts.length+' 个种子Prompt','info');
+      S._seedPrompts=result.prompts;this.renderReadyForm();
+    }catch(e){this.log('❌ 生成失败: '+e.message,'err');this.renderExamEditor()}
+  },
+
+  // ---- Phase 2: Parameters ----
+  renderReadyForm(){
+    S.phase='READY';this.updatePhaseUI();
+    var lv=S.level;var cfg=CFG.LEVELS[lv];
+    document.getElementById('form-header').textContent='⚙️ 进化参数';
+    document.getElementById('form-body').innerHTML=
+      '<label>强度等级 (L1-L10)</label><input type="range" id="lv-slider" min="1" max="10" value="'+lv+'" oninput="PEE.updateLvPreview()" style="width:100%"><div style="text-align:center;font-weight:700;color:var(--accent);font-size:22px" id="lv-val">'+lv+'</div>'+
+      '<div class="stats-grid" style="margin-top:8px"><div class="stat-item"><div class="stat-value" id="pv-pop">'+cfg.pop+'</div><div class="stat-label">种群</div></div><div class="stat-item"><div class="stat-value" id="pv-rounds">'+cfg.rounds+'</div><div class="stat-label">轮数</div></div><div class="stat-item"><div class="stat-value" id="pv-bpr">'+cfg.bpr+'</div><div class="stat-label">对战/轮</div></div><div class="stat-item"><div class="stat-value" id="pv-concur">'+cfg.concur+'</div><div class="stat-label">并发数</div></div><div class="stat-item"><div class="stat-value" id="pv-token">'+(cfg.rounds*cfg.bpr*12/1000).toFixed(1)+'K</div><div class="stat-label">Token≈</div></div>'+
+      '<div style="font-size:11px;color:var(--text2);margin-top:4px">7维裁判 | 工具拦截3轮 | 加权Elo</div>';
+    var bc=document.getElementById('action-buttons');
+    bc.innerHTML='<button class="primary" onclick="PEE.startEvolution()">🚀 开始进化</button><button onclick="PEE.renderExamEditor()">↩️ 返回出卷</button><button onclick="PEE.exportPrompts()">📥 导出历史Prompt</button><input type="file" id="import-prompts-file" accept=".json" style="display:none" onchange="PEE.importPrompts(event)"><button onclick="document.getElementById(\'import-prompts-file\').click()">📤 导入Prompt集</button>';
+    this.updateLvPreview();
+  },
+  updateLvPreview(){
+    var slider=document.getElementById('lv-slider');if(!slider)return;
+    var lv=parseInt(slider.value);S.level=lv;S.cfg=CFG.LEVELS[lv];
+    var cfg=S.cfg;
+    var el=function(id,v){var e=document.getElementById(id);if(e)e.textContent=v};
+    el('lv-val',lv);el('pv-pop',cfg.pop);el('pv-rounds',cfg.rounds);el('pv-bpr',cfg.bpr);el('pv-concur',cfg.concur);el('pv-token',(cfg.rounds*cfg.bpr*12/1000).toFixed(1)+'K');
+  },
+
+  // ---- Phase 3: Evolution ----
+  async startEvolution(){
+    if(!S._seedPrompts){this.renderExamEditor();return}
+    // sync exam first
+    for(var i=0;i<S.questions.length;i++)this.syncQuestionFromCard(i);
+    S.phase='RUNNING';S.converged=false;S.stableCount=0;S.topEloHistory=[];
+    S.round=0;S.battlesDone=0;S.stats.apiCalls=0;S.stats.totalTokens=0;
+    S.cfg=CFG.LEVELS[S.level];S.aborter=new AbortController();S.paused=false;S.running=true;
+    this.updatePhaseUI();
+    Engine.initPopulation(S._seedPrompts);
+    document.getElementById('btn-pause').disabled=false;
+    document.getElementById('btn-stop').disabled=false;
+    document.getElementById('bottom-panel').style.display='none';
+    document.getElementById('form-header').textContent='🧬 进化中...';
+    document.getElementById('form-body').innerHTML='<div style="text-align:center;padding:10px"><div style="font-size:28px">🧬</div><div class="progress-bar" style="margin-top:4px"><div class="progress-fill" id="sim-progress" style="width:0%"></div></div><div style="font-size:11px;color:var(--text2);margin-top:2px">轮次: <span id="sim-count">0</span>/'+S.cfg.rounds+' | 对战: <span id="sim-battles">0</span></div></div>';
+    document.getElementById('action-buttons').innerHTML='';
+    this.renderEloTable();
+    var iv=setInterval(function(){
+      var p=document.getElementById('sim-progress');if(p)p.style.width=Math.min(100,(S.round/S.cfg.rounds*100))+'%';
+      var c=document.getElementById('sim-count');if(c)c.textContent=S.round;
+      var b=document.getElementById('sim-battles');if(b)b.textContent=S.battlesDone;
+      if(S.phase!=='RUNNING'&&S.phase!=='PAUSED')clearInterval(iv);
+    },500);
+    this.log('🚀 进化启动! 种群:'+S.cfg.pop+' 轮数:'+S.cfg.rounds+' 题数:'+S.questions.length,'info');
+    try{await this.evolutionLoop()}catch(e){this.log('❌ 进化崩溃: '+e.message,'err')}
+    clearInterval(iv);
+    if(S.converged)this.log('✅ 收敛终止','conv');else this.log('⏹️ 进化结束','info');
+    await this.finalize();
+  },
+  async evolutionLoop(){
+    var cfg=S.cfg,activeSims=0,maxConcur=cfg.concur;
+    var allTools=VIRTUAL_TOOLS;
+    while(S.round<cfg.rounds&&!S.converged&&S.running){
+      if(S.paused){await new Promise(function(r){S.pauseResolve=r});if(!S.running)break}
+      var topBonus=S.population.length>=3?1:0;
+      for(var bi=0;bi<cfg.bpr+topBonus;bi++){
+        if(!S.running||S.converged)break;
+        if(S.paused){await new Promise(function(r){S.pauseResolve=r})}
+        while(activeSims>=maxConcur){await new Promise(function(r){setTimeout(r,50)})}
+        activeSims++;
+        (function(){
+          var pair=Engine.selectPair();
+          var q=S.questions[Math.floor(Math.random()*S.questions.length)];
+          // 选择工具：从题目限定工具中随机2~4个
+          var availableTools;
+          if(q.relatedTools&&q.relatedTools.length>0){
+            var shuffled=q.relatedTools.slice().sort(function(){return Math.random()-0.5});
+            availableTools=shuffled.slice(0,Math.min(4,2+Math.floor(Math.random()*3)));
+          }else{
+            var sh=allTools.slice().sort(function(){return Math.random()-0.5});
+            availableTools=sh.slice(0,Math.min(4,2+Math.floor(Math.random()*3)));
+          }
+          availableTools=availableTools.map(function(n){return allTools.find(function(t){return t.name===n})}).filter(Boolean);
+          if(availableTools.length===0)availableTools=allTools.slice().sort(function(){return Math.random()-0.5}).slice(0,3);
+          var questionText=(q.scenario||'')+'\n'+(q.expectation?'期望: '+q.expectation:'');
+          var toolsDesc=availableTools.map(function(t){return t.name+': '+t.desc}).join('\n');
+          Promise.all([
+            LLM.answerWithPrompt(pair.a.text,questionText,availableTools),
+            LLM.answerWithPrompt(pair.b.text,questionText,availableTools)
+          ]).then(function(answers){
+                      var a1=typeof answers[0]==='string'?answers[0].substring(0,3000):JSON.stringify(answers[0]).substring(0,3000);
+            var a2=typeof answers[1]==='string'?answers[1].substring(0,3000):JSON.stringify(answers[1]).substring(0,3000);
+            return LLM.judgeBattle(questionText,toolsDesc,a1,a2);
+          }).then(function(judge){
+            var dimsA=judge.A||{},dimsB=judge.B||{};
+            var rawWinner=judge.winner;var winner=String(rawWinner||'').trim().toUpperCase();
+            PEE.log('📋 J'+S.battlesDone+' rawJudge='+JSON.stringify(judge).slice(0,120),'info');
+            PEE.log('📋 J'+S.battlesDone+' dims: A.tool_sel='+(dimsA.tool_selection||'?')+' A.err_h='+(dimsA.error_handling||'?')+' B.tool_sel='+(dimsB.tool_selection||'?')+' B.err_h='+(dimsB.error_handling||'?')+' rawW="'+rawWinner+'" → "'+winner+'"','info');
+            var eloA0=pair.a.elo,eloB0=pair.b.elo;var bn=S.battlesDone;
+            PEE.log('📋 J'+bn+' eloBefore A='+eloA0.toFixed(0)+' B='+eloB0.toFixed(0),'info');
+            if(winner==='A')Engine.updateEloFromJudge(pair.a,pair.b,dimsA,dimsB,false,bn);
+            else if(winner==='B')Engine.updateEloFromJudge(pair.b,pair.a,dimsB,dimsA,false,bn);
+            else Engine.updateEloFromJudge(pair.a,pair.b,dimsA,dimsB,true,bn);
+            var dA=Math.round(pair.a.elo-eloA0),dB=Math.round(pair.b.elo-eloB0);
+            PEE.log('📋 J'+bn+' eloAfter A='+Math.round(pair.a.elo)+'('+(dA>=0?'+':'')+dA+') B='+Math.round(pair.b.elo)+'('+(dB>=0?'+':'')+dB+')','info');
+            pair.a._lastDims=dimsA;pair.b._lastDims=dimsB;
+            S.battlesDone++;
+            PEE.log('⚔️ #'+S.battlesDone+' '+winner+' Δ'+dA+'/'+dB+' | '+availableTools.map(function(t){return t.name}).slice(0,3).join(','),'battle');
+          }).catch(function(e){
+            PEE.log('❌ 对战异常: '+(e.message||e).slice(0,80),'err');
+          }).finally(function(){activeSims--});
+        })();
+      }
+      while(activeSims>0){await new Promise(function(r){setTimeout(r,30)})}
+      var sTop=S.population.slice().sort(function(a,b){return b.elo-a.elo});
+      var eloDist=sTop.map(function(p){return Math.round(p.elo)}).slice(0,10).join(',');
+      PEE.log('✅ R'+S.round+' '+cfg.bpr+topBonus+'场 总'+S.battlesDone+' top='+Math.round(sTop[0].elo)+' low='+Math.round(sTop[sTop.length-1].elo)+' ['+eloDist+']','info');
+      S.round++;
+      if(S.round%CFG.CONV_CHECK_INTERVAL===0)Engine.checkConvergence();
+      if(S.round>0&&!S.converged){
+        var beforeLen=S.population.length;
+        Engine.eliminateAndBreed();
+        var sAfter=S.population.slice().sort(function(a,b){return b.elo-a.elo});
+        var afterDist=sAfter.map(function(p){return Math.round(p.elo)}).slice(0,8).join(',');
+        PEE.log('📊 繁殖后top8: ['+afterDist+'] 种群='+S.population.length,'breed');
+        PEE.renderEloTable();PEE.updateStats();
+      }
+      PEE.renderEloTable();PEE.updateStats();
+    }
+  },
+  async runCrossValidation(){
+    var pop=S.population.slice(0,Math.min(10,S.population.length));
+    var qs=S.questions.slice(0,Math.min(5,S.questions.length));
+    for(var pi=0;pi<pop.length;pi++)pop[pi]._cvScores=[];
+    var allTools=VIRTUAL_TOOLS;
+    var cvTasks=[];
+    for(var pi=0;pi<pop.length;pi++){
+      for(var qi=0;qi<qs.length;qi++){cvTasks.push({p:pop[pi],q:qs[qi]})}
+    }
+    var maxCV=Math.min(8,Math.max(2,S.cfg.concur));
+    var activeCV=0,cvIdx=0;
+    return new Promise(function(resolve){
+      function nextCV(){
+        while(activeCV<maxCV&&cvIdx<cvTasks.length){
+          var task=cvTasks[cvIdx++];activeCV++;
+          var p=task.p,q=task.q,pi=pop.indexOf(p);
+          var qText=(q.scenario||'')+'\n'+(q.expectation?'期望: '+q.expectation:'');
+          var tools=q.relatedTools&&q.relatedTools.length>0
+            ?q.relatedTools.slice(0,3).map(function(n){return allTools.find(function(t){return t.name===n})}).filter(Boolean)
+            :allTools.slice().sort(function(){return Math.random()-0.5}).slice(0,2);
+          if(tools.length===0)tools=allTools.slice(0,2);
+          LLM.answerWithPrompt(p.text,qText,tools).then(function(a){
+            var answerText=typeof a==='string'?a:JSON.stringify(a);
+            var lenScore=Math.min(1,Math.max(0.3,answerText.length/1500));
+            var hasToolCall=/tool_call|工具调用|\[TOOL/i.test(answerText)?0.2:0;
+            var score=lenScore*0.6+hasToolCall+0.15;
+            if(!p._cvScores)p._cvScores=[];
+            p._cvScores.push(Math.min(1,score));
+          }).catch(function(e){
+            if(!p._cvScores)p._cvScores=[];
+            p._cvScores.push(0.25);
+          }).finally(function(){
+            activeCV--;
+            if(cvIdx<cvTasks.length||activeCV>0)nextCV();
+            else{
+              for(var pi2=0;pi2<pop.length;pi2++){
+                var ss=pop[pi2]._cvScores||[];
+                if(ss.length>0){
+                  var mn=ss.reduce(function(a,b){return a+b},0)/ss.length;
+                  pop[pi2].cvScore=mn;
+                  pop[pi2].cvStddev=ss.length>1?Math.sqrt(ss.reduce(function(s,v){return s+Math.pow(v-mn,2)},0)/ss.length):0;
+                }
+                delete pop[pi2]._cvScores;
+              }
+              resolve();
+            }
+          });
+        }
+      }
+      nextCV();
+    });
+  },
+
+  // ---- Phase 4: Report ----
+  async finalize(){
+    S.phase='COMPLETED';S.running=false;
+    document.getElementById('btn-pause').disabled=true;document.getElementById('btn-stop').disabled=true;
+    this.updatePhaseUI();
+    // 保存训练结果
+    var sorted=S.population.slice().sort(function(a,b){return b.elo-a.elo});
+    S.trainedPrompts=sorted.slice(0,10).map(function(p){
+      return{text:p.text,style:p.style,elo:Math.round(p.elo),wins:p.wins,losses:p.losses,draws:p.draws,cvScore:p.cvScore,cvStddev:p.cvStddev,generation:p.generation};
+    });
+    this.saveTrainedPrompts();
+    PEE.log('🔬 最终CV评估...','cv');
+    await PEE.runCrossValidation();
+    // 用CV结果更新trainedPrompts
+    var sorted2=S.population.slice().sort(function(a,b){return b.elo-a.elo});
+    S.trainedPrompts=sorted2.slice(0,10).map(function(p){
+      return{text:p.text,style:p.style,elo:Math.round(p.elo),wins:p.wins,losses:p.losses,draws:p.draws,cvScore:p.cvScore,cvStddev:p.cvStddev,generation:p.generation};
+    });
+    this.saveTrainedPrompts();
+    this.renderReport();this.updateStats();
+    // 恢复左侧为参数面板（可以再次调整参数重跑）
+    document.getElementById('form-header').textContent='✅ 进化完成';
+    document.getElementById('form-body').innerHTML='<div style="padding:10px;text-align:center"><div style="font-size:32px">🏆</div><div style="font-weight:700;color:var(--gold)">最佳Elo: '+Math.round(sorted[0].elo)+'</div><div style="font-size:11px;color:var(--text2);margin-top:4px">已完成 '+S.round+' 轮 | '+S.battlesDone+' 场对战</div></div>';
+    document.getElementById('action-buttons').innerHTML='<button class="primary" onclick="PEE.renderReadyForm()">🔄 调整参数重跑</button><button onclick="PEE.renderExamEditor()">📝 回题库</button><button onclick="PEE.exportPrompts()">📥 导出</button>';
+  },
+  renderReport(){
+    var panel=document.getElementById('bottom-panel');panel.style.display='block';
+    var sorted=S.population.slice().sort(function(a,b){return(b.elo-Engine.penalty(b))-(a.elo-Engine.penalty(a))});
+    var winner=sorted[0];
+    var rc=document.getElementById('report-content');
+    var html='<div class="stats-grid" style="margin-bottom:10px">';
+    html+='<div class="stat-item"><div class="stat-value">'+S.round+'</div><div class="stat-label">完成轮数</div></div>';
+    html+='<div class="stat-item"><div class="stat-value">'+S.battlesDone+'</div><div class="stat-label">总对战</div></div>';
+    html+='<div class="stat-item"><div class="stat-value">'+Math.round(winner.elo)+'</div><div class="stat-label">最优Elo</div></div>';
+    html+='<div class="stat-item"><div class="stat-value">'+(winner.cvScore?winner.cvScore.toFixed(3):'-')+'</div><div class="stat-label">CV得分</div></div>';
+    html+='<div class="stat-item"><div class="stat-value">'+S.stats.apiCalls+'</div><div class="stat-label">API调用</div></div>';
+    html+='<div class="stat-item"><div class="stat-value">'+(S.stats.totalTokens/1000).toFixed(0)+'K</div><div class="stat-label">Token</div></div>';
+    html+='</div>';
+    html+='<div class="panel-title">🏆 胜出Prompt (Elo: '+Math.round(winner.elo)+')</div>';
+    html+='<div style="max-height:250px;overflow-y:auto;background:var(--bg);border-radius:6px;padding:10px"><pre style="white-space:pre-wrap;font-size:12px;color:var(--text);margin:0">'+PEE.escapeHtml(winner.text)+'</pre></div>';
+    html+='<div class="btn-row" style="margin-top:6px">';
+    html+='<button class="primary" onclick="navigator.clipboard.writeText(PEE.getWinnerText())">📋 复制胜出Prompt</button>';
+    html+='<button onclick="PEE.exportPrompts()">📥 导出Top-10</button>';
+    html+='</div>';
+    if(winner.cvScore)html+='<div style="font-size:12px;color:var(--text2);margin-top:6px">交叉验证: '+winner.cvScore.toFixed(3)+' ±'+(winner.cvStddev?winner.cvStddev.toFixed(3):'N/A')+' | 长度: '+winner.text.length+'字 | 战绩: '+winner.wins+'W '+winner.losses+'L '+winner.draws+'D | 世代: '+winner.generation+'</div>';
+    // 7维分析
+    if(winner._lastDims){
+      var d=winner._lastDims;
+      html+='<div class="panel-title" style="margin-top:10px">📐 最优Prompt七维评分</div>';
+      html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:11px">';
+      var dimNames={tool_selection:'工具选择',tool_call_spec:'参数准确',error_handling:'失败处理',chain_composition:'工具链组合',accuracy:'正确性',clarity:'清晰度',helpfulness:'有用性'};
+      Object.keys(dimNames).forEach(function(k){
+        html+='<div style="background:var(--bg);padding:4px 6px;border-radius:4px;text-align:center"><span style="color:var(--text2)">'+dimNames[k]+'</span><br><span style="font-weight:700;color:var(--accent)">'+(d[k]||'-')+'</span></div>';
+      });
+      html+='</div>';
+    }
+    html+='<div class="panel-title" style="margin-top:10px">📊 Elo 排行榜 Top-15</div>';
+    html+='<table class="elo-table"><thead><tr><th class="rank">#</th><th>Prompt预览</th><th class="elo">Elo</th><th class="wins">W</th><th class="cv">CV</th></tr></thead><tbody>';
+    for(var i=0;i<Math.min(15,sorted.length);i++){
+      var p=sorted[i];
+      html+='<tr><td class="rank">'+(i+1)+'</td><td class="prompt-preview" title="'+PEE.escapeHtml(p.text.slice(0,300))+'">'+PEE.escapeHtml(p.text.slice(0,70))+'</td><td class="elo">'+Math.round(p.elo)+'</td><td class="wins">'+p.wins+'</td><td class="cv">'+(p.cvScore?p.cvScore.toFixed(2):'-')+'</td></tr>';
+    }
+    html+='</tbody></table>';
+    rc.innerHTML=html;
+  },
+  getWinnerText(){
+    var sorted=S.population.slice().sort(function(a,b){return(b.elo-Engine.penalty(b))-(a.elo-Engine.penalty(a))});
+    return sorted.length>0?sorted[0].text:'';
+  },
+  escapeHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')},
+  escapeAttr(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')},
+
+  // ---- Elo 实时排行(中心面板) ----
+  renderEloTable(){
+    if(S.population.length===0)return;
+    var sorted=S.population.slice().sort(function(a,b){return b.elo-a.elo});
+    var html='<div style="padding:14px"><div class="panel-title">📊 Elo 实时排行</div>';
+    html+='<table class="elo-table"><thead><tr><th class="rank">#</th><th>Prompt预览</th><th class="elo">Elo</th><th class="wins">W</th><th class="cv">CV</th></tr></thead><tbody>';
+    for(var i=0;i<Math.min(20,sorted.length);i++){
+      var p=sorted[i];
+      html+='<tr><td class="rank">'+(i+1)+'</td><td class="prompt-preview" title="'+this.escapeHtml(p.text.slice(0,300))+'">'+this.escapeHtml(p.text.slice(0,80))+'</td><td class="elo">'+Math.round(p.elo)+'</td><td class="wins">'+p.wins+'</td><td class="cv">'+(p.cvScore?p.cvScore.toFixed(2):'-')+'</td></tr>';
+    }
+    html+='</tbody></table></div>';
+    document.getElementById('center-content').innerHTML=html;
+  },
+
+  // ---- Controls ----
+  togglePause(){
+    if(S.phase==='RUNNING'){S.paused=true;S.phase='PAUSED';this.log('⏸️ 暂停','conv');this.updatePhaseUI();document.getElementById('btn-pause').textContent='▶️ 继续'}
+    else if(S.phase==='PAUSED'){S.paused=false;S.phase='RUNNING';this.updatePhaseUI();document.getElementById('btn-pause').textContent='⏯️ 暂停';if(S.pauseResolve){S.pauseResolve();S.pauseResolve=null}}
+  },
+  async stopEvolution(){S.running=false;S.paused=false;if(S.pauseResolve){S.pauseResolve();S.pauseResolve=null}S.aborter&&S.aborter.abort();this.log('⏹️ 用户终止','err');document.getElementById('btn-pause').disabled=true;document.getElementById('btn-stop').disabled=true;await this.finalize()},
+
+  // ---- Logger ----
+  log(msg,cls){
+    var el=document.getElementById('log-stream');
+    var d=document.createElement('div');
+    d.className='log-entry '+(cls||'');
+    d.innerHTML='<span class="ts">'+ts()+'</span>'+msg;
+    el.appendChild(d);el.scrollTop=el.scrollHeight;
+    while(el.children.length>250)el.removeChild(el.firstChild);
+  },
+
+  // ---- Stats ----
+  updateStats(){
+    document.getElementById('s-round').textContent=S.round;
+    document.getElementById('s-pop').textContent=S.population.length;
+    document.getElementById('s-battles').textContent=S.battlesDone;
+    var s=S.population.slice().sort(function(a,b){return b.elo-a.elo});
+    document.getElementById('s-best').textContent=s.length>0?Math.round(s[0].elo):'-';
+    document.getElementById('s-cv').textContent=(s.length>0&&s[0].cvScore)?s[0].cvScore.toFixed(3):'-';
+    document.getElementById('s-calls').textContent=S.stats.apiCalls;
+  },
+
+  // ---- Mobile ----
+  mobToggle(panelId){
+    document.querySelectorAll('#left-panel,#right-panel').forEach(function(el){el.classList.remove('mob-open')});
+    document.querySelectorAll('#mob-nav button').forEach(function(b){b.classList.remove('active')});
+    var p=document.getElementById(panelId);
+    if(panelId==='center-panel'){
+    }else if(p){
+      p.classList.toggle('mob-open');
+    }
+    var navBtns=document.querySelectorAll('#mob-nav button');
+    var idx={'left-panel':0,'center-panel':1,'right-panel':2}[panelId];
+    if(idx!==undefined&&navBtns[idx])navBtns[idx].classList.add('active');
+    if(p&&!p.classList.contains('mob-open')&&panelId!=='center-panel'){
+      if(navBtns[1])navBtns[1].classList.add('active');
+    }
+  }
+};
+
+// =====================================================================
+// INIT
+// =====================================================================
+document.addEventListener('DOMContentLoaded',function(){
+  PEE.init();
+  document.getElementById('settings-modal').addEventListener('click',function(e){if(e.target===document.getElementById('settings-modal'))PEE.closeSettings()});
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){PEE.closeSettings()}
+    if(e.key===' '&&(S.phase==='RUNNING'||S.phase==='PAUSED')){e.preventDefault();PEE.togglePause()}
+  });
+});
+</script>
+</body>
+</html>
