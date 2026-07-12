@@ -4361,52 +4361,129 @@ window._downloadRecentFile=function(btn){
     setTimeout(function(){URL.revokeObjectURL(u);},60000);
     return;
   }
-  // 恢复历史消息时从 IndexedDB 查找（尝试多个路径格式）
-  var possiblePaths=[fn,'/downloads/'+fn,'/'+fn,'/files/'+fn];
-  var tryPaths=function(index){
-    if(index>=possiblePaths.length){
+  // 【修复】全库扫描回退：文件名匹配 → 重建注册表
+  debugLogger.info(' 下载回退: 全库扫描 '+fn);
+  idbTransaction('files','readonly',function(store){return store.getAll();}).then(function(allFiles){
+    var matched=null;
+    // 第一轮：精确路径匹配（/downloads/ /uploads/ 根路径）
+    for(var i=0;i<allFiles.length;i++){
+      var f=allFiles[i];
+      if(!f.content||f.content==='__DIR__')continue;
+      var fname=f.path.split('/').pop();
+      if(fname===fn||f.path==='/downloads/'+fn||f.path==='/uploads/'+fn||f.path==='/'+fn){
+        matched=f;break;
+      }
+    }
+    // 第二轮：模糊匹配（文件名包含）
+    if(!matched){
+      for(var i=0;i<allFiles.length;i++){
+        var f2=allFiles[i];
+        if(!f2.content||f2.content==='__DIR__')continue;
+        var idx=f2.path.lastIndexOf('/'+fn);
+        if(idx>0||f2.path==='/'+fn||f2.path.endsWith('/'+fn)){matched=f2;break;}
+      }
+    }
+    if(!matched){
       showToast('文件已过期，无法下载: '+fn,'error');
       return;
     }
-    idbTransaction('files','readonly',function(store){
-      return store.get(possiblePaths[index]);
-    }).then(function(f){
-      if(!f||!f.content){tryPaths(index+1);return;}
-      // 还原：Blob（内存）/ data: URL / 纯文本 三种格式
-      if(f.content instanceof Blob){
-        var _fb=f.content instanceof File?f.content:new File([f.content],fn,{type:f.content.type||'application/octet-stream'});
-        var u=URL.createObjectURL(_fb);
-        var a=document.createElement('a');a.href=u;a.download=fn;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(function(){if(a.parentNode)a.parentNode.removeChild(a);},200);
-        setTimeout(function(){URL.revokeObjectURL(u);},60000);
-        // ★ 回写注册表，后续点击直接用内存版本
-        _artifactRegistry[fn]={blob:_fb,filename:fn,mimeType:_fb.type,size:_fb.size,time:Date.now()};
-        return;
-      }
-      var raw=f.content;
-      if(typeof raw==='string'&&raw.startsWith('data:')){
-        // data:[<mime>][;base64],<data>
-        var comma=raw.indexOf(',');
-        var meta=raw.substring(0,comma);
-        var isBase64=meta.indexOf(';base64')>=0;
-        var mime=meta.substring(5).split(';')[0]||'application/octet-stream';
-        var body=raw.substring(comma+1);
-        var bytes=isBase64?Uint8Array.from(atob(body),function(c){return c.charCodeAt(0);}):new TextEncoder().encode(body);
-        var blob=new Blob([bytes],{type:mime});
-        var u2=URL.createObjectURL(blob);
-        var a2=document.createElement('a');a2.href=u2;a2.download=fn;
-        a2.click();setTimeout(function(){URL.revokeObjectURL(u2);},1000);
-        // ★ 回写注册表
-        _artifactRegistry[fn]={blob:blob,filename:fn,mimeType:mime,size:blob.size,time:Date.now()};
-        return;
-      }
-      triggerDownload(raw,fn,'application/octet-stream');
-    }).catch(function(){tryPaths(index+1);});
-  };
-  tryPaths(0);
+    // ★ 恢复文件到 _artifactRegistry
+    var content=matched.content;
+    var _fn=fn||matched.path.split('/').pop();
+    if(content instanceof Blob){
+      var _fb=content instanceof File?content:new File([content],_fn,{type:content.type||'application/octet-stream'});
+      _artifactRegistry[_fn]={blob:_fb,filename:_fn,mimeType:_fb.type,size:_fb.size,time:Date.now(),_srcPath:matched.path};
+      var u=URL.createObjectURL(_fb);
+      var a=document.createElement('a');a.href=u;a.download=_fn;
+      document.body.appendChild(a);a.click();
+      setTimeout(function(){if(a.parentNode)a.parentNode.removeChild(a);},200);
+      setTimeout(function(){URL.revokeObjectURL(u);},60000);
+      return;
+    }
+    var raw=content;
+    if(typeof raw==='string'&&raw.startsWith('data:')){
+      var comma=raw.indexOf(',');
+      var meta=raw.substring(0,comma);
+      var isBase64=meta.indexOf(';base64')>=0;
+      var mime=meta.substring(5).split(';')[0]||'application/octet-stream';
+      var body=raw.substring(comma+1);
+      var bytes=isBase64?Uint8Array.from(atob(body),function(c){return c.charCodeAt(0);}):new TextEncoder().encode(body);
+      var blob=new Blob([bytes],{type:mime});
+      _artifactRegistry[_fn]={blob:blob,filename:_fn,mimeType:mime,size:blob.size,time:Date.now(),_srcPath:matched.path};
+      var u2=URL.createObjectURL(blob);
+      var a2=document.createElement('a');a2.href=u2;a2.download=_fn;
+      a2.click();setTimeout(function(){URL.revokeObjectURL(u2);},1000);
+      return;
+    }
+    // 纯文本兜底 — 按扩展名推 MIME，triggerDownload 会回写 _artifactRegistry
+    var _txtMime='text/plain;charset=utf-8';
+    var _ext=(_fn.match(/\.(\w+)$/)||[])[1];
+    if(_ext==='md')_txtMime='text/markdown;charset=utf-8';
+    else if(_ext==='html'||_ext==='htm')_txtMime='text/html;charset=utf-8';
+    else if(_ext==='json')_txtMime='application/json';
+    else if(_ext==='csv')_txtMime='text/csv';
+    else if(_ext==='xml')_txtMime='application/xml';
+    else if(_ext==='yaml'||_ext==='yml')_txtMime='text/yaml';
+    else if(_ext==='js'||_ext==='ts')_txtMime='text/javascript';
+    else if(_ext==='py')_txtMime='text/x-python';
+    else if(_ext==='css')_txtMime='text/css';
+    triggerDownload(raw,_fn,_txtMime);
+  }).catch(function(err){
+    showToast('文件已过期，无法下载: '+fn,'error');
+    debugLogger.warn('下载回退失败: '+err.message);
+  });
 };
+
+// ★ 启动时恢复产物注册表 — 扫描文件系统，预注册所有可下载文件
+// 解决页面刷新后下载链接"文件已过期"的问题
+async function _restoreArtifactRegistry(){
+  try{
+    var allFiles=await idbTransaction('files','readonly',function(store){return store.getAll();});
+    if(!allFiles||!allFiles.length)return;
+    var registered=0;
+    for(var i=0;i<allFiles.length;i++){
+      var f=allFiles[i];
+      if(!f.content||f.content==='__DIR__')continue;
+      var fn=f.path.split('/').pop();
+      if(!fn)continue;
+      // 跳过系统文件
+      if(f.path.indexOf('/config/')===0||f.path.indexOf('/memory/')===0||f.path.indexOf('/skills/')===0||f.path.indexOf('/audit/')===0||f.path.indexOf('/trash/')===0||f.path.indexOf('/cases/')===0)continue;
+      // 跳过空文件
+      if(typeof f.content==='string'&&f.content.length<3)continue;
+      // 路径优先级防御：getAll()按path字典序返回→/downloads/先于/uploads/先于其他
+      // 若已有注册，当前路径优先级不更高则跳过（仅相同或更低时跳过）
+      if(_artifactRegistry[fn]){
+        var _hasPri=_artifactRegistry[fn]._srcPath?(_artifactRegistry[fn]._srcPath.indexOf('/downloads/')===0?3:_artifactRegistry[fn]._srcPath.indexOf('/uploads/')===0?2:1):1;
+        var _curPri=f.path.indexOf('/downloads/')===0?3:f.path.indexOf('/uploads/')===0?2:1;
+        if(_curPri<=_hasPri)continue;
+      }
+      if(f.content instanceof Blob){
+        var fb=f.content instanceof File?f.content:new File([f.content],fn,{type:f.content.type||'application/octet-stream'});
+        _artifactRegistry[fn]={blob:fb,filename:fn,mimeType:fb.type,size:fb.size,time:Date.now(),_srcPath:f.path};
+        registered++;
+      }else if(typeof f.content==='string'){
+        if(f.content.startsWith('data:')){
+          var comma=f.content.indexOf(',');
+          var meta=f.content.substring(0,comma);
+          var isBase64=meta.indexOf(';base64')>=0;
+          var mime=meta.substring(5).split(';')[0]||'application/octet-stream';
+          var body=f.content.substring(comma+1);
+          var bytes=isBase64?Uint8Array.from(atob(body),function(c){return c.charCodeAt(0);}):new TextEncoder().encode(body);
+          var blob=new Blob([bytes],{type:mime});
+          _artifactRegistry[fn]={blob:blob,filename:fn,mimeType:mime,size:blob.size,time:Date.now(),_srcPath:f.path};
+          registered++;
+        }else if(f.content.length<500000&&(!f.path.startsWith('/pipelines/')&&!f.path.startsWith('/projects/')&&!f.path.startsWith('/kb/')&&!f.path.startsWith('/worlds/'))){
+          // 纯文本文件（小于500KB）：包装为Blob注册（README/代码/配置等可下载文件）
+          var txtBlob=new Blob([f.content],{type:'text/plain;charset=utf-8'});
+          _artifactRegistry[fn]={blob:txtBlob,filename:fn,mimeType:'text/plain;charset=utf-8',size:txtBlob.size,time:Date.now(),_srcPath:f.path};
+          registered++;
+        }
+      }
+    }
+    if(registered>0)debugLogger.info(' 产物注册表已恢复: '+registered+' 个文件');
+  }catch(e){debugLogger.warn('产物注册表恢复失败: '+e.message);}
+}
+
 
 var evoWorker=null;
 var taskWorker=null;
@@ -20439,6 +20516,9 @@ async function initApp(){
     if(currentConversationId){
       await switchConversation(currentConversationId, true);
     }
+    // ★ 启动时恢复产物注册表 — 确保下载气泡"文件已过期"问题修复
+    try{await _restoreArtifactRegistry();}catch(e){debugLogger.warn('产物注册表恢复异常: '+e.message);}
+
 
   }catch(e){
     debugLogger.error('初始化失败: '+e.message);
