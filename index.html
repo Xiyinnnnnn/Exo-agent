@@ -1202,7 +1202,7 @@ var BASE_PROMPT='[ROLE] Exo 全栈智能体 | [LANG] zh-CN\n'
 +'[MUST] 思考后→工具调用。不准只思考不行动。\n'
 +'[MUST] 代码/数据/报告 → 写文件。简单问答 → 直接交付。\n'
 +'[MUST] 查优于猜：记忆→知识库→网络→才推理。不跳。\n'
-+'[MUST] 行操作→从下到上，改完复查。\n'
++'[MUST] 行操作→从下到上，改完复读。\n'
 +'[BOOT] 首条消息逐轮执行，不跳过：\n'
 +'  ① skill_manager query 意图    ▸ 匹配技能→set激活\n'
 +'  ② help query 需求             ▸ 匹配工具→set载入\n'
@@ -3916,6 +3916,12 @@ async function _triggerManualCompression(){
   var cs=_ensureConvState(convId);
   if(cs&&cs.isProcessing){showToast('正在处理中，无法压缩','warning');return;}
   var msgs=window._persistentMessages&&window._persistentMessages[convId];
+  // ★ 回退：_persistentMessages 为空（如页面刷新后）→ 从分支数据读取
+  if(!msgs){
+    var _bd=_getBranchData(convId);
+    var _br=_bd._branches[_bd._currentBranchId];
+    if(_br&&_br.items)msgs=_br.items;
+  }
   if(!msgs||msgs.length<3){showToast('对话太短(<3条)，无需压缩','info');return;}
   _compressingLock=true;
   var container=document.getElementById('toastContainer');
@@ -15836,34 +15842,61 @@ async function processUserMessage(userText,taskId){
   }catch(e){debugLogger.warn('上下文构建异常: '+e.message);}
   // 长对话自动压缩（由压缩阈值滑条控制，与上下文条数无关）
   // ★ 防二次压缩：标记已压缩状态，避免压缩后的摘要再次触发压缩循环
-  var _autoToast=document.createElement('div');
-  _autoToast.className='toast info';
-  _autoToast.textContent='正在压缩上下文';
-  var _autoC=document.getElementById('toastContainer');
-  if(_autoC)_autoC.appendChild(_autoToast);
-  var _autoDots=0,_autoTimer=setInterval(function(){
-    _autoDots=(_autoDots+1)%4;
-    _autoToast.textContent='正在压缩上下文'+'.'.repeat(_autoDots);
-  },500);
-  var compressed=await _compressOldMessages(messages,1048565);
-  clearInterval(_autoTimer);
-  if(compressed){
-    _autoToast.className='toast success';
-    _autoToast.textContent='已自动压缩 → '+compressed.length+' 条消息';
-    setTimeout(function(){
-      _autoToast.style.opacity='0';
-      _autoToast.style.transition='opacity 0.3s ease';
-      setTimeout(function(){if(_autoToast.parentNode)_autoToast.remove();},300);
-    },3000);
-    var _summaryEntry = compressed[0];
-    var _historyEntries = compressed.slice(1);
-    for(var _ci=0;_ci<_historyEntries.length;_ci++)_historyEntries[_ci]._compressed=true;
-    messages = _historyEntries;
-    messages.push(_summaryEntry);
-  }else{
-    // 无需压缩 → 静默移除 toast（上下文检查阶段用户无感，不显示"无需压缩"提示）
-    if(_autoToast.parentNode)_autoToast.remove();
+  // ★ 预检：先同步估算 token，只有真正超阈值才创建 toast + 调用 LLM，杜绝空闪
+  var _needCompress = false;
+  try {
+    var _preTotal = 0;
+    for (var _pi = 0; _pi < messages.length; _pi++) {
+      var _pm = messages[_pi];
+      _preTotal += Math.max((_pm._tokens || 0), _estimateTokens((_pm.content || '') + (_pm.reasoning_content || '')));
+    }
+    var _aggLvl = settings.compression_aggressiveness != null ? settings.compression_aggressiveness : 50;
+    _needCompress = _preTotal > Math.floor(1048565 * (0.5 + (100 - _aggLvl) / 100 * 0.134)) && messages.length > 2;
+  } catch (e) {}
+  
+  if (_needCompress) {
+    var _autoToast = document.createElement('div');
+    _autoToast.className = 'toast info';
+    _autoToast.textContent = '正在压缩上下文';
+    var _autoC = document.getElementById('toastContainer');
+    if (_autoC) _autoC.appendChild(_autoToast);
+    var _autoDots = 0, _autoTimer = setInterval(function () {
+      _autoDots = (_autoDots + 1) % 4;
+      _autoToast.textContent = '正在压缩上下文' + '.'.repeat(_autoDots);
+    }, 500);
+    // ★ 内层 try-catch 确保异常时定时器+DOM 务必清理，杜绝 _autoTimer 泄漏
+    try {
+      var compressed = await _compressOldMessages(messages, 1048565);
+      clearInterval(_autoTimer);
+      if (compressed) {
+        _autoToast.className = 'toast success';
+        _autoToast.textContent = '已自动压缩 → ' + compressed.length + ' 条消息';
+        setTimeout(function () {
+          _autoToast.style.opacity = '0';
+          _autoToast.style.transition = 'opacity 0.3s ease';
+          setTimeout(function () { if (_autoToast.parentNode) _autoToast.remove(); }, 300);
+        }, 3000);
+        var _summaryEntry = compressed[0];
+        var _historyEntries = compressed.slice(1);
+        for (var _ci = 0; _ci < _historyEntries.length; _ci++) _historyEntries[_ci]._compressed = true;
+        messages = _historyEntries;
+        messages.push(_summaryEntry);
+      } else {
+        if (_autoToast.parentNode) _autoToast.remove();
+      }
+    } catch (e) {
+      clearInterval(_autoTimer);
+      _autoToast.className = 'toast error';
+      _autoToast.textContent = '压缩失败: ' + (e.message || '未知错误').substring(0, 60);
+      setTimeout(function () {
+        _autoToast.style.opacity = '0';
+        _autoToast.style.transition = 'opacity 0.3s ease';
+        setTimeout(function () { if (_autoToast.parentNode) _autoToast.remove(); }, 300);
+      }, 3000);
+      debugLogger.warn('自动压缩异常: ' + e.message);
+    }
   }
+  // 无需压缩 → 完全静默，无 DOM 操作
   var _preUserMessages = messages.slice();
 
   // ★ 技能/工具推荐以 _injected user 消息注入到真正用户消息的上方（尾部效应）
