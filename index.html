@@ -3937,7 +3937,7 @@ async function _triggerManualCompression(){
     var compressed=await _compressOldMessages(msgs,0);
     clearInterval(dotTimer);
     if(compressed){
-      window._persistentMessages[convId]=compressed;
+      if(!window._persistentMessages)window._persistentMessages={}; window._persistentMessages[convId]=compressed;
       _updateTokenAccumulator(convId,_estimateTokens(JSON.stringify(compressed)));
       _updateToolbarTokenDisplay();
       _saveTokenCounts();
