@@ -9471,12 +9471,12 @@ async function toolFilesystem(args){
        if(line>lines.length+1)line=lines.length+1;
        // ★ 结构化结果反馈：记录插入的新内容
        var _insContent=content.split('\n');
-       var _insNewPreview=_insContent.length<=5?_insContent.join('\\n'):_insContent.slice(0,3).join('\\n')+'...(共'+_insContent.length+'行)';
+       var _insDetail=_insContent.map(function(l,i){return (line+i)+'： '+l;}).join('\n');
        lines.splice(line-1,0,..._insContent);
        var _insNew=lines.join('\n');
        await updateFile(path,_insNew);
        _registerDownloadable(path,_insNew);
-      return '已在第 '+line+' 行插入内容: '+path+'\n→ '+_insNewPreview;
+       return '已在第 '+line+' 行插入内容: \n'+_insDetail;
      case 'delete_lines':
        var dlStart=(args.line!=null?args.line:1)-1;
        var dlEnd=args.endLine!=null?args.endLine:(args.line!=null?args.line:1);
@@ -9489,12 +9489,12 @@ async function toolFilesystem(args){
        if(dlDeleteCount<=0)return '行号参数无效：endLine('+dlEnd+')必须≥line('+(dlStart+1)+')，当前deleteCount='+dlDeleteCount+'，未执行删除。';
        // ★ 结构化结果反馈：记录被删除的原内容
        var _dlDeletedLines=lines2.slice(dlStart,dlEnd);
-       var _dlDelPreview=_dlDeletedLines.length<=5?_dlDeletedLines.join('\\n'):_dlDeletedLines.slice(0,3).join('\\n')+'...(共'+_dlDeletedLines.length+'行)';
+       var _dlDelDetail=_dlDeletedLines.map(function(l,i){return (dlStart+i+1)+'： '+l;}).join('\n');
        lines2.splice(dlStart,dlDeleteCount);
        var _dlNew=lines2.join('\n');
        await updateFile(path,_dlNew);
        _registerDownloadable(path,_dlNew);
-      return '已删除第 '+(dlStart+1)+' 到第 '+dlEnd+' 行: '+path+'\n'+_dlDelPreview+' → (已删除)';
+       return '已删除第 '+(dlStart+1)+' 到第 '+dlEnd+' 行: \n'+_dlDelDetail+'\n↓\n(已删除)';
      case 'replace_lines':
        if(!content&&content!=='')throw new Error('replace_lines 需要 content 参数（空字符串=清空指定行）');
        var rlStart=(args.line!=null?args.line:1)-1;
@@ -9509,13 +9509,13 @@ async function toolFilesystem(args){
        // ★ 结构化结果反馈：记录原内容→新内容
        var _rlOldLines=lines3.slice(rlStart,rlEnd);
        var _rlNewLines=content.split('\n');
-       var _rlOldPreview=_rlOldLines.length<=5?_rlOldLines.join('\\n'):_rlOldLines.slice(0,3).join('\\n')+'...(共'+_rlOldLines.length+'行)';
-       var _rlNewPreview=_rlNewLines.length<=5?_rlNewLines.join('\\n'):_rlNewLines.slice(0,3).join('\\n')+'...(共'+_rlNewLines.length+'行)';
+       var _rlOldDetail=_rlOldLines.map(function(l,i){return (rlStart+i+1)+'： '+l;}).join('\n');
+       var _rlNewDetail=_rlNewLines.map(function(l,i){return (rlStart+i+1)+'： '+l;}).join('\n');
        lines3.splice(rlStart,deleteCount,..._rlNewLines);
        var _rlNew=lines3.join('\n');
        await updateFile(path,_rlNew);
        _registerDownloadable(path,_rlNew);
-      return '已替换第 '+(rlStart+1)+' 到第 '+rlEnd+' 行: '+path+'\n'+_rlOldPreview+' → '+_rlNewPreview;
+       return '已替换第 '+(rlStart+1)+' 到第 '+rlEnd+' 行: \n'+_rlOldDetail+'\n↓\n'+_rlNewDetail;
     case 'list':
       return await _renderFileTree(path||'/', args.depth||5);
     case 'tree':
