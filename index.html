@@ -9370,7 +9370,7 @@ async function toolFilesystem(args){
           return ' 文件过大('+formatSize(sizeBytes)+')，超过full模式安全阈值('+formatSize(FULL_MAX)+')。请改用 mode="chunked" 分段读取，或传 full_max_bytes 提高阈值。\n\n[预览前1500字]\n'+fc.substring(0,1500);
         }
         var totalLines=fc.split('\n').length;
-        return '[文件: '+path+' | '+formatSize(sizeBytes)+' | '+totalLines+'行 | 全量加载 ]\n---\n'+fc;
+        var numberedLines=fc.split('\n').map(function(l,i){return (i+1)+': '+l;}).join('\n');return '[文件: '+path+' | '+formatSize(sizeBytes)+' | '+totalLines+'行 | 全量加载 | 带行号 ]\n---\n'+numberedLines;
       }
       
       // chunked 模式（原逻辑）
@@ -9387,7 +9387,7 @@ async function toolFilesystem(args){
       var numbered=selected.map(function(l,i){return (startLine+i)+': '+l;}).join('\n');
       var info='[文件: '+path+' | 总行数: '+totalLines+' | 第 '+startLine+'-'+endLine+' 行';
       if(endLine<totalLines)info+=(' | 剩余 '+(totalLines-endLine)+' 行未读，用 line='+(endLine+1)+' 继续。或用 mode="full" 全量加载');
-      else info+=' |  已读完]';
+      else info+=' |  已读完';
       return info+']\n---\n'+numbered;
     case 'update':await updateFile(path,content);
       _registerDownloadable(path,content);
