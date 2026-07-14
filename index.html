@@ -15905,12 +15905,32 @@ async function processUserMessage(userText,taskId){
       for(var ri=0;ri<recentItems.length;ri++){
         var item=recentItems[ri];
 	var role=item.role||((item.role==='agent'||item.role==='assistant')?'assistant':(item.role==='user'?'user':'assistant'));
-	// 只保留纯文本，不注入HTML产物噪声；保留 tool_call_id 确保 LLM 能关联工具结果
 	var content=item.cleanContent||item.content||'';
-	var msg={role:role,content:content};
-	if(item.tool_call_id)msg.tool_call_id=item.tool_call_id;
-	if(item.name)msg.name=item.name;
-	messages.push(msg);
+	// ★ 旧格式修复：assistant 内容含 ---tool: → 拆成 assistant(正文)+tool(结果)
+	if(role==='assistant' && typeof content==='string' && content.indexOf('---tool:')>=0){
+	  var _splitIdx=content.indexOf('---tool:');
+	  var _assistantText=content.substring(0,_splitIdx).replace(/\n{4,}/g,'\n\n\n').trim();
+	  var _toolParts=content.substring(_splitIdx).split(/\n(?=---tool:)/);
+	  if(_assistantText){messages.push({role:'assistant',content:_assistantText});}
+	  for(var _tpi=0;_tpi<_toolParts.length;_tpi++){
+	    var _tp=_toolParts[_tpi].trim();
+	    if(!_tp)continue;
+	    var _toolName='';
+	    var _nm=_tp.match(/查看工具结果:\s*(\S+)/i);
+	    if(_nm)_toolName=_nm[1];
+	    messages.push({
+	      role:'tool',
+	      tool_call_id:'tc_migrated_'+Date.now()+'_'+Math.random().toString(36).substr(2,6),
+	      name:_toolName||'unknown',
+	      content:_tp
+	    });
+	  }
+	}else{
+	  var msg={role:role,content:content};
+	  if(item.tool_call_id)msg.tool_call_id=item.tool_call_id;
+	  if(item.name)msg.name=item.name;
+	  messages.push(msg);
+	}
 
       }
     }
@@ -18913,6 +18933,17 @@ async function importAllData(jsonData){
       renderEnvVars();
       renderUploadedFilesList();
       updateStorageInfo();
+      renderConversationList();               // ★ 刷新侧边栏会话列表
+      updateSendButton();                     // ★ 刷新发送按钮（API Key 可能已变）
+      applySettingsToUI();                    // ★ 刷新设置面板
+      renderFileManager();                    // ★ 刷新文件管理器
+      // 清除内存缓存，强制从导入数据重建
+      if(window._persistentMessages){
+        delete window._persistentMessages[currentConversationId];
+      }
+      if(currentConversationId){
+        await switchConversation(currentConversationId, true);
+      }
       if(evoWorker){evoWorker.postMessage({type:'config_update',payload:{type:'full_import'}});}
       showToast('数据导入成功  ('+fileKeys.length+' 个文件)','success');
       debugLogger.info('数据导入完成: '+fileKeys.length+' 文件');
