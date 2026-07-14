@@ -4161,6 +4161,7 @@ async function _compressOldMessages(messages,modelMaxTokens){
       if(toKeep[k].name)_clean.name=toKeep[k].name;
       if(toKeep[k].tool_calls)_clean.tool_calls=toKeep[k].tool_calls;
       if(toKeep[k]._tokens)_clean._tokens=toKeep[k]._tokens;
+      if(toKeep[k]._sentCount)_clean._sentCount=toKeep[k]._sentCount;
       compressed.push(_clean);
     }
     // ★ 摘要以 user 角色追加到保留消息之后（不产生 system），system 由外部调用方维护
@@ -8952,7 +8953,7 @@ function _buildLLMRequest(messages,tools,stream,source){
         if(m.tool_call_id)cleaned.tool_call_id=m.tool_call_id;
         if(m.name)cleaned.name=m.name;
         if(m.reasoning_content)cleaned.reasoning_content=_safeStr(m.reasoning_content);
-        if(m._sentToApi)cleaned._sentToApi=m._sentToApi;
+        if(m._sentCount)cleaned._sentCount=m._sentCount;
         return cleaned;
     });
     
@@ -8964,18 +8965,18 @@ function _buildLLMRequest(messages,tools,stream,source){
     for(var _mi=0;_mi<cleanedMessages.length;_mi++){
       _estMsgTotal+=(cleanedMessages[_mi]._tokens||_estimateTokens((cleanedMessages[_mi].content||'')+(cleanedMessages[_mi].reasoning_content||'')));
     }
-    // ★ 跨轮精炼：首次发送保留原始内容，已发送过的旧结果降级为引导语句
+    // ★ 跨轮精炼：N-3轮保留原始内容，N-3轮之前的旧结果降级为引导语句
     for(var _mi2=0;_mi2<cleanedMessages.length;_mi2++){
       var _cl2=(cleanedMessages[_mi2].content||'').length;
       if(_cl2>200&&(cleanedMessages[_mi2].tool_call_id||cleanedMessages[_mi2].name)){
-        var _alreadySent=cleanedMessages[_mi2]._sentToApi;
-        if(!_alreadySent){
-          // ★ 首次发送 → 标记已发送，保留原始内容给 API
-          cleanedMessages[_mi2]._sentToApi=true;
-          if(messages[_mi2])messages[_mi2]._sentToApi=true;
+        var _sentCount=cleanedMessages[_mi2]._sentCount||0;_sentCount++;
+        cleanedMessages[_mi2]._sentCount=_sentCount;
+        if(messages[_mi2])messages[_mi2]._sentCount=_sentCount;
+        if(_sentCount<=3){
+          // ★ N-3轮保留 → 前三轮保留原始内容，不精炼
           continue;
         }
-        // ★ 已发送过 → 精炼为引导语句（跨轮降级）
+        // ★ N-3轮及更早 → 精炼为引导语句（跨轮降级）
         var _tname=cleanedMessages[_mi2].name||'';
         var _paths=[];var _bpath='';
         var _pm=(cleanedMessages[_mi2].content||'').match(/\/[\w\/\.\-\u4e00-\u9fff]+/g);
