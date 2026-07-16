@@ -3947,8 +3947,8 @@ async function _loadTokenCounts(){
       var raw=await readFile('/config/token_counts.json');
       if(raw){
         var fileData=JSON.parse(raw);
-        // 合并：文件数据覆盖localStorage数据（文件更新更完整）
-        if(data){for(var k in fileData)data[k]=fileData[k];}
+        // 合并：localStorage优先（同步写入最新），IndexedDB只补充缺失对话
+        if(data){for(var k in fileData){if(data[k]===undefined)data[k]=fileData[k];}}
         else{data=fileData;}
       }
     }catch(e){}
@@ -6387,6 +6387,16 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
     sourceLabel = ' (估算)';
   }
   dailyTokenUsed += tokensToAdd;
+  // ★ 用API精确 prompt_tokens 同步更新顶部对话token计数器 + 持久化
+  if(apiUsage && typeof apiUsage.prompt_tokens==='number' && apiUsage.prompt_tokens>0){
+    _updateTokenAccumulator(currentConversationId, apiUsage.prompt_tokens);
+    // ★ 同步写 localStorage，确保精确值被持久化（异步 IndexedDB 可能来不及）
+    try{
+      var _ls=JSON.parse(localStorage.getItem(TOKEN_LOCAL_KEY)||'{}');
+      _ls[currentConversationId]=apiUsage.prompt_tokens;
+      localStorage.setItem(TOKEN_LOCAL_KEY,JSON.stringify(_ls));
+    }catch(e){}
+  }
   saveDailyUsage();
   updateTokenDisplay();
   // ★ Token消耗日志：API精确计费每次都记录；估算按10%节流
@@ -18875,6 +18885,7 @@ function addToolResultBlock(msgDiv, toolName, resultContent, toolIndex) {
     msgDiv.appendChild(toggleEl);
     msgDiv.appendChild(resultBlock);
   }
+  if (resultBlock._virtualLines) _initVirtualScroll(resultBlock);
 }
 /* ★ 虚拟滚动渲染函数：仅渲染可见区域附近的行 */
 function _renderVirtualLines(block) {
@@ -18883,9 +18894,10 @@ function _renderVirtualLines(block) {
   var viewport = block.querySelector('.virtual-scroll-viewport');
   if (!viewport) { block.textContent = lines.join('\n'); return; }
   var LINE_HEIGHT = 20, BUFFER = 40;
-  var scrollParent = block;
-  var scrollTop = scrollParent.scrollTop || 0;
-  var clientH = scrollParent.clientHeight || 300;
+  if (!block._scrollContainer) _initVirtualScroll(block);
+  var scrollParent = block._scrollContainer || window;
+  var scrollTop = scrollParent.scrollTop || (scrollParent === window ? (window.pageYOffset || document.documentElement.scrollTop) : 0);
+  var clientH = scrollParent.clientHeight || (scrollParent === window ? window.innerHeight : 300);
   var totalH = lines.length * LINE_HEIGHT;
   var start = Math.max(0, Math.floor(scrollTop / LINE_HEIGHT) - BUFFER);
   var end = Math.min(lines.length, Math.ceil((scrollTop + clientH) / LINE_HEIGHT) + BUFFER);
@@ -18911,19 +18923,6 @@ function _renderVirtualLines(block) {
     statusEl.textContent = '虚拟滚动 · 共 ' + lines.length + ' 行 · 显示 ' + (end - start) + ' 行 · ' + pct + '%';
   }
 }
-// ★ 全局滚动监听（RAF节流）：虚拟滚动容器滚动时重新渲染可见行
-var _virtualScrollRAF = {};
-document.addEventListener('scroll', function(e){
-  var block = e.target.closest('.tool-result-block');
-  if (!block || !block._virtualLines) return;
-  var bid = block.id || '_vs_';
-  if (_virtualScrollRAF[bid]) return;
-  _virtualScrollRAF[bid] = true;
-  requestAnimationFrame(function(){
-    _virtualScrollRAF[bid] = false;
-    _renderVirtualLines(block);
-  });
-}, {passive: true});
 // ★ 工具展开点击监听：折叠翻转由#messagesList的toggle handler先完成，此处直接渲染
 document.addEventListener('click', function(e){
   var toggle = e.target.closest('.tool-result-toggle');
@@ -18931,6 +18930,7 @@ document.addEventListener('click', function(e){
   var targetId = toggle.getAttribute('data-target');
   var block = document.getElementById(targetId);
   if (!block || !block._virtualLines) return;
+  if (!block._scrollContainer) _initVirtualScroll(block);
   // 等一帧让浏览器完成布局（class已由冒泡到的#messagesList toggle handler翻转）
   requestAnimationFrame(function(){
     // 只有已展开（collapsed被移除）才渲染，折叠时无需操作
@@ -18939,6 +18939,33 @@ document.addEventListener('click', function(e){
     }
   });
 });
+// ★ 虚拟滚动初始化：为block绑定正确的滚动容器
+function _initVirtualScroll(block) {
+  if (!block._virtualLines || block._virtualScrollInited) return;
+  // 从block向上遍历，找第一个 overflow:auto/scroll 的父元素作为滚动容器
+  var el = block.parentElement;
+  var container = window;
+  while (el && el !== document.body && el !== document.documentElement) {
+    var style = window.getComputedStyle(el);
+    var ov = (style.overflowY || style.overflow) + (style.overflow || '');
+    if (/(auto|scroll|overlay)/.test(ov)) { container = el; break; }
+    el = el.parentElement;
+  }
+  block._scrollContainer = container;
+  // 绑定滚动事件（RAF节流）
+  var ticking = false;
+  var handler = function() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function() {
+      _renderVirtualLines(block);
+      ticking = false;
+    });
+  };
+  container.addEventListener('scroll', handler, {passive: true});
+  block._scrollHandler = handler;
+  block._virtualScrollInited = true;
+}
 
 function toggleToolResult() {
   var block = document.getElementById(this.getAttribute('data-target'));
