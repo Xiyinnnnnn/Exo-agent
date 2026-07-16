@@ -8770,6 +8770,14 @@ async function handleWriteLesson(payload){
 
 async function handleWriteAuditLog(payload){
   try{
+    // ★ 修复：add_skill 时 Worker 传的 skill_id 可能为空（UUID由主线程生成），从 skillCache 按名称补全
+    if(payload.patch && !payload.patch.skill_id && payload.patch.new_content && payload.patch.new_content.name && payload.action==='merge_success'){
+      var _skillKeys=Object.keys(skillCache.skills||{});
+      for(var _sk=0;_sk<_skillKeys.length;_sk++){
+        var _s=skillCache.skills[_skillKeys[_sk]];
+        if(_s && _s.name===payload.patch.new_content.name && _s.id){payload.patch.skill_id=_s.id;break;}
+      }
+    }
     var auditEntry={timestamp:new Date().toISOString(),action:payload.action||'unknown',stage:payload.stage||'',patch:payload.patch||{},reason:payload.reason||'',version:payload.version||0,evalResult:payload.evalResult||null};
     var auditPath='/audit/audit_log.jsonl';
     var existing=await readFile(auditPath)||'';
@@ -15214,7 +15222,7 @@ async function showSkillEvolutionLog(skillId){
     for(var i=0;i<lines.length;i++){
       try{
         var e=JSON.parse(lines[i]);
-        if(e.patch&&e.patch.skill_id===skillId)entries.push(e);
+        var _sid = (e.patch.skill_id || '').replace(/\.json$/i,''); var _sid2 = skillId.replace(/\.json$/i,''); if(e.patch&&_sid===_sid2)entries.push(e);
       }catch(ex){}
     }
     if(entries.length===0){alert('技能「'+skillId+'」暂无进化记录');return;}
@@ -15240,8 +15248,8 @@ async function showSkillEvolutionLog(skillId){
     box.style.cssText='background:#fff;border-radius:12px;padding:20px;max-width:600px;width:90%;max-height:80vh;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.2)';
     box.innerHTML=html+'<div style="text-align:right;margin-top:12px"><button id="_evoLogCloseBtn" style="padding:6px 16px;border:none;border-radius:6px;background:#4f6ef7;color:#fff;cursor:pointer">关闭</button></div>';
     mask.appendChild(box);
-    document.getElementById('_evoLogCloseBtn').addEventListener('click',function(){mask.remove();});
     document.body.appendChild(mask);
+    document.getElementById('_evoLogCloseBtn').addEventListener('click',function(){mask.remove();});
     mask.addEventListener('click',function(e){if(e.target===mask)mask.remove();});
   }catch(e){alert('读取进化日志失败: '+e.message);}
 }
