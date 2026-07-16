@@ -6354,7 +6354,7 @@ function _estimateTokensFromChars(chars){
   return Math.max(1, Math.ceil(chars / 4));
 }
 
-function recordDailyTokenUsage(messages, responseContent, apiUsage){
+function recordDailyTokenUsage(messages, responseContent, apiUsage, convId){
   // ★ 跨日自检：确保 token 计数在日期切换时自动归零
   var todayStr = new Date().toDateString();
   if (!_dailyTokenDate || _dailyTokenDate !== todayStr) {
@@ -6387,13 +6387,14 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
     sourceLabel = ' (估算)';
   }
   dailyTokenUsed += tokensToAdd;
-  // ★ 用API精确 prompt_tokens 同步更新顶部对话token计数器 + 持久化
-  if(apiUsage && typeof apiUsage.prompt_tokens==='number' && apiUsage.prompt_tokens>0){
-    _updateTokenAccumulator(currentConversationId, apiUsage.prompt_tokens);
+  // ★★★ 请求对象隔离：仅当显式传入 convId 且匹配当前对话时，才更新顶部 token 计数器
+  // 背景操作（MCTS/压缩/进化代理/流水线/审查修正）不传 convId，不会污染当前对话的计数
+  if(apiUsage && typeof apiUsage.prompt_tokens==='number' && apiUsage.prompt_tokens>0 && convId && convId===currentConversationId){
+    _updateTokenAccumulator(convId, apiUsage.prompt_tokens);
     // ★ 同步写 localStorage，确保精确值被持久化（异步 IndexedDB 可能来不及）
     try{
       var _ls=JSON.parse(localStorage.getItem(TOKEN_LOCAL_KEY)||'{}');
-      _ls[currentConversationId]=apiUsage.prompt_tokens;
+      _ls[convId]=apiUsage.prompt_tokens;
       localStorage.setItem(TOKEN_LOCAL_KEY,JSON.stringify(_ls));
     }catch(e){}
   }
@@ -9260,7 +9261,7 @@ async function callLLM(messages,tools,stream,source){
   return data;
 }
 
-async function streamChatCompletion(messages,tools,onChunk,source){
+async function streamChatCompletion(messages,tools,onChunk,source,convId){
   source=source||'user';
   var attempt=0;
 
@@ -9371,7 +9372,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
           var data=trimmed.slice(5).trim();
           if(data==='[DONE]'){
             activeStreamReader=null;
-            recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
+            recordDailyTokenUsage(messages, totalStreamContent, streamUsage, convId);
             _tagMessageTokens(messages, streamUsage);
             return finishReason;
           }
@@ -9394,7 +9395,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       }
       if(!streamError){
         activeStreamReader=null;
-        recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
+        recordDailyTokenUsage(messages, totalStreamContent, streamUsage, convId);
         _tagMessageTokens(messages, streamUsage);
         debugLogger.info(' 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length+(streamUsage?' | usage:精确':' | usage:估算'));
         if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_success',payload:{taskId:currentConversationId||'',relevantSkills:skillCache.activeSkillIds||[],summary:totalStreamContent.substring(0,200)}});}
@@ -16578,7 +16579,8 @@ async function processUserMessage(userText,taskId){
             }
           }
         },
-        'user'
+        'user',
+        currentConversationId
       );
 
       // 【新增】检测 token 耗尽截断
@@ -18896,11 +18898,15 @@ function _renderVirtualLines(block) {
   var LINE_HEIGHT = 20, BUFFER = 40;
   if (!block._scrollContainer) _initVirtualScroll(block);
   var scrollParent = block._scrollContainer || window;
-  var scrollTop = scrollParent.scrollTop || (scrollParent === window ? (window.pageYOffset || document.documentElement.scrollTop) : 0);
-  var clientH = scrollParent.clientHeight || (scrollParent === window ? window.innerHeight : 300);
+  // ★★★ 用 getBoundingClientRect 计算 block 在容器中的有效滚动距离
+  // effectiveScrollTop = 容器顶部 - block顶部（>0 表示 block 已向上滚出可视区）
+  var br = block.getBoundingClientRect();
+  var crTop = (scrollParent === window) ? 0 : scrollParent.getBoundingClientRect().top;
+  var effectiveScrollTop = Math.max(0, crTop - br.top);
+  var clientH = (scrollParent === window) ? window.innerHeight : (scrollParent.clientHeight || 300);
   var totalH = lines.length * LINE_HEIGHT;
-  var start = Math.max(0, Math.floor(scrollTop / LINE_HEIGHT) - BUFFER);
-  var end = Math.min(lines.length, Math.ceil((scrollTop + clientH) / LINE_HEIGHT) + BUFFER);
+  var start = Math.max(0, Math.floor(effectiveScrollTop / LINE_HEIGHT) - BUFFER);
+  var end = Math.min(lines.length, Math.ceil((effectiveScrollTop + clientH) / LINE_HEIGHT) + BUFFER);
   // 用内容高度撑开滚动条（spacer方式）
   var spacerTop = start * LINE_HEIGHT;
   var spacerBottom = Math.max(0, (lines.length - end) * LINE_HEIGHT);
@@ -18919,7 +18925,7 @@ function _renderVirtualLines(block) {
   // 更新状态栏
   var statusEl = block.querySelector('.virtual-scroll-status');
   if (statusEl) {
-    var pct = totalH > 0 ? Math.round(scrollTop / totalH * 100) : 0;
+    var pct = totalH > 0 ? Math.round(effectiveScrollTop / totalH * 100) : 0;
     statusEl.textContent = '虚拟滚动 · 共 ' + lines.length + ' 行 · 显示 ' + (end - start) + ' 行 · ' + pct + '%';
   }
 }
@@ -18942,14 +18948,31 @@ document.addEventListener('click', function(e){
 // ★ 虚拟滚动初始化：为block绑定正确的滚动容器
 function _initVirtualScroll(block) {
   if (!block._virtualLines || block._virtualScrollInited) return;
-  // 从block向上遍历，找第一个 overflow:auto/scroll 的父元素作为滚动容器
+  // 从block向上遍历，找第一个真正可滚动的父元素作为滚动容器
   var el = block.parentElement;
-  var container = window;
+  var container = null;
   while (el && el !== document.body && el !== document.documentElement) {
     var style = window.getComputedStyle(el);
     var ov = (style.overflowY || style.overflow) + (style.overflow || '');
-    if (/(auto|scroll|overlay)/.test(ov)) { container = el; break; }
+    if (/(auto|scroll|overlay)/.test(ov)) {
+      // ★★★ 确认确实有内容溢出（可滚动），否则继续向上
+      if (el.scrollHeight > el.clientHeight + 2) {
+        container = el;
+        break;
+      }
+    }
     el = el.parentElement;
+  }
+  // 未找到→尝试已知滚动容器或回退window
+  if (!container) {
+    var known = document.querySelector('#messagesList, .messages-container');
+    if (known && known.scrollHeight > known.clientHeight + 2) {
+      container = known;
+    } else if (document.documentElement.scrollHeight > document.documentElement.clientHeight + 2) {
+      container = window;
+    } else {
+      container = window;
+    }
   }
   block._scrollContainer = container;
   // 绑定滚动事件（RAF节流）
