@@ -234,9 +234,6 @@ body{
 .tool-result-toggle:hover{color:#ff9800}
 .tool-result-block{border-left:3px solid #ff9800;padding:8px 12px;margin:6px 0;font-size:12px;color:var(--color-text-secondary);background:rgba(255,152,0,0.04);border-radius:0 var(--radius-sm) var(--radius-sm) 0;max-height:300px;overflow-y:auto;white-space:pre-wrap;line-height:1.5;word-break:break-word}
 .tool-result-block.collapsed{display:none}
-/* ★ 虚拟滚动：大文件分线渲染，浏览器原生按需布局(content-visibility:auto) */
-.virtual-scroll-line{content-visibility:auto;contain-intrinsic-size:20px;white-space:pre-wrap;word-break:break-word;min-height:20px;font-family:'SF Mono',Monaco,monospace;font-size:13px;line-height:1.5;padding:0 4px}
-.virtual-scroll-line:hover{background:rgba(255,152,0,0.06)}
 /* 输入区 */
 .input-area{
   padding:8px 12px;padding-bottom:max(8px,var(--safe-area-bottom));
@@ -3903,9 +3900,21 @@ async function _deleteTodos(convId){
 }
 
 var _convTokenAccumulator={};
-function _updateTokenAccumulator(convId,tokens){
+function _updateTokenAccumulator(convId, tokens){
   convId=convId||currentConversationId;
-  if(tokens>0){ _convTokenAccumulator[convId]=tokens; }
+  if(arguments.length===1||tokens===null||tokens===undefined){
+    // ★ 从当前对话的消息数组累加每条消息的 _tokens（API精确值），天然对话隔离
+    var msgs=window._persistentMessages&&window._persistentMessages[convId];
+    if(!msgs||!msgs.length){_convTokenAccumulator[convId]=0;return;}
+    var total=0;
+    for(var i=0;i<msgs.length;i++){
+      if(typeof msgs[i]._tokens==='number')total+=msgs[i]._tokens;
+      else total+=_estimateTokens(msgs[i].content||'');
+    }
+    _convTokenAccumulator[convId]=total;
+  }else{
+    if(tokens>0)_convTokenAccumulator[convId]=tokens;
+  }
 }
 function _getCumulativeTokens(convId){
   return _convTokenAccumulator[convId||currentConversationId]||0;
@@ -4002,7 +4011,7 @@ async function _triggerManualCompression(){
     clearInterval(dotTimer);
     if(compressed){
       if(!window._persistentMessages)window._persistentMessages={}; window._persistentMessages[convId]=compressed;
-      _updateTokenAccumulator(convId, compressed._estTokens || _estimateTokens(JSON.stringify(compressed)));
+      _updateTokenAccumulator(convId);
       _updateToolbarTokenDisplay();
       _saveTokenCounts();
       toast.className='toast success';
@@ -6372,11 +6381,9 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
     tokensToAdd = apiUsage.total_tokens;
     sourceLabel = ' (API精确)';
   } else if (apiUsage && typeof apiUsage.prompt_tokens === 'number' && typeof apiUsage.completion_tokens === 'number') {
-    // 兼容仅有prompt+completion的情况
     tokensToAdd = apiUsage.prompt_tokens + apiUsage.completion_tokens;
     sourceLabel = ' (API精确)';
   } else {
-    // 回退：基于字符粗略估算
     var totalChars = 0;
     if (Array.isArray(messages)) {
       for (var i = 0; i < messages.length; i++) {
@@ -9281,7 +9288,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
     if(_msgs){
       var _sysSave=messages[0];messages.length=0;messages.push(_sysSave);
       Array.prototype.push.apply(messages,_msgs);showToast('上下文已自动压缩','success',2000);
-      _updateTokenAccumulator(currentConversationId, _msgs._estTokens || _estimateTokens(JSON.stringify(messages)));
+      _updateTokenAccumulator(currentConversationId);
     }
     var req=_buildLLMRequest(messages,tools,true,source);
     var response;
@@ -16412,7 +16419,7 @@ async function processUserMessage(userText,taskId){
       if (compressed) {
         _autoToast.className = 'toast success';
         _autoToast.textContent = '已自动压缩 → ' + compressed.length + ' 条消息';
-        _updateTokenAccumulator(currentConversationId, compressed._estTokens || _estimateTokens(JSON.stringify(messages)));
+        _updateTokenAccumulator(currentConversationId);
         setTimeout(function () {
           _autoToast.style.opacity = '0';
           _autoToast.style.transition = 'opacity 0.3s ease';
@@ -16722,7 +16729,7 @@ async function processUserMessage(userText,taskId){
 
 
       // ★ TODO 注入 — 累计token消耗>50K或dirty标记时注入当前进度
-      _updateTokenAccumulator(currentConversationId,_estimateTokens(JSON.stringify(messages)));
+      _updateTokenAccumulator(currentConversationId);
       _updateToolbarTokenDisplay();
       _saveTokenCounts();
       var _todoCard=_buildTodoUserInjection(currentConversationId,'main');
@@ -17583,6 +17590,10 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
       if(/^\[TODO\s*卡片\]/.test(c))return false;
       return true;
     }).slice();
+    // ★ 从刚刷新的 _persistentMessages 累加 _tokens（此时所有消息已有最新API精确标记）
+    _updateTokenAccumulator(currentConversationId);
+    _updateToolbarTokenDisplay();
+    _saveTokenCounts();
     updateSendButton();
     messagesDiv.scrollTop=messagesDiv.scrollHeight;
     if(processingError)debugLogger.warn('对话处理完成（有错误）');
@@ -18844,11 +18855,19 @@ function toggleThinking() {
 function addToolResultBlock(msgDiv, toolName, resultContent, toolIndex) {
   var existingBlock = msgDiv.querySelector('#tool-result-' + msgDiv._msgId + '-' + toolIndex);
   if (existingBlock) {
-    // ★ 虚拟滚动兼容：大内容更新时保持虚拟渲染
-    if (existingBlock._virtualLines && resultContent.length > 5000) {
-      var _newLines = resultContent.split('\n');
-      existingBlock._virtualLines = _newLines;
-      _renderVirtualLines(existingBlock);
+    // 大内容更新：按行重建 DOM（利用 content-visibility:auto 按需渲染）
+    if (resultContent.length > 5000) {
+      var _lines = resultContent.split('\n');
+      var _vp = existingBlock.querySelector('.vr-viewport');
+      if (!_vp) { existingBlock.innerHTML = ''; _vp = document.createElement('div'); _vp.className = 'vr-viewport'; existingBlock.appendChild(_vp); }
+      var _frag = document.createDocumentFragment();
+      for (var _i = 0; _i < _lines.length; _i++) {
+        var _ld = document.createElement('div');
+        _ld.style.cssText = 'content-visibility:auto;contain-intrinsic-size:20px;overflow:hidden;white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:13px;line-height:20px;padding:0 8px;border-bottom:1px solid #f0f0f0;';
+        _ld.textContent = _lines[_i];
+        _frag.appendChild(_ld);
+      }
+      _vp.innerHTML = ''; _vp.appendChild(_frag);
     } else {
       existingBlock.textContent = resultContent;
     }
@@ -18861,11 +18880,27 @@ function addToolResultBlock(msgDiv, toolName, resultContent, toolIndex) {
   var resultBlock = document.createElement('div');
   resultBlock.className = 'tool-result-block collapsed';
   resultBlock.id = 'tool-result-' + msgDiv._msgId + '-' + toolIndex;
-  // ★ 大内容→虚拟滚动分线渲染（≥300行或≥5000字符触发）
+  // ★ 大内容 → 逐行渲染（content-visibility:auto 浏览器按需渲染）
   var _isLarge = (resultContent.length > 5000) || (resultContent.split('\n').length > 300);
   if (_isLarge) {
-    resultBlock._virtualLines = resultContent.split('\n');
-    resultBlock.innerHTML = '<div class="virtual-scroll-status" style="padding:4px 8px;font-size:11px;color:#888;border-bottom:1px solid #eee">虚拟滚动已启用 · 共 ' + resultBlock._virtualLines.length + ' 行</div><div class="virtual-scroll-viewport" style="position:relative;min-height:60px;overflow:hidden"></div>';
+    var lines = resultContent.split('\n');
+    var viewport = document.createElement('div');
+    viewport.className = 'vr-viewport';
+    viewport.style.cssText = 'position:relative;';
+    var info = document.createElement('div');
+    info.style.cssText = 'padding:4px 8px;font-size:11px;color:#888;border-bottom:1px solid #eee;';
+    info.textContent = '共 ' + lines.length + ' 行';
+    viewport.appendChild(info);
+    var frag = document.createDocumentFragment();
+    var L = 20;
+    for (var i = 0; i < lines.length; i++) {
+      var ld = document.createElement('div');
+      ld.style.cssText = 'content-visibility:auto;contain-intrinsic-size:'+L+'px;overflow:hidden;white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:13px;line-height:'+L+'px;padding:0 8px;border-bottom:1px solid #f0f0f0;';
+      ld.textContent = lines[i];
+      frag.appendChild(ld);
+    }
+    viewport.appendChild(frag);
+    resultBlock.appendChild(viewport);
   } else {
     resultBlock.textContent = resultContent;
   }
@@ -18878,97 +18913,6 @@ function addToolResultBlock(msgDiv, toolName, resultContent, toolIndex) {
     msgDiv.appendChild(toggleEl);
     msgDiv.appendChild(resultBlock);
   }
-  if (resultBlock._virtualLines) _initVirtualScroll(resultBlock);
-}
-/* ★ 虚拟滚动渲染函数：仅渲染可见区域附近的行 */
-function _renderVirtualLines(block) {
-  var lines = block._virtualLines;
-  if (!lines || !lines.length) return;
-  var viewport = block.querySelector('.virtual-scroll-viewport');
-  if (!viewport) { block.textContent = lines.join('\n'); return; }
-  var LINE_HEIGHT = 20, BUFFER = 40;
-  if (!block._scrollContainer) _initVirtualScroll(block);
-  var scrollParent = block._scrollContainer || window;
-  // ★★★ 用 getBoundingClientRect 计算 block 在容器中的有效滚动距离
-  // effectiveScrollTop = 容器顶部 - block顶部（>0 表示 block 已向上滚出可视区）
-  var br = block.getBoundingClientRect();
-  var crTop = (scrollParent === window) ? 0 : scrollParent.getBoundingClientRect().top;
-  var effectiveScrollTop = Math.max(0, crTop - br.top);
-  var clientH = (scrollParent === window) ? window.innerHeight : (scrollParent.clientHeight || 300);
-  var totalH = lines.length * LINE_HEIGHT;
-  var start = Math.max(0, Math.floor(effectiveScrollTop / LINE_HEIGHT) - BUFFER);
-  var end = Math.min(lines.length, Math.ceil((effectiveScrollTop + clientH) / LINE_HEIGHT) + BUFFER);
-  // 用内容高度撑开滚动条（spacer方式）
-  var spacerTop = start * LINE_HEIGHT;
-  var spacerBottom = Math.max(0, (lines.length - end) * LINE_HEIGHT);
-  var frag = document.createDocumentFragment();
-  for (var i = start; i < end; i++) {
-    var lineDiv = document.createElement('div');
-    lineDiv.className = 'virtual-scroll-line';
-    lineDiv.textContent = lines[i];
-    lineDiv.dataset.line = i + 1;
-    frag.appendChild(lineDiv);
-  }
-  viewport.style.paddingTop = spacerTop + 'px';
-  viewport.style.paddingBottom = spacerBottom + 'px';
-  viewport.innerHTML = '';
-  viewport.appendChild(frag);
-  // 更新状态栏
-  var statusEl = block.querySelector('.virtual-scroll-status');
-  if (statusEl) {
-    var pct = totalH > 0 ? Math.round(effectiveScrollTop / totalH * 100) : 0;
-    statusEl.textContent = '虚拟滚动 · 共 ' + lines.length + ' 行 · 显示 ' + (end - start) + ' 行 · ' + pct + '%';
-  }
-}
-// ★ 工具展开点击监听：折叠翻转由#messagesList的toggle handler先完成，此处直接渲染
-document.addEventListener('click', function(e){
-  var toggle = e.target.closest('.tool-result-toggle');
-  if (!toggle) return;
-  var targetId = toggle.getAttribute('data-target');
-  var block = document.getElementById(targetId);
-  if (!block || !block._virtualLines) return;
-  if (!block._scrollContainer) _initVirtualScroll(block);
-  // 等一帧让浏览器完成布局（class已由冒泡到的#messagesList toggle handler翻转）
-  requestAnimationFrame(function(){
-    // 只有已展开（collapsed被移除）才渲染，折叠时无需操作
-    if (!block.classList.contains('collapsed')) {
-      _renderVirtualLines(block);
-    }
-  });
-});
-// ★ 虚拟滚动初始化：为block绑定正确的滚动容器
-function _initVirtualScroll(block) {
-  if (!block._virtualLines || block._virtualScrollInited) return;
-  // ★ 向上遍历找第一个 overflow 允许滚动的父元素，不要求当前已溢出
-  var el = block.parentElement;
-  var container = null;
-  while (el && el !== document.body && el !== document.documentElement) {
-    var style = window.getComputedStyle(el);
-    var ov = style.overflowY || style.overflow || '';
-    if (ov === 'auto' || ov === 'scroll' || ov === 'overlay') {
-      container = el;
-      break;
-    }
-    el = el.parentElement;
-  }
-  if (!container) {
-    // ★ 回退到已知滚动容器 #messagesList，永不回退到 window
-    container = document.querySelector('#messagesList, .messages-container') || document.documentElement;
-  }
-  block._scrollContainer = container;
-  // 绑定滚动事件（RAF 节流）
-  var ticking = false;
-  var handler = function() {
-    if (ticking) return;
-    ticking = true;
-    requestAnimationFrame(function() {
-      _renderVirtualLines(block);
-      ticking = false;
-    });
-  };
-  container.addEventListener('scroll', handler, {passive: true});
-  block._scrollHandler = handler;
-  block._virtualScrollInited = true;
 }
 
 function toggleToolResult() {
@@ -20988,7 +20932,8 @@ function initEventBindings(){
       for(var _icc2=0;_icc2<_iccKeys2.length;_icc2++) delete _inlineCritiqueCache[_iccKeys2[_icc2]];
     }
     // 新分支items = prefix(0..fp)
-    var prefixItems=bd._branches[curId].items.slice(0,fp+1);
+    // ★ [FIX] 重新生成时(autoSendText)排除fp处消息，避免processUserMessage重复push导致"用户问了两次"
+    var prefixItems=bd._branches[curId].items.slice(0,autoSendText?fp:fp+1);
     var newBid='b_'+Date.now();
     bd._branches[newBid]={items:prefixItems,parentId:pid,forkPoint:fp};
     bd._currentBranchId=newBid;
