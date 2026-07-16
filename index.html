@@ -4002,7 +4002,7 @@ async function _triggerManualCompression(){
     clearInterval(dotTimer);
     if(compressed){
       if(!window._persistentMessages)window._persistentMessages={}; window._persistentMessages[convId]=compressed;
-      _updateTokenAccumulator(convId,_estimateTokens(JSON.stringify(compressed)));
+      _updateTokenAccumulator(convId, compressed._estTokens || _estimateTokens(JSON.stringify(compressed)));
       _updateToolbarTokenDisplay();
       _saveTokenCounts();
       toast.className='toast success';
@@ -4277,6 +4277,7 @@ async function _compressOldMessages(messages,modelMaxTokens){
     }
 
     debugLogger.info(' 智能压缩: '+messages.length+'条→'+compressed.length+'条 | est:'+totalEst+'→~'+_compEst+' | 触发:'+limit+' | 保留'+keepCount+'条');
+    compressed._estTokens = _compEst;
     return compressed;
   }catch(e){debugLogger.warn('压缩失败: '+e.message);return null;}
 }
@@ -6354,7 +6355,7 @@ function _estimateTokensFromChars(chars){
   return Math.max(1, Math.ceil(chars / 4));
 }
 
-function recordDailyTokenUsage(messages, responseContent, apiUsage, convId){
+function recordDailyTokenUsage(messages, responseContent, apiUsage){
   // ★ 跨日自检：确保 token 计数在日期切换时自动归零
   var todayStr = new Date().toDateString();
   if (!_dailyTokenDate || _dailyTokenDate !== todayStr) {
@@ -6387,17 +6388,6 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage, convId){
     sourceLabel = ' (估算)';
   }
   dailyTokenUsed += tokensToAdd;
-  // ★★★ 请求对象隔离：仅当显式传入 convId 且匹配当前对话时，才更新顶部 token 计数器
-  // 背景操作（MCTS/压缩/进化代理/流水线/审查修正）不传 convId，不会污染当前对话的计数
-  if(apiUsage && typeof apiUsage.prompt_tokens==='number' && apiUsage.prompt_tokens>0 && convId && convId===currentConversationId){
-    _updateTokenAccumulator(convId, apiUsage.prompt_tokens);
-    // ★ 同步写 localStorage，确保精确值被持久化（异步 IndexedDB 可能来不及）
-    try{
-      var _ls=JSON.parse(localStorage.getItem(TOKEN_LOCAL_KEY)||'{}');
-      _ls[convId]=apiUsage.prompt_tokens;
-      localStorage.setItem(TOKEN_LOCAL_KEY,JSON.stringify(_ls));
-    }catch(e){}
-  }
   saveDailyUsage();
   updateTokenDisplay();
   // ★ Token消耗日志：API精确计费每次都记录；估算按10%节流
@@ -9261,7 +9251,7 @@ async function callLLM(messages,tools,stream,source){
   return data;
 }
 
-async function streamChatCompletion(messages,tools,onChunk,source,convId){
+async function streamChatCompletion(messages,tools,onChunk,source){
   source=source||'user';
   var attempt=0;
 
@@ -9291,6 +9281,7 @@ async function streamChatCompletion(messages,tools,onChunk,source,convId){
     if(_msgs){
       var _sysSave=messages[0];messages.length=0;messages.push(_sysSave);
       Array.prototype.push.apply(messages,_msgs);showToast('上下文已自动压缩','success',2000);
+      _updateTokenAccumulator(currentConversationId, _msgs._estTokens || _estimateTokens(JSON.stringify(messages)));
     }
     var req=_buildLLMRequest(messages,tools,true,source);
     var response;
@@ -9372,7 +9363,7 @@ async function streamChatCompletion(messages,tools,onChunk,source,convId){
           var data=trimmed.slice(5).trim();
           if(data==='[DONE]'){
             activeStreamReader=null;
-            recordDailyTokenUsage(messages, totalStreamContent, streamUsage, convId);
+            recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
             _tagMessageTokens(messages, streamUsage);
             return finishReason;
           }
@@ -9395,7 +9386,7 @@ async function streamChatCompletion(messages,tools,onChunk,source,convId){
       }
       if(!streamError){
         activeStreamReader=null;
-        recordDailyTokenUsage(messages, totalStreamContent, streamUsage, convId);
+        recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
         _tagMessageTokens(messages, streamUsage);
         debugLogger.info(' 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length+(streamUsage?' | usage:精确':' | usage:估算'));
         if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_success',payload:{taskId:currentConversationId||'',relevantSkills:skillCache.activeSkillIds||[],summary:totalStreamContent.substring(0,200)}});}
@@ -16421,6 +16412,7 @@ async function processUserMessage(userText,taskId){
       if (compressed) {
         _autoToast.className = 'toast success';
         _autoToast.textContent = '已自动压缩 → ' + compressed.length + ' 条消息';
+        _updateTokenAccumulator(currentConversationId, compressed._estTokens || _estimateTokens(JSON.stringify(messages)));
         setTimeout(function () {
           _autoToast.style.opacity = '0';
           _autoToast.style.transition = 'opacity 0.3s ease';
@@ -16579,8 +16571,7 @@ async function processUserMessage(userText,taskId){
             }
           }
         },
-        'user',
-        currentConversationId
+        'user'
       );
 
       // 【新增】检测 token 耗尽截断
@@ -18948,34 +18939,24 @@ document.addEventListener('click', function(e){
 // ★ 虚拟滚动初始化：为block绑定正确的滚动容器
 function _initVirtualScroll(block) {
   if (!block._virtualLines || block._virtualScrollInited) return;
-  // 从block向上遍历，找第一个真正可滚动的父元素作为滚动容器
+  // ★ 向上遍历找第一个 overflow 允许滚动的父元素，不要求当前已溢出
   var el = block.parentElement;
   var container = null;
   while (el && el !== document.body && el !== document.documentElement) {
     var style = window.getComputedStyle(el);
-    var ov = (style.overflowY || style.overflow) + (style.overflow || '');
-    if (/(auto|scroll|overlay)/.test(ov)) {
-      // ★★★ 确认确实有内容溢出（可滚动），否则继续向上
-      if (el.scrollHeight > el.clientHeight + 2) {
-        container = el;
-        break;
-      }
+    var ov = style.overflowY || style.overflow || '';
+    if (ov === 'auto' || ov === 'scroll' || ov === 'overlay') {
+      container = el;
+      break;
     }
     el = el.parentElement;
   }
-  // 未找到→尝试已知滚动容器或回退window
   if (!container) {
-    var known = document.querySelector('#messagesList, .messages-container');
-    if (known && known.scrollHeight > known.clientHeight + 2) {
-      container = known;
-    } else if (document.documentElement.scrollHeight > document.documentElement.clientHeight + 2) {
-      container = window;
-    } else {
-      container = window;
-    }
+    // ★ 回退到已知滚动容器 #messagesList，永不回退到 window
+    container = document.querySelector('#messagesList, .messages-container') || document.documentElement;
   }
   block._scrollContainer = container;
-  // 绑定滚动事件（RAF节流）
+  // 绑定滚动事件（RAF 节流）
   var ticking = false;
   var handler = function() {
     if (ticking) return;
