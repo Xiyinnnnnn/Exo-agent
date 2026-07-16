@@ -711,7 +711,7 @@ button,label,[role="button"],.file-upload-btn{
     <textarea id="editMessageTextarea" style="width:100%;min-height:120px;max-height:40vh;border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:12px;font-size:15px;font-family:inherit;resize:vertical;outline:none" placeholder="编辑消息内容..."></textarea>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button id="btnEditSave" class="btn btn-outline" style="padding:10px 20px"> 保存</button>
-      <button id="btnEditSaveSend" class="btn btn-primary" style="padding:10px 20px">🚀 保存并发送</button>
+      <button id="btnEditSaveSend" class="btn btn-primary" style="padding:10px 20px">保存并发送</button>
     </div>
   </div>
 </div>
@@ -812,7 +812,7 @@ button,label,[role="button"],.file-upload-btn{
         <div class="file-policy-search">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input type="text" id="filePolicySearch" placeholder="搜索文件名或路径..." autocomplete="off">
-          <button class="search-clear" id="filePolicySearchClear" title="清除">✕</button>
+          <button class="search-clear" id="filePolicySearchClear" title="清除">×</button>
         </div>
         <!-- 分类标签栏 -->
         <div class="file-policy-tags" id="filePolicyTags">
@@ -1098,7 +1098,7 @@ button,label,[role="button"],.file-upload-btn{
         <!-- SQL开关 -->
         <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用 SQL 数据库</span><label class="toggle-switch"><input type="checkbox" id="settingSqlEnabled"><span class="toggle-slider"></span></label></label><div class="help-text">关闭后agent无法使用 sql_db 工具（基于SQLite WASM）</div></div>
         <!-- 语音开关 -->
-        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用语音工具</span><label class="toggle-switch"><input type="checkbox" id="settingSpeechEnabled"><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 speech_tts / speech_stt 全部禁用。<br><b>⚠ Android WebView 限制：</b>Web Speech API 在 Android WebView 中不可用，需通过 App 的 JavaScript Bridge 调用原生 SpeechRecognizer / TextToSpeech。纯Chrome浏览器可正常使用。</div></div>
+        <div class="settings-field"><label style="display:flex;align-items:center;gap:10px;justify-content:space-between"><span> 启用语音工具</span><label class="toggle-switch"><input type="checkbox" id="settingSpeechEnabled"><span class="toggle-slider"></span></label></label><div class="help-text">关闭后 speech_tts / speech_stt 全部禁用。<br><b>Android WebView 限制：</b>Web Speech API 在 Android WebView 中不可用，需通过 App 的 JavaScript Bridge 调用原生 SpeechRecognizer / TextToSpeech。纯Chrome浏览器可正常使用。</div></div>
         <div class="settings-field"><button class="btn btn-outline btn-sm" id="btnTestTTS" style="width:100%"> 测试TTS(朗读"你好")</button></div>
         <div class="settings-field"><button class="btn btn-outline btn-sm" id="btnListVoices" style="width:100%"> 列出可用语音</button><div class="help-text" id="voiceListStatus" style="margin-top:4px;font-size:11px"></div></div>
         <div class="settings-field"><label for="settingSttEndpoint">STT API 端点(可选)</label><input type="text" id="settingSttEndpoint" placeholder="例: http://192.168.1.5:8080/v1/audio/transcriptions (Whisper)"><div class="help-text">填入后，Android等不支持内置识别的浏览器将通过录音→上传端点完成识别。支持任何兼容OpenAI Whisper格式的STT服务。</div></div>
@@ -1372,7 +1372,7 @@ var FLOW_SUPERVISOR_STATIC='[ROLE] 监工 | [NOTE] 干活Agent不知道你存在
 +'→ help get grade_guide\n'
 +'▸ P1 全局 — N:2(auth+CRUD) | M:0 | K:2(均未产出)\n'
 +'▸ P2 检视 — filesystem read /d/auth.py → 内容完整\n'
-+'▸ P3 判定 — code_runner path="/d/auth.py" → exitCode:0 ✓ → 达标\n'
++'▸ P3 判定 — code_runner path="/d/auth.py" → exitCode:0 [OK] → 达标\n'
 +'▸ P4 本步 — todo done todo_id="t_001" item_id="1" evidence="/d/auth.py exitCode:0"\n'
 +'→ todo done todo_id="t_001" item_id="1" evidence="/d/auth.py exitCode:0"\n'
 +'▸ P1 全局 — N:2 | M:2 | K:0\n'
@@ -5805,7 +5805,7 @@ function renderEnvVars(){
       var btn=document.createElement('button');
       btn.className='btn btn-outline btn-sm';
       btn.style.cssText='font-size:11px;padding:2px 6px';
-      btn.textContent='✕';
+      btn.textContent='×';
       btn.addEventListener('click',function(){removeEnvVar(k);});
       row.appendChild(keySpan);
       row.appendChild(valSpan);
@@ -5858,7 +5858,7 @@ function _renderMcpConnections(){
       var delBtn=document.createElement('button');
       delBtn.className='btn btn-outline btn-sm';
       delBtn.style.cssText='font-size:10px;padding:1px 5px;flex-shrink:0';
-      delBtn.textContent='✕';
+      delBtn.textContent='×';
       delBtn.addEventListener('click',function(){
         settings.mcp_connections.splice(idx,1);
         _renderMcpConnections();
@@ -5892,7 +5892,7 @@ function _renderUserFunctions(){
       var delBtn=document.createElement('button');
       delBtn.className='btn btn-outline btn-sm';
       delBtn.style.cssText='font-size:10px;padding:1px 5px;flex-shrink:0';
-      delBtn.textContent='✕';
+      delBtn.textContent='×';
       delBtn.addEventListener('click',function(e){e.stopPropagation();settings.user_functions.splice(idx,1);_renderUserFunctions();});
       row.addEventListener('click',function(){
         var newCode=prompt('编辑函数 '+f.id+' 的代码 (async function main(context) { ... })',f.code||'');
@@ -6712,10 +6712,10 @@ async function loadLibrary(libName){
       }
       if(!loadedGlobal)throw new Error('Library '+libName+' 所有源均失败（已重试3轮），期望全局: '+allGlobals.filter(Boolean).join(', '));
       LIBRARY_LOAD_PROMISES[libName]='loaded';LIBRARY_FAILED_AT[libName]=0;
-      debugLogger.info('✓ '+libName);
+      debugLogger.info('[OK] '+libName);
     }catch(error){
       LIBRARY_LOAD_PROMISES[libName]='failed';LIBRARY_FAILED_AT[libName]=Date.now();
-      debugLogger.error('✗ 库 '+libName+' 最终加载失败: '+error.message);
+      debugLogger.error('[FAIL] 库 '+libName+' 最终加载失败: '+error.message);
       throw error;
     }
   })();
@@ -11064,7 +11064,7 @@ async function toolFuzzySearch(args){
     }
     if(nameMatches.length===0)return '全目录递归搜索未找到路径匹配 "'+query+'" 的文件。请先用 filesystem list / 查看目录结构。';
     var shown=nameMatches.slice(0,limit);
-    return '文件名搜索结果 ('+nameMatches.length+' 条，显示前 '+shown.length+' 条):\n'+shown.map(function(m,i){return (i+1)+'. **'+m.path+'**';}).join('\n')+'\n\n⚠️ 以上仅为文件名匹配，非文件内部内容！\n 用 filesystem read <路径> 精读文件。\n ★要搜文件内部内容，请用 fuzzy_search mode="content" query="'+query+'"';
+    return '文件名搜索结果 ('+nameMatches.length+' 条，显示前 '+shown.length+' 条):\n'+shown.map(function(m,i){return (i+1)+'. **'+m.path+'**';}).join('\n')+'\n\n以上仅为文件名匹配，非文件内部内容！\n 用 filesystem read <路径> 精读文件。\n ★要搜文件内部内容，请用 fuzzy_search mode="content" query="'+query+'"';
   }
 
   // ★ 文件内容搜索模式：mode=content → grep全量文件或限定文件(Fuse.js)
@@ -11577,7 +11577,7 @@ async function toolLongtermMemory(args){
     await _saveLongTermMemory();
     var out=results.length+'/'+entries.length+' 条: ID '+results.join(', ');
     if(results.length===1)out=' 已存入记忆 [ID:'+results[0]+']';
-    if(skipped.length)out+=' | ⚠️跳过'+skipped.length+'条: '+skipped.join(', ');
+    if(skipped.length)out+='跳过'+skipped.length+'条: '+skipped.join(', ');
     return out;
   }
 
@@ -11685,7 +11685,7 @@ async function toolKnowledgeBase(args){
     }
     var out=ids.length+'/'+entries.length+' 条: ID '+ids.join(', ');
     if(ids.length===1)out=' 已创建知识条目 [ID:'+ids[0]+']';
-    if(skipped.length)out+=' | ⚠️跳过'+skipped.length+'条: '+skipped.join(', ');
+    if(skipped.length)out+='跳过'+skipped.length+'条: '+skipped.join(', ');
     return out;
   }
   // ── update：修改条目（只能修改 source=='agent' 的） ──
@@ -11727,7 +11727,7 @@ async function toolKnowledgeBase(args){
       }
     }
     var out=' 批量删除 '+deleted+'/'+ids.length+' 条知识条目';
-    if(notFound.length)out+=' | ⚠️跳过'+notFound.length+'条(非agent来源): '+notFound.join(', ');
+    if(notFound.length)out+='跳过'+notFound.length+'条(非agent来源): '+notFound.join(', ');
     return out;
   }
   return '未知action: '+action+'，支持 query/list/get/store/update/delete/batch_delete';
@@ -11859,7 +11859,7 @@ async function toolCustomApiCall(args){
       result=text;
     }
     var totalLen=text.length;
-    if(result.length>8000)result=result.substring(0,8000)+'\n\n══════════════════\n📎 响应过长，已展示前 8000 / 共 '+totalLen+' 字符。\n💡 建议：用更精确的查询参数缩小返回范围，或将结果写入文件后用 filesystem 分段读取。';
+    if(result.length>8000)result=result.substring(0,8000)+'\n\n══════════════════\n响应过长，已展示前 8000 / 共 '+totalLen+' 字符。\n建议：用更精确的查询参数缩小返回范围，或将结果写入文件后用 filesystem 分段读取。';
     return 'HTTP '+resp.status+' | '+ct+' | '+endpoint+'\n'+result;
   }catch(e){return ' API调用失败: '+e.message+' | '+endpoint;}
 }
@@ -11906,7 +11906,7 @@ async function toolMcpConnect(args){
     }
     var successCount=0;var totalTools=0;
     var summary=results.map(function(r){
-      if(!r)return ' ⚠ 连接返回空 (URL为空?)';
+      if(!r)return '连接返回空 (URL为空?)';
       if(r.error){return ' '+r.id+': '+r.error;}
       totalTools+=r.tools.length;successCount++;
       return ' '+r.name+' ('+r.id+'): '+r.tools.join(', ');
@@ -11954,7 +11954,7 @@ async function toolUserFunctionCall(args){
     });
     var resultStr=typeof result==='string'?result:JSON.stringify(result,null,2);
     var display=resultStr;
-    if(display.length>8000)display=display.substring(0,8000)+'\n\n══════════════════\n📎 输出过长，已展示前 8000 / 共 '+resultStr.length+' 字符。\n💡 建议：让函数返回精简摘要，或将完整结果写入文件。';
+    if(display.length>8000)display=display.substring(0,8000)+'\n\n══════════════════\n输出过长，已展示前 8000 / 共 '+resultStr.length+' 字符。\n建议：让函数返回精简摘要，或将完整结果写入文件。';
     return ' 函数 '+args.function_id+' 执行完成:\n'+display;
   }catch(e){return ' 函数 '+args.function_id+' 执行失败: '+e.message;}
 }
@@ -11993,7 +11993,7 @@ async function toolConvertFormat(args){
     }
     if(args.output_path){await createFile(args.output_path,result);return ' 已转换: '+args.input_path+' → '+args.output_path;}
     var display=result;
-    if(display.length>8000)display=display.substring(0,8000)+'\n\n══════════════════\n📎 转换结果过长，已展示前 8000 / 共 '+result.length+' 字符。\n💡 建议：指定 output_path 将完整结果写入文件。';
+    if(display.length>8000)display=display.substring(0,8000)+'\n\n══════════════════\n转换结果过长，已展示前 8000 / 共 '+result.length+' 字符。\n建议：指定 output_path 将完整结果写入文件。';
     return ' 转换完成 ('+key+'):\n'+display;
   }catch(e){return ' 转换失败: '+e.message;}
 }
@@ -12108,8 +12108,8 @@ async function toolSendEmail(args){
   window.open(mailto,'_blank');
   var note=' 已打开默认邮件客户端。';
   if(truncated){
-    note+='\n\n══════════════════\n📎 正文过长（'+bodyText.length+' 字符），邮件客户端仅接收前 1500 字符。';
-    note+='\n💡 完整内容未丢失。如需发送完整邮件，请在设置→邮件中配置 SMTP_RELAY_URL，可实现无截断自动发送。';
+    note+='\n\n══════════════════\n正文过长（'+bodyText.length+' 字符），邮件客户端仅接收前 1500 字符。';
+    note+='\n完整内容未丢失。如需发送完整邮件，请在设置→邮件中配置 SMTP_RELAY_URL，可实现无截断自动发送。';
   }
   note+='\n\n主题: '+args.subject+'\n收件人: '+args.to;
   return note;
@@ -12689,7 +12689,7 @@ async function toolCalendar(args){
       var es=new Date(ev.start).getTime();
       return es>=startFilter&&es<=endFilter;
     }).sort(function(a,b){return new Date(a.start).getTime()-new Date(b.start).getTime();});
-    if(!filtered.length)return '📅 该时间段内没有事件。';
+    if(!filtered.length)return '该时间段内没有事件。';
     var lines=filtered.map(function(ev){
       var startStr=new Date(ev.start).toLocaleString('zh-CN');
       var endStr=ev.end?new Date(ev.end).toLocaleString('zh-CN'):'';
@@ -12698,7 +12698,7 @@ async function toolCalendar(args){
       var rem=ev.reminder_minutes?' 提前'+ev.reminder_minutes+'分钟':'';
       return '['+ev.id+'] '+startStr+(ev.all_day?' (全天)':'')+(endStr?' → '+endStr:'')+rec+'\n   '+ev.title+loc+rem+(ev.description?'\n   '+ev.description.substring(0,100):'');
     });
-    return '📅 日历事件 ('+filtered.length+'个):\n\n'+lines.join('\n\n');
+    return '日历事件 ('+filtered.length+'个):\n\n'+lines.join('\n\n');
   }
   
   if(action==='schedule'){
@@ -12855,7 +12855,7 @@ async function _calendarWakeCheck(){
           if(tev.reminder_minutes)nBody='提前'+tev.reminder_minutes+'分钟';
           if(tev.start)nBody+=(nBody?' | ':'')+new Date(tev.start).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
           if(tev.location)nBody+=' | '+tev.location;
-          var n=new Notification('📅 '+tev.title,{body:nBody,tag:'cal_'+tev.id,requireInteraction:true});
+          var n=new Notification('日程: '+tev.title,{body:nBody,tag:'cal_'+tev.id,requireInteraction:true});
           n.onclick=function(){window.focus();this.close();};
           setTimeout(function(){try{n.close();}catch(e){}},20000);
         }catch(e){}
@@ -13469,7 +13469,7 @@ async function _execParallelGroup(nodeDef,state,def,runId,nodeId){
   function _launchOne(){
     if(!_gpQueue.length||_gpActive>=_gpMaxConcurrent)return;
     var cid=_gpQueue.shift();_gpActive++;
-    debugLogger.info('🚀 并行组启动: '+cid+' | 并发: '+_gpActive+'/'+_gpMaxConcurrent);
+    debugLogger.info('并行组启动: '+cid+' | 并发: '+_gpActive+'/'+_gpMaxConcurrent);
     _execNode(def,state,runId,cid).then(function(r){
       childResults[cid]=r;_gpActive--;
       debugLogger.info(' 并行组完成: '+cid+' | 并发: '+_gpActive);
@@ -14086,7 +14086,7 @@ async function _runPipelineAsync(runId,def,state){
         if(!_r2.length)break;
         var _nid=_r2[0];
         inProgress.add(_nid);activeSims++;
-        debugLogger.info('🚀 启动节点: '+_nid+' | 并发: '+activeSims+'/'+_pipeMaxConcurrent);
+        debugLogger.info('启动节点: '+_nid+' | 并发: '+activeSims+'/'+_pipeMaxConcurrent);
         _execNode(def,state,runId,_nid).then(function(r){
           _resolveRoutes(def,state,_nid);
           inProgress.delete(_nid);activeSims--;
@@ -15220,13 +15220,13 @@ async function showSkillEvolutionLog(skillId){
     if(entries.length===0){alert('技能「'+skillId+'」暂无进化记录');return;}
     entries.reverse();
     var html='<div style="max-height:400px;overflow-y:auto;font-size:13px;line-height:1.6">';
-    html+='<h3 style="margin:0 0 10px">📜 进化日志 — '+escapeHtml(skillId)+'</h3>';
+    html+='<h3 style="margin:0 0 10px">进化日志 — '+escapeHtml(skillId)+'</h3>';
     html+='<table style="width:100%;border-collapse:collapse">';
     html+='<tr style="background:#f0f0f0"><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #ddd">时间</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #ddd">操作</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #ddd">版本</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #ddd">详情</th></tr>';
     for(var i=0;i<entries.length;i++){
       var e=entries[i];
       var ts=e.timestamp?new Date(e.timestamp).toLocaleString():'--';
-      var actionIcon=e.action==='merge_success'?'✅ 合并':'❌ 拒绝';
+      var actionIcon=e.action==='merge_success'?'合并':'拒绝';
       var stage=e.stage?'['+e.stage+']':'';
       var v=e.version?'v'+e.version:'--';
       var reason=e.reason?'<br><span style="color:#999">'+escapeHtml(e.reason)+'</span>':'';
@@ -16814,7 +16814,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
               '  □ 采纳\n'+
               '▸ P3 拒绝列表: 无\n'+
               '▸ P4 终验:\n'+
-              '  □ todo 1 done ✓ | □ todo 2 done ✓ | □ 无遗漏\n'+
+              '  □ todo 1 done [OK] | □ todo 2 done [OK] | □ 无遗漏\n'+
               '  → 组装→输出:\n'+
               '\n'+
               '建议使用requests库配合BeautifulSoup解析HTML。国家统计局2025年数据显示GDP增长3.2%（来源:国家统计局 https://www.stats.gov.cn/...）。\n'+
@@ -18843,7 +18843,7 @@ async function renderFileManager(filterCat,searchQuery){
         html+='<span class="fp-date">'+_formatDate(f.updated)+'</span>';
         html+='<div class="fp-actions">';
         html+='<button onclick="downloadFileByPath(\''+escPath+'\')" title="下载">⬇</button>';
-        if(!f.isSystem){html+='<button class="fp-del" onclick="deleteFileByPath(\''+escPath+'\',\''+f.name.replace(/'/g,"\\'")+'\')" title="删除">✕</button>';}
+        if(!f.isSystem){html+='<button class="fp-del" onclick="deleteFileByPath(\''+escPath+'\',\''+f.name.replace(/'/g,"\\'")+'\')" title="删除">×</button>';}
         html+='</div></div>';
       }
     }
@@ -19700,7 +19700,7 @@ function initEventBindings(){
       var resp=await fetch(url.replace(/\/$/,'')+'/models',{
         headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'}
       });
-      if(resp.ok){showToast('API Key 有效 ✓','success');}
+      if(resp.ok){showToast('API Key 有效','success');}
       else{var t=await resp.text();showToast('失败: HTTP '+resp.status+' '+(t||'').slice(0,100),'error');}
     }catch(e){showToast('网络错误: '+e.message,'error');}
     btnVerifyApiKey.disabled=false;btnVerifyApiKey.textContent='验证Key';
@@ -20522,6 +20522,16 @@ function initEventBindings(){
     var store=tx.objectStore('messages');
     store.put({id:currentConversationId,branches:bd._branches,currentBranchId:bd._currentBranchId,branchOrder:bd._branchOrder,updatedAt:Date.now()});
     await new Promise(function(res,rej){tx.oncomplete=res;tx.onerror=rej;});
+    // ★ [FIX] 分支切换上下文隔离：清除所有可能泄漏旧分支状态的缓存
+    if(window._persistentMessages && window._persistentMessages[currentConversationId]){
+      delete window._persistentMessages[currentConversationId];
+    }
+    window._flowWakeupMessages = null;
+    if(typeof shortTermMemory !== 'undefined' && typeof shortTermMemory.clear === 'function') shortTermMemory.clear();
+    if(typeof _inlineCritiqueCache !== 'undefined'){
+      var _iccKeys=Object.keys(_inlineCritiqueCache);
+      for(var _icci=0;_icci<_iccKeys.length;_icci++) delete _inlineCritiqueCache[_iccKeys[_icci]];
+    }
     _renderBubbleBranchNavs();
   };
 
@@ -20545,21 +20555,28 @@ function initEventBindings(){
     }
     // ★ 始终以当前分支为父（嵌套分叉），不再复用curBr.parentId
     var pid=curId;
-    // 保存旧分支items
+    // 保存旧分支items并删除forkPoint之后的DOM气泡
     bd._branches[curId].items=_collectBubbles(msgList);
-    // 删除forkPoint之后的DOM气泡
     for(var bi=bubbles.length-1;bi>fp;bi--){
       if(bubbles[bi].parentNode)bubbles[bi].parentNode.removeChild(bubbles[bi]);
+    }
+    // ★ [FIX] 分支分叉上下文隔离：彻底清除所有可能泄漏旧分支状态的缓存
+    if(window._persistentMessages&&window._persistentMessages[currentConversationId]){
+      delete window._persistentMessages[currentConversationId];
+    }
+    window._flowWakeupMessages = null;
+    if(typeof shortTermMemory !== 'undefined' && typeof shortTermMemory.clear === 'function') shortTermMemory.clear();
+    if(typeof _inlineCritiqueCache !== 'undefined'){
+      var _iccKeys2=Object.keys(_inlineCritiqueCache);
+      for(var _icc2=0;_icc2<_iccKeys2.length;_icc2++) delete _inlineCritiqueCache[_iccKeys2[_icc2]];
     }
     // 新分支items = prefix(0..fp)
     var prefixItems=bd._branches[curId].items.slice(0,fp+1);
     var newBid='b_'+Date.now();
     bd._branches[newBid]={items:prefixItems,parentId:pid,forkPoint:fp};
     bd._currentBranchId=newBid;
-    // ★ 清除旧分支的消息缓存，避免新分支被污染
-    if(window._persistentMessages&&window._persistentMessages[currentConversationId]){
-      delete window._persistentMessages[currentConversationId];
-    }
+    // 新分支items已通过 prefixItems 保存到新分支记录中
+    if(bd._branchOrder.indexOf(newBid)<0)bd._branchOrder.push(newBid);
     if(bd._branchOrder.indexOf(newBid)<0)bd._branchOrder.push(newBid);
     var db=await getDB();
     var tx=db.transaction('messages','readwrite');
