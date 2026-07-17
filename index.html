@@ -1899,7 +1899,7 @@ async function toolSemanticMemory(args){
   if(!query)throw new Error('semantic_memory 需要 query 参数');
   var limit=args.limit||3;
   var experiences=await searchSimilarExperiences(query,limit);
-  if(!experiences||experiences.length===0)return '未找到语义相似的过往经验。对话历史中尚未有与「'+query+'」含义相近的记录。';
+  if(!experiences||experiences.length===0)return '[ERR_CODE] NOT_FOUND\n[PARAM] query\n[VALUE] '+query+'\n[MESSAGE] 未找到语义相似的过往经验\n[SUGGEST] 换一种描述重试';
   return experiences.map(function(exp,i){
     var preview=smartTruncate(exp.text,2000);
     return (i+1)+'. [语义相似度: '+(exp.similarity*100).toFixed(0)+'%] '+preview+(preview.length<exp.text.length?'\n...(全文共'+exp.text.length+'字。使用 filesystem create /downloads/memory_fragment.md 写入完整内容后 filesystem read 读取)':'');
@@ -2034,8 +2034,8 @@ var TOOL_PARAM_SCHEMA={
   'help':{},
   'skill_manager':{},
   'semantic_memory':{required:['query']},
-  'longterm_memory':{},
-  'knowledge_base':{},
+  'longterm_memory':{required:['action'],'store':{requiredOneOf:['fact','entries']}},
+  'knowledge_base':{required:['action'],'store':{requiredOneOf:['entry','entries']}},
   'mcts_plan':{required:['problem','goal']},
   'pipeline':{},
   'flow_mode':{},
@@ -8729,12 +8729,28 @@ async function handleApplySkillPatch(payload){
     if(existing){try{currentIndex=JSON.parse(existing);}catch(e){}}
     var newVersion=currentIndex.version+1;
     var oldVersionDir='/skills/versions/v'+currentIndex.version;
-    var activeSkills=currentIndex.active_skills||[];
-    for(var bi=0;bi<activeSkills.length;bi++){
-      var oldSkillFile=activeSkills[bi];
-      var oldContent=await readFile('/skills/'+oldSkillFile);
-      if(oldContent){try{await createFile(oldVersionDir+'/'+oldSkillFile,oldContent);}catch(e){}}
+    // ★ 【修复 V2】增量备份：仅备份被修改/删除的技能，而非全部技能全量复制
+    // 旧逻辑：for(var bi=0;bi<activeSkills.length;bi++)...全量复制所有技能到版本目录
+    // 新逻辑：仅备份 patch 中涉及的技能文件，add_skill 无旧文件无需备份
+    if(patch.action==='update_skill'||patch.action==='delete_skill'){
+      var _targetFile=null;
+      var _targetId=(patch.skill_id||'').replace(/\.json$/i,'');
+      if(_targetId){
+        // 优先精确匹配 active_skills 中的文件名
+        for(var _bi=0;_bi<activeSkills.length;_bi++){
+          var _asf=activeSkills[_bi];
+          if(_asf===_targetId+'.json'||_asf.indexOf(_targetId)===0){
+            _targetFile=_asf;break;
+          }
+        }
+        if(!_targetFile)_targetFile=_targetId+'.json';
+        var _oldContent=await readFile('/skills/'+_targetFile);
+        if(_oldContent){
+          try{await createFile(oldVersionDir+'/'+_targetFile,_oldContent);}catch(_e){}
+        }
+      }
     }
+    // add_skill：新技能之前不存在，无需备份
     if(patch.action==='add_skill'){
       var skillId=patch.skill_id||crypto.randomUUID();
       if(patch.new_content.custom_functions){
@@ -8885,18 +8901,39 @@ async function handleRollbackToVersion(payload){
     var currentIndexJson=await readFile('/skills/current_version.json');
     if(!currentIndexJson){releaseFileLock('main_thread');return {success:false,error:'当前无版本索引'};}
     var currentIndex=JSON.parse(currentIndexJson);
-    var versionDir='/skills/versions/v'+targetVersion;
-    var versionFiles=await listDir(versionDir);
-    if(!versionFiles||versionFiles.length===0){releaseFileLock('main_thread');return {success:false,error:'目标版本 v'+targetVersion+' 不存在'};}
-    for(var vi=0;vi<versionFiles.length;vi++){
-      var vf=versionFiles[vi];
-      var vfContent=await readFile(vf);
-      if(vfContent){try{await updateFile('/skills/'+vf.split('/').pop(),vfContent);}catch(e){}}
-    }
     var oldVersion=currentIndex.version;
+    if(targetVersion>=oldVersion){releaseFileLock('main_thread');return {success:false,error:'目标版本必须小于当前版本'};}
+    // ★ 【修复 V2】增量回滚：从新到旧逐版恢复（旧→新会覆盖错误）
+    // 旧逻辑：listDir(v{target})→恢复全部文件→重置active_skills
+    // 新逻辑：从 v{oldVersion-1} 到 v{target} 逐版恢复备份的技能文件（最新版优先恢复）
+    for(var _rv=oldVersion-1;_rv>=targetVersion;_rv--){
+      var _verDir='/skills/versions/v'+_rv;
+      var _verFiles=await listDir(_verDir);
+      if(_verFiles&&_verFiles.length>0){
+        for(var _vi=0;_vi<_verFiles.length;_vi++){
+          var _vf=_verFiles[_vi];
+          var _vfContent=await readFile(_vf);
+          if(_vfContent){
+            try{await updateFile('/skills/'+_vf.split('/').pop(),_vfContent);}catch(e){}
+          }
+        }
+      }
+    }
+    // 移除在 targetVersion 之后新增的技能（通过 changelog 追溯）
+    var _skipSkills={};
+    for(var _ci=0;_ci<(currentIndex.changelog||[]).length;_ci++){
+      var _cl=currentIndex.changelog[_ci];
+      if(_cl.to_version>targetVersion&&_cl.to_version<=oldVersion&&_cl.action==='add_skill'&&_cl.skill_id){
+        var _delFile=_cl.skill_id+'.json';
+        _skipSkills[_delFile]=true;
+        _skipSkills[_cl.skill_id.replace(/\.json$/i,'')]=true;
+      }
+    }
+    currentIndex.active_skills=(currentIndex.active_skills||[]).filter(function(f){
+      return !_skipSkills[f]&&!_skipSkills[f.replace(/\.json$/i,'')];
+    });
     currentIndex.version=targetVersion;
     currentIndex.updated_at=new Date().toISOString();
-    currentIndex.active_skills=versionFiles.map(function(f){return f.split('/').pop();});
     currentIndex.changelog.push({from_version:oldVersion,to_version:targetVersion,action:'rollback',timestamp:new Date().toISOString(),reason:reason});
     await updateFile('/skills/current_version.json',JSON.stringify(currentIndex,null,2));
     releaseFileLock('main_thread');
@@ -9559,7 +9596,7 @@ async function toolFilesystem(args){
 	
     case 'read':
       var fc=await readFile(path);
-      if(fc===null)return ' 文件不存在: '+path;
+      if(fc===null)return '[ERR_CODE] NOT_FOUND\n[PARAM] path\n[VALUE] '+path+'\n[MESSAGE] 文件不存在\n[SUGGEST] 检查路径或使用 filesystem list / 查看目录';
       // 防御：readFile 可能返回对象（LLM 调用 create 时 content 被传为 JSON 对象而非字符串）
       if(typeof fc!=='string')fc=JSON.stringify(fc,null,2);
       var mode=args.mode||'auto';  // auto(默认,自动) | chunked(按行号) | full(强制全量)
@@ -9612,7 +9649,7 @@ async function toolFilesystem(args){
       if(args.safe!==false){
         // 安全删除：移到回收站
         var fc=await readFile(path);
-        if(fc===null) return ' 文件不存在: '+path;
+        if(fc===null) return '[ERR_CODE] NOT_FOUND\n[PARAM] path\n[VALUE] '+path+'\n[MESSAGE] 文件不存在\n[SUGGEST] 使用 filesystem list 确认文件路径';
         var trashPath='/trash/'+Date.now()+'_'+path.replace(/\//g,'_');
         await createFile(trashPath,fc);
         await deleteFile(path);
@@ -9634,7 +9671,7 @@ async function toolFilesystem(args){
       var existingNew=await readFile(newPath);
       if(existingNew!==null && !args.overwrite) return ' 目标已存在: '+newPath+'。使用 overwrite=true 覆盖';
       var oldContent=await readFile(path);
-      if(oldContent===null) return ' 源文件不存在: '+path;
+      if(oldContent===null) return '[ERR_CODE] NOT_FOUND\n[PARAM] path\n[VALUE] '+path+'\n[MESSAGE] 源文件不存在\n[SUGGEST] 使用 filesystem list 确认文件路径';
       await createFile(newPath,oldContent);
       await deleteFile(path);
       _registerDownloadable(newPath,oldContent||'');
@@ -9650,7 +9687,7 @@ async function toolFilesystem(args){
       var moveExisting=await readFile(moveDest);
       if(moveExisting!==null && !args.overwrite) return ' 目标已存在: '+moveDest+'。使用 overwrite=true 覆盖';
       var moveContent=await readFile(path);
-      if(moveContent===null) return ' 源文件不存在: '+path;
+      if(moveContent===null) return '[ERR_CODE] NOT_FOUND\n[PARAM] path\n[VALUE] '+path+'\n[MESSAGE] 源文件不存在\n[SUGGEST] 使用 filesystem list 确认文件路径';
       await createFile(moveDest,moveContent);
       await deleteFile(path);
       if(path.indexOf('/uploads/')===0){uploadedFiles=uploadedFiles.filter(function(f){return f.path!==path;});}
@@ -9667,7 +9704,7 @@ async function toolFilesystem(args){
       var copyExisting=await readFile(copyDest);
       if(copyExisting!==null && !args.overwrite) return ' 目标已存在: '+copyDest+'。使用 overwrite=true 覆盖';
       var copyContent=await readFile(path);
-      if(copyContent===null) return ' 源文件不存在: '+path;
+      if(copyContent===null) return '[ERR_CODE] NOT_FOUND\n[PARAM] path\n[VALUE] '+path+'\n[MESSAGE] 源文件不存在\n[SUGGEST] 使用 filesystem list 确认文件路径';
       await createFile(copyDest,copyContent);
       _registerDownloadable(copyDest,copyContent||'');
       return ' 已复制: '+path+' → '+copyDest;
@@ -9699,10 +9736,10 @@ async function toolFilesystem(args){
        if(dlStart<0)dlStart=0;
        var src2=await readFile(path)||'';
        var lines2=src2.split('\n');
-       if(dlStart>=lines2.length)return '行号超出文件范围: '+path;
+       if(dlStart>=lines2.length)return '[ERR_CODE] INVALID_PARAM\n[PARAM] line\n[VALUE] '+(dlStart+1)+'\n[MESSAGE] 行号超出文件范围，文件共 '+lines2.length+' 行\n[SUGGEST] 使用 filesystem read "'+path+'" 查看文件行数';
        if(dlEnd<=0||dlEnd>lines2.length)dlEnd=lines2.length;
        var dlDeleteCount=dlEnd-dlStart;
-       if(dlDeleteCount<=0)return '行号参数无效：endLine('+dlEnd+')必须≥line('+(dlStart+1)+')，当前deleteCount='+dlDeleteCount+'，未执行删除。';
+        if(dlDeleteCount<=0)return '[ERR_CODE] INVALID_PARAM\n[PARAM] line/endLine\n[MESSAGE] 行号参数无效：endLine('+dlEnd+')必须≥line('+(dlStart+1)+')，当前deleteCount='+dlDeleteCount+'\n[SUGGEST] 确保 line≤endLine';
        // ★ 结构化结果反馈：记录被删除的原内容
        var _dlDeletedLines=lines2.slice(dlStart,dlEnd);
        var _dlDelDetail=_dlDeletedLines.map(function(l,i){return (dlStart+i+1)+'： '+l;}).join('\n');
@@ -9718,10 +9755,10 @@ async function toolFilesystem(args){
        if(rlStart<0)rlStart=0;
        var src3=await readFile(path)||'';
        var lines3=src3.split('\n');
-       if(rlStart>=lines3.length)return '行号超出文件范围: '+path;
+        if(rlStart>=lines3.length)return '[ERR_CODE] INVALID_PARAM\n[PARAM] line\n[VALUE] '+(rlStart+1)+'\n[MESSAGE] 行号超出文件范围，文件共 '+lines3.length+' 行\n[SUGGEST] 使用 filesystem read "'+path+'" 查看文件行数';
        if(rlEnd<=0||rlEnd>lines3.length)rlEnd=lines3.length;
        var deleteCount=rlEnd-rlStart;
-       if(deleteCount<=0)return '行号参数无效：endLine('+rlEnd+')必须≥line('+(rlStart+1)+')，当前deleteCount='+deleteCount+'。如需单行替换请确保line=endLine。如需删除后插入，可先delete_lines再insert。';
+        if(deleteCount<=0)return '[ERR_CODE] INVALID_PARAM\n[PARAM] line/endLine\n[MESSAGE] 行号参数无效：endLine('+rlEnd+')必须≥line('+(rlStart+1)+')，当前deleteCount='+deleteCount+'\n[SUGGEST] 确保 line≤endLine。如需单行替换请 line=endLine。如需删除后插入，可先delete_lines再insert。';
        // ★ 结构化结果反馈：记录原内容→新内容
        var _rlOldLines=lines3.slice(rlStart,rlEnd);
        var _rlNewLines=content.split('\n');
@@ -9841,7 +9878,7 @@ async function toolCalculator(args){
       var _kwds=['!',',',';','factorial','permutations','combinations','mean','median','mode','std','var','sum','prod','max','min','gcd','lcm','nthRoot','hypot','sign','mod','det','inv','transpose','dot','cross','fraction','inch','lb','deg(','rad(','km/h','second to','re','im','conj'];
       for(var _ki=0;_ki<_kwds.length;_ki++){if(expression.indexOf(_kwds[_ki])>=0){_hint=' — 该表达式需要mathjs库，当前未加载。请尝试基础四则/幂/三角/对数运算';break;}}
     }
-    return '计算错误: '+e.message+_hint;
+    return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 计算错误: '+e.message+_hint+'\n[SUGGEST] 检查表达式格式。支持四则运算、幂运算、三角函数、对数等。可用 help "calculator" 查看完整文档。';
   }
 }
 
@@ -10741,7 +10778,7 @@ async function toolWorldSimulator(args){
       }
     }
     var idList=Object.keys(ids).sort();
-    if(!idList.length)return '暂无世界定义。';
+    if(!idList.length)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 暂无世界定义\n[SUGGEST] 使用 world_validator action="define" 创建世界';
     var result=[];
     for(var li=0;li<idList.length;li++){
       var w=await _loadWorld(idList[li]);
@@ -11251,7 +11288,7 @@ async function toolFuzzySearch(args){
         if(pl.indexOf(ql)!==-1)nameMatches.push({path:_f.path,name:_f.path.split('/').pop()||_f.path});
       }
     }
-    if(nameMatches.length===0)return '全目录递归搜索未找到路径匹配 "'+query+'" 的文件。请先用 filesystem list / 查看目录结构。';
+    if(nameMatches.length===0)return '[ERR_CODE] NOT_FOUND\n[PARAM] query\n[VALUE] '+query+'\n[MESSAGE] 未找到匹配的文件\n[SUGGEST] 请先用 filesystem list / 查看目录结构';
     var shown=nameMatches.slice(0,limit);
     return '文件名搜索结果 ('+nameMatches.length+' 条，显示前 '+shown.length+' 条):\n'+shown.map(function(m,i){return (i+1)+'. **'+m.path+'**';}).join('\n')+'\n\n以上仅为文件名匹配，非文件内部内容！\n 用 filesystem read <路径> 精读文件。\n ★要搜文件内部内容，请用 fuzzy_search mode="content" query="'+query+'"';
   }
@@ -11286,11 +11323,11 @@ async function toolFuzzySearch(args){
       });
     }
   }
-  if(fileContents.length===0)return '未找到可搜索的文件内容'+(targetFile?'（文件 '+targetFile+' 不存在或路径不匹配）':'（文件系统为空或无可读文本文件）')+'。请先用 filesystem list 查看目录内容。';
+  if(fileContents.length===0)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 未找到可搜索的文件内容'+(targetFile?'（文件 '+targetFile+' 不存在或路径不匹配）':'（文件系统为空或无可读文本文件）')+'\n[SUGGEST] 使用 filesystem list 查看目录内容，确认文件存在且可读';
   var resp=await sendToTaskWorker('fuzzy_search',{query:query,files:fileContents,limit:limit});
-  if(!resp||!resp.success||!resp.data)return '搜索未返回结果。';
+  if(!resp||!resp.success||!resp.data)return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 搜索未返回结果\n[SUGGEST] 检查搜索关键词或文件是否可读';
   var results=resp.data;
-  if(results.length===0)return '未找到匹配 "'+query+'" 的内容。';
+  if(results.length===0)return '[ERR_CODE] NOT_FOUND\n[PARAM] query\n[VALUE] '+query+'\n[MESSAGE] 未找到匹配的内容\n[SUGGEST] 换一个关键词重试';
   var scopeLabel=targetFile?'在文件 '+targetFile+' 中':'全量文件grep';
   var header=scopeLabel+'搜索结果 ('+results.length+' 条):\n';
   return header+results.map(function(r,i){return (i+1)+'. **'+r.path+'** — 相关性: '+r.score+' | 行号 '+r.line+'\n   > '+r.snippet;}).join('\n')+'\n\n 用 filesystem read <路径> line=<行号> 按行号精读。';
@@ -11618,7 +11655,7 @@ async function toolHelp(args){
 
   // ── query：语义搜索工具 ──
   if(action==='query'){
-    if(!args.query)return '请指定 query 搜索描述。示例: help action="query" query="画图表"';
+    if(!args.query)return '[ERR_CODE] MISSING_PARAM\n[PARAM] query\n[MESSAGE] 请指定 query 搜索描述\n[SUGGEST] 示例: help action="query" query="画图表"';
     var limit=args.limit||5;
     var queryEmb=null;
     try{var resp=await sendToTaskWorker('embed',{text:args.query.substring(0,500)});
@@ -11676,7 +11713,7 @@ async function toolHelp(args){
     }
     scored.sort(function(a,b){return b.score-a.score;});
     var top=scored.slice(0,limit);
-    if(!top.length)return '未找到与「'+args.query+'」相关的工具。使用 help list 查看全部工具。';
+    if(!top.length)return '[ERR_CODE] NOT_FOUND\n[PARAM] query\n[VALUE] '+args.query+'\n[MESSAGE] 未找到与「'+args.query+'」相关的工具\n[SUGGEST] 使用 help list 查看全部工具';
     var lines=['##  工具搜索: '+args.query+' (前'+top.length+'条)\n| # | 状态 | 工具名 | 相关度 | 简介 |','|---|---|---|---|---|'];
     for(var j=0;j<top.length;j++){
       var r=top[j];
@@ -11713,9 +11750,9 @@ async function toolHelp(args){
 
   if(action==='set'){
     var setId=(args.tool_name||args.id||'').trim();
-    if(!setId)return ' 请指定工具ID。用 `help action="query" query="关键词"` 搜索或 `help list` 查看全部。';
+    if(!setId)return '[ERR_CODE] MISSING_PARAM\n[PARAM] id/tool_name\n[MESSAGE] 请指定工具ID\n[SUGGEST] 使用 help action="query" query="关键词" 搜索或 help list 查看全部';
     var tDef=TOOL_REGISTRY[setId];
-    if(!tDef)return ' 未找到工具: `'+setId+'`。用 `help action="query" query="关键词"` 搜索或 `help list` 查看完整列表。';
+    if(!tDef)return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+setId+'\n[MESSAGE] 未找到工具\n[SUGGEST] 使用 help action="query" query="关键词" 搜索或 help list 查看完整列表';
     if(tDef.disabled)return ' 工具 `'+setId+'` 已被禁用。';
     if(CORE_TOOL_NAMES.indexOf(tDef.name)>=0)return ' `'+tDef.name+'` 是核心工具，始终可用，无需手动载入。';
     if(tDef.flow_role==='supervisor')return ' `'+tDef.name+'` 是监工专属工具，不可手动载入。';
@@ -11725,16 +11762,16 @@ async function toolHelp(args){
 
   if(action==='unset'){
     var unsetId=(args.tool_name||args.id||'').trim();
-    if(!unsetId)return ' 请指定要卸载的工具ID。';
-    if(CORE_TOOL_NAMES.indexOf(unsetId)>=0)return ' `'+unsetId+'` 是核心工具，不可卸载。';
-    if(TOOL_REGISTRY[unsetId]&&TOOL_REGISTRY[unsetId].flow_role==='supervisor')return ' `'+unsetId+'` 是监工专属工具，不可卸载。';
+    if(!unsetId)return '[ERR_CODE] MISSING_PARAM\n[PARAM] tool_name/id\n[MESSAGE] 请指定要卸载的工具 ID\n[SUGGEST] 使用 help list 查看已载入的工具';
+    if(CORE_TOOL_NAMES.indexOf(unsetId)>=0)return '[ERR_CODE] INVALID_PARAM\n[PARAM] tool_name\n[VALUE] '+unsetId+'\n[MESSAGE] 核心工具不可卸载\n[SUGGEST] 核心工具始终可用，无需卸载';
+    if(TOOL_REGISTRY[unsetId]&&TOOL_REGISTRY[unsetId].flow_role==='supervisor')return '[ERR_CODE] INVALID_PARAM\n[PARAM] tool_name\n[VALUE] '+unsetId+'\n[MESSAGE] 监工专属工具不可卸载\n[SUGGEST] 监工工具由系统管理';
     _unloadTool(convId,unsetId);
     return ' 工具已卸载: `'+unsetId+'`。下次调用前需 `help set` 重新载入。';
   }
 
   // get / 默认
   var tn=args.tool_name||args.id||action;
-  if(!tn||tn==='get')return '请指定 tool_name。用 `help list` 查看所有工具。';
+  if(!tn||tn==='get')return '[ERR_CODE] MISSING_PARAM\n[PARAM] tool_name/id\n[MESSAGE] 请指定 tool_name\n[SUGGEST] 使用 help list 查看所有工具';
   if(tn==='grade_guide'){
     if(flowSession()&&flowSession().active)return _WORKER_GRADE;
     return _SHARED_GRADE;
@@ -11743,7 +11780,7 @@ async function toolHelp(args){
   if(doc)return doc;
   var t2=TOOL_REGISTRY[tn];
   if(t2)return '## '+tn+'\n'+t2.description+'\n\n(该工具暂无扩展文档，以上为基本信息。)';
-  return ' 未找到工具: `'+tn+'`。用 `help action="query" query="关键词"` 搜索或 `help list` 查看所有可用工具。';
+  return '[ERR_CODE] NOT_FOUND\n[PARAM] tool_name\n[VALUE] '+tn+'\n[MESSAGE] 未找到工具\n[SUGGEST] 使用 help action="query" query="关键词" 搜索或 help list 查看所有可用工具';
 }
 
 async function toolLongtermMemory(args){
@@ -11760,7 +11797,7 @@ async function toolLongtermMemory(args){
 
   // ── list：列出全部条目（ID+分类+内容摘要，不含完整内容） ──
   if(args.action==='list'){
-    if(!facts.length)return '记忆库为空。';
+    if(!facts.length)return '[ERR_CODE] MEM_EMPTY\n[MESSAGE] 记忆库为空\n[SUGGEST] 使用 longterm_memory action="store" fact={text:"内容"} 写入第一条';
     facts.sort(function(a,b){return(b.ts||0)-(a.ts||0);});
     var lines=[];
     for(var i=0;i<facts.length;i++){
@@ -11774,16 +11811,16 @@ async function toolLongtermMemory(args){
 
   // ── get：按ID获取完整内容（无截断） ──
   if(args.action==='get'){
-    if(!args.id)return '请指定 id 参数（从 list 结果中获取）';
+    if(!args.id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] id\n[MESSAGE] 请指定 id 参数\n[SUGGEST] 使用 longterm_memory list 查看全部条目';
     var entry=null;
     for(var i=0;i<facts.length;i++){if(facts[i].id===args.id){entry=facts[i];break;}}
-    if(!entry)return '未找到ID为 '+args.id+' 的记忆条目。';
+    if(!entry)return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+args.id+'\n[MESSAGE] 未找到该记忆\n[SUGGEST] 使用 longterm_memory list 查看全部有效条目';
     return '['+(entry.category||'其他')+'] '+entry.text;
   }
 
   // ── query：语义搜索（本地向量引擎） ──
   if(args.action==='query'){
-    if(!args.query)return '请指定 query 搜索描述';
+    if(!args.query)return '[ERR_CODE] MISSING_PARAM\n[PARAM] query\n[MESSAGE] 请指定 query 搜索描述\n[SUGGEST] 补充 query="搜索关键词" 后再试';
     var query=args.query;
     var limit=args.limit||5;
     // 尝试调用本地嵌入引擎
@@ -11828,7 +11865,7 @@ async function toolLongtermMemory(args){
     }
     scored.sort(function(a,b){return b.score-a.score;});
     var top=scored.slice(0,limit);
-    if(!top.length)return '未找到与「'+query+'」语义相关的记忆。使用 list 查看全部条目。';
+    if(!top.length)return '[ERR_CODE] NOT_FOUND\n[PARAM] query\n[VALUE] '+query+'\n[MESSAGE] 未找到语义相关的记忆\n[SUGGEST] 使用 longterm_memory list 查看全部条目，或换一种描述重试';
     var lines=[];
     for(var j=0;j<top.length;j++){
       var r=top[j];
@@ -11842,12 +11879,12 @@ async function toolLongtermMemory(args){
   // ── store：写入记忆（支持单条或批量） ──
   if(args.action==='store'){
     var entries=args.entries||(args.fact?[args.fact]:null);
-    if(!entries||!entries.length)return '请指定 fact(单条) 或 entries(批量)';
-    var results=[], skipped=[];
+    if(!entries||!entries.length)return '[ERR_CODE] MISSING_PARAM\n[PARAM] fact/entries\n[MESSAGE] 请指定 fact(单条) 或 entries(批量)\n[SUGGEST] 补充 fact={text:"内容"} 或 entries=[{text:"内容"}]';
+    var results=[], errors=[];
     for(var ei=0;ei<entries.length;ei++){
       var fi=entries[ei];
-      var text=fi.text||fi.content||'';  // 兼容知识库 schema
-      if(!text){skipped.push('['+ei+']缺text字段'); continue;}
+      var text=fi.text||fi.content||'';
+      if(!text){errors.push('[ERR_CODE] INVALID_PARAM entries['+ei+'] 缺 text 字段 [SUGGEST] 补充 text="记忆内容"'); continue;}
       var fId='mem_'+Date.now()+'_'+Math.random().toString(36).substr(2,8);
       var embedding=null;
       try{
@@ -11859,27 +11896,30 @@ async function toolLongtermMemory(args){
       results.push(fId);
     }
     await _saveLongTermMemory();
-    var out=results.length+'/'+entries.length+' 条: ID '+results.join(', ');
+    var out=results.length+'/'+entries.length+' 条成功';
+    if(results.length)out+=': ID '+results.join(', ');
     if(results.length===1)out=' 已存入记忆 [ID:'+results[0]+']';
-    if(skipped.length)out+='跳过'+skipped.length+'条: '+skipped.join(', ');
+    if(errors.length)out+='\n跳过 '+errors.length+' 条:\n'+errors.join('\n');
+    if(!results.length&&errors.length)out='[ERR_CODE] INVALID_PARAM\n[PARAM] entries\n[MESSAGE] 全部 '+entries.length+' 条均缺少 text 字段，无任何记忆被创建\n[SUGGEST] 检查 fact 结构: {text:"xxx"}';
     return out;
   }
 
   // ── batch_delete：批量删除 ──
   if(args.action==='batch_delete'){
     var ids=args.ids||[];
-    if(!ids.length)return '请指定 ids 数组';
+    if(!ids.length)return '[ERR_CODE] MISSING_PARAM\n[PARAM] ids\n[MESSAGE] 请指定 ids 数组\n[SUGGEST] 补充 ids=["id1","id2"]';
     var deleted=0;
     for(var di=facts.length-1;di>=0;di--){
       if(ids.indexOf(facts[di].id)>=0){facts.splice(di,1);deleted++;}
     }
     await _saveLongTermMemory();
+    if(!deleted)return '[ERR_CODE] NOT_FOUND\n[PARAM] ids\n[MESSAGE] 未找到任何匹配的记忆\n[SUGGEST] 使用 longterm_memory list 查看全部有效ID';
     return ' 批量删除 '+deleted+' 条记忆。';
   }
 
   // ── delete：按ID删除 ──
   if(args.action==='delete'){
-    if(!args.id)return '请指定 id 要删除的记忆ID（从 list 结果中获取）';
+    if(!args.id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] id\n[MESSAGE] 请指定 id\n[SUGGEST] 使用 longterm_memory list 查看全部条目';
     for(var i=facts.length-1;i>=0;i--){
       if(facts[i].id===args.id){
         var removed=facts.splice(i,1)[0];
@@ -11887,13 +11927,13 @@ async function toolLongtermMemory(args){
         return '已删除记忆 [ID:'+args.id+'] ['+(removed.category||'其他')+']: '+removed.text.substring(0,80);
       }
     }
-    return '未找到ID为 '+args.id+' 的记忆，无法删除。使用 list 查看全部ID。';
+    return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+args.id+'\n[MESSAGE] 未找到该记忆，无法删除\n[SUGGEST] 使用 longterm_memory list 查看全部ID';
   }
 
   // ── update：按ID修改 ──
   if(args.action==='update'){
-    if(!args.id)return '请指定 id 要修改的记忆ID（从 list 结果中获取）';
-    if(!args.fact||!args.fact.text)return '请指定 fact.text 新的内容';
+    if(!args.id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] id\n[MESSAGE] 请指定 id\n[SUGGEST] 使用 longterm_memory list 查看全部条目';
+    if(!args.fact||!args.fact.text)return '[ERR_CODE] MISSING_PARAM\n[PARAM] fact.text\n[MESSAGE] 请指定 fact.text\n[SUGGEST] 补充 fact={text:"新内容"}';
     for(var i=facts.length-1;i>=0;i--){
       if(facts[i].id===args.id){
         var old=facts[i];
@@ -11907,9 +11947,9 @@ async function toolLongtermMemory(args){
         return '已更新记忆 [ID:'+args.id+'] ['+facts[i].category+']: '+facts[i].text.substring(0,80)+'\n(旧内容: '+old.text.substring(0,60)+')';
       }
     }
-    return '未找到ID为 '+args.id+' 的记忆，无法更新。使用 list 查看全部ID。';
+    return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+args.id+'\n[MESSAGE] 未找到该记忆，无法更新\n[SUGGEST] 使用 longterm_memory list 查看全部ID';
   }
-  return '未知action: '+args.action;
+  return '[ERR_CODE] UNKNOWN_ACTION\n[PARAM] action\n[VALUE] '+args.action+'\n[MESSAGE] 不支持的 action\n[SUGGEST] 支持 query/store/list/get/delete/update/batch_delete';
 }
 
 async function toolKnowledgeBase(args){
@@ -11917,7 +11957,7 @@ async function toolKnowledgeBase(args){
   // ── list：列出全部条目（标题+ID+分类+来源，不含内容） ──
   if(action==='list'){
     var allEntries=await _loadKB();
-    if(!allEntries.length)return '知识库为空。';
+    if(!allEntries.length)return '[ERR_CODE] KB_EMPTY\n[MESSAGE] 知识库为空\n[SUGGEST] 使用 knowledge_base action="store" entry={title:"标题",content:"内容"} 写入第一条';
     allEntries.sort(function(a,b){return b.updated_at-a.updated_at;});
     var lines=[];
     for(var i=0;i<allEntries.length;i++){
@@ -11929,19 +11969,19 @@ async function toolKnowledgeBase(args){
   }
   // ── get：按ID获取完整内容（无截断） ──
   if(action==='get'){
-    if(!args.id)return '请指定 id 参数（从 list 结果中获取）';
+    if(!args.id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] id\n[MESSAGE] 请指定 id 参数\n[SUGGEST] 使用 knowledge_base list 查看全部条目';
     var allEntries=await _loadKB();
     var entry=null;
     for(var i=0;i<allEntries.length;i++){if(allEntries[i].id===args.id){entry=allEntries[i];break;}}
-    if(!entry)return '未找到ID为 '+args.id+' 的条目。';
+    if(!entry)return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+args.id+'\n[MESSAGE] 未找到该条目\n[SUGGEST] 使用 knowledge_base list 查看全部有效条目';
     return '**'+entry.title+'** ['+(entry.category||'其他')+'] (来源:'+(entry.source||'unknown')+')\n\n'+entry.content;
   }
   // ── query：语义搜索 ──
   if(action==='query'){
-    if(!args.query)return '请指定 query 搜索关键词或自然语言描述';
+    if(!args.query)return '[ERR_CODE] MISSING_PARAM\n[PARAM] query\n[MESSAGE] 请指定 query 搜索关键词\n[SUGGEST] 补充 query="关键词" 后再试';
     var limit=args.limit||3;
     var results=await kbSearch(args.query,limit);
-    if(!results.length)return '知识库中未找到与「'+args.query+'」相关的内容。使用 list 查看全部条目。';
+    if(!results.length)return '[ERR_CODE] NOT_FOUND\n[PARAM] query\n[VALUE] '+args.query+'\n[MESSAGE] 未找到相关内容\n[SUGGEST] 使用 knowledge_base list 查看全部条目，或修改 query 换一种描述';
     var lines=[];
     for(var i=0;i<results.length;i++){
       var r=results[i];
@@ -11955,43 +11995,45 @@ async function toolKnowledgeBase(args){
   // ── store：创建条目（支持单条或批量） ──
   if(action==='store'){
     var entries=args.entries||(args.entry?[args.entry]:null);
-    if(!entries||!entries.length)return '请指定 entry(单条) 或 entries(批量数组)';
-    var ids=[], skipped=[];
+    if(!entries||!entries.length)return '[ERR_CODE] MISSING_PARAM\n[PARAM] entry/entries\n[MESSAGE] 请指定 entry(单条) 或 entries(批量数组)\n[SUGGEST] 补充 entry={title:"标题",content:"内容",category:"技术参考"}';
+    var ids=[], errors=[];
     for(var ei=0;ei<entries.length;ei++){
       var e=entries[ei];
       var title=e.title||'';
-      var content=e.content||e.text||'';  // 兼容记忆库 schema
-      if(!title&&!content){skipped.push('['+ei+']缺title+content'); continue;}
-      if(!title){skipped.push('['+ei+']缺title'); continue;}
-      if(!content){skipped.push('['+ei+']缺content'); continue;}
+      var content=e.content||e.text||'';
+      if(!title&&!content){errors.push('[ERR_CODE] INVALID_PARAM entries['+ei+'] 缺 title+content [SUGGEST] 补充 title="标题" content="内容"'); continue;}
+      if(!title){errors.push('[ERR_CODE] INVALID_PARAM entries['+ei+'].title 缺 title [SUGGEST] 补充 title="标题"'); continue;}
+      if(!content){errors.push('[ERR_CODE] INVALID_PARAM entries['+ei+'].content 缺 content [SUGGEST] 补充 content="内容"'); continue;}
       var entry=await kbAddEntry(title,content,e.category||'其他','agent');
       ids.push(entry.id);
     }
-    var out=ids.length+'/'+entries.length+' 条: ID '+ids.join(', ');
-    if(ids.length===1)out=' 已创建知识条目 [ID:'+ids[0]+']';
-    if(skipped.length)out+='跳过'+skipped.length+'条: '+skipped.join(', ');
+    var out=ids.length+'/'+entries.length+' 条成功';
+    if(ids.length)out+=': ID '+ids.join(', ');
+    if(ids.length===1)out=' 已创建 [ID:'+ids[0]+']';
+    if(errors.length)out+='\n跳过 '+errors.length+' 条:\n'+errors.join('\n');
+    if(!ids.length&&errors.length)out='[ERR_CODE] INVALID_PARAM\n[PARAM] entries\n[MESSAGE] 全部 '+entries.length+' 条均缺少必填字段，无任何条目被创建\n[SUGGEST] 检查 entry 结构: {title:"xxx",content:"xxx"}';
     return out;
   }
   // ── update：修改条目（只能修改 source=='agent' 的） ──
   if(action==='update'){
-    if(!args.id)return '请指定 id（从 list 结果中获取）';
-    if(!args.entry||(!args.entry.title&&!args.entry.content))return '请指定 entry.title 和/或 entry.content';
+    if(!args.id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] id\n[MESSAGE] 请指定 id\n[SUGGEST] 使用 knowledge_base list 查看全部条目';
+    if(!args.entry||(!args.entry.title&&!args.entry.content))return '[ERR_CODE] MISSING_PARAM\n[PARAM] entry.title/entry.content\n[MESSAGE] 请指定 entry.title 和/或 entry.content\n[SUGGEST] 补充 entry={title:"新标题",content:"新内容"}';
     var allEntries=await _loadKB();
     var target=null;
     for(var i=0;i<allEntries.length;i++){if(allEntries[i].id===args.id){target=allEntries[i];break;}}
-    if(!target)return '未找到ID为 '+args.id+' 的条目。';
-    if(target.source!=='agent')return ' 无法修改此条目：来源为「'+(target.source||'unknown')+'」，只有来源为 agent 的条目你才能修改。';
+    if(!target)return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+args.id+'\n[MESSAGE] 未找到该条目\n[SUGGEST] 使用 knowledge_base list 查看全部有效条目';
+    if(target.source!=='agent')return '[ERR_CODE] READONLY\n[PARAM] source\n[VALUE] '+(target.source||'unknown')+'\n[MESSAGE] 只有来源为 agent 的条目才能修改\n[SUGGEST] 该条目为只读，无法修改';
     await kbUpdateEntry(args.id,args.entry.title,args.entry.content,args.entry.category);
     return '已更新知识条目 [ID:'+args.id+'] ';
   }
   // ── delete：删除条目（只能删除 source=='agent' 的） ──
   if(action==='delete'){
-    if(!args.id)return '请指定 id（从 list 结果中获取）';
+    if(!args.id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] id\n[MESSAGE] 请指定 id\n[SUGGEST] 使用 knowledge_base list 查看全部条目';
     var allEntries=await _loadKB();
     var target=null;
     for(var i=0;i<allEntries.length;i++){if(allEntries[i].id===args.id){target=allEntries[i];break;}}
-    if(!target)return '未找到ID为 '+args.id+' 的条目。';
-    if(target.source!=='agent')return ' 无法删除此条目：来源为「'+(target.source||'unknown')+'」，只有来源为 agent 的条目你才能删除。';
+    if(!target)return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+args.id+'\n[MESSAGE] 未找到该条目\n[SUGGEST] 使用 knowledge_base list 查看全部有效条目';
+    if(target.source!=='agent')return '[ERR_CODE] READONLY\n[PARAM] source\n[VALUE] '+(target.source||'unknown')+'\n[MESSAGE] 只有来源为 agent 的条目才能删除\n[SUGGEST] 该条目为只读，无法删除';
     var title=target.title;
     await kbDeleteEntry(args.id);
     return '已删除知识条目「'+title+'」[ID:'+args.id+'] ';
@@ -11999,7 +12041,7 @@ async function toolKnowledgeBase(args){
   // ── batch_delete：批量删除 ──
   if(action==='batch_delete'){
     var ids=args.ids||[];
-    if(!ids.length)return '请指定 ids 数组';
+    if(!ids.length)return '[ERR_CODE] MISSING_PARAM\n[PARAM] ids\n[MESSAGE] 请指定 ids 数组\n[SUGGEST] 补充 ids=["id1","id2"]';
     var allEntries=await _loadKB();
     var deleted=0, notFound=[];
     for(var di=allEntries.length-1;di>=0;di--){
@@ -12010,11 +12052,12 @@ async function toolKnowledgeBase(args){
         }else{notFound.push(allEntries[di].id+'('+allEntries[di].source+')');}
       }
     }
-    var out=' 批量删除 '+deleted+'/'+ids.length+' 条知识条目';
-    if(notFound.length)out+='跳过'+notFound.length+'条(非agent来源): '+notFound.join(', ');
+    var out=' 批量删除 '+deleted+'/'+ids.length+' 条';
+    if(notFound.length)out+='\n跳过 '+notFound.length+' 条(非agent来源): '+notFound.join(', ');
+    if(!deleted&&ids.length)out='[ERR_CODE] READONLY\n[PARAM] ids\n[MESSAGE] 全部 '+ids.length+' 条均为只读，无法删除\n[SUGGEST] 只读条目不可删除';
     return out;
   }
-  return '未知action: '+action+'，支持 query/list/get/store/update/delete/batch_delete';
+  return '[ERR_CODE] UNKNOWN_ACTION\n[PARAM] action\n[VALUE] '+action+'\n[MESSAGE] 不支持的 action\n[SUGGEST] 支持 query/list/get/store/update/delete/batch_delete';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -12145,7 +12188,7 @@ async function toolCustomApiCall(args){
     var totalLen=text.length;
     if(result.length>8000)result=result.substring(0,8000)+'\n\n══════════════════\n响应过长，已展示前 8000 / 共 '+totalLen+' 字符。\n建议：用更精确的查询参数缩小返回范围，或将结果写入文件后用 filesystem 分段读取。';
     return 'HTTP '+resp.status+' | '+ct+' | '+endpoint+'\n'+result;
-  }catch(e){return ' API调用失败: '+e.message+' | '+endpoint;}
+  }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] API 调用失败: '+e.message+'\n[SUGGEST] 检查 endpoint 地址和网络连接\n[ENDPOINT] '+endpoint;}
 }
 
 // --- MCP 多连接管理 ---
@@ -12169,15 +12212,15 @@ async function _connectSingleMcp(conn){
 }
 
 async function toolMcpConnect(args){
-  if(!settings.mcp_enabled)return ' MCP连接未启用。请在设置→外部工具中开启。';
+  if(!settings.mcp_enabled)return '[ERR_CODE] TOOL_DISABLED\n[MESSAGE] MCP 连接未启用\n[SUGGEST] 在设置→外部工具中开启';
   var connections=settings.mcp_connections||[];
-  if(!connections.length)return ' 没有已注册的MCP服务器。请在设置→外部工具→MCP服务器中添加。';
+  if(!connections.length)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 没有已注册的 MCP 服务器\n[SUGGEST] 在设置→外部工具→MCP服务器中添加';
   
   if(args.url){
     // 用户直接传URL：临时连接
     var tmpConn={id:'temp_'+Date.now(),name:'临时连接',url:args.url,transport:args.transport||'sse',enabled:true};
     var result=await _connectSingleMcp(tmpConn);
-    if(result.error)return ' 临时MCP连接失败: '+result.error;
+    if(result.error)return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 临时 MCP 连接失败: '+result.error+'\n[SUGGEST] 检查 URL 是否正确';
     return ' 临时MCP已连接 ('+args.url+')\n 发现工具: '+result.tools.join(', ')+'\n 通过 custom_api_call 调用，端点: '+args.url.replace(/\/$/,'')+'/tools/call';
   }
   
@@ -12190,7 +12233,7 @@ async function toolMcpConnect(args){
     }
     var successCount=0;var totalTools=0;
     var summary=results.map(function(r){
-      if(!r)return '连接返回空 (URL为空?)';
+      if(!r)return ' ⚠️ 连接返回空 (URL为空?)';
       if(r.error){return ' '+r.id+': '+r.error;}
       totalTools+=r.tools.length;successCount++;
       return ' '+r.name+' ('+r.id+'): '+r.tools.join(', ');
@@ -12202,25 +12245,26 @@ async function toolMcpConnect(args){
   if(!targetId){
     // 默认连第一个
     var first=connections[0];
-    if(!first)return ' 没有已注册的MCP服务器。';
+    if(!first)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 没有已注册的 MCP 服务器\n[SUGGEST] 在设置→外部工具→MCP服务器中添加';
     targetId=first.id;
   }
   var conn=null;
   for(var j=0;j<connections.length;j++){if(connections[j].id===targetId){conn=connections[j];break;}}
-  if(!conn)return ' 未找到MCP服务器: '+targetId+'。已注册: '+connections.map(function(c){return c.id;}).join(', ');
+  if(!conn)return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+targetId+'\n[MESSAGE] 未找到 MCP 服务器\n[SUGGEST] 已注册: '+connections.map(function(c){return c.id;}).join(', ');
   var singleResult=await _connectSingleMcp(conn);
-  if(singleResult.error)return ' MCP连接失败 ('+conn.name+'): '+singleResult.error;
+  if(singleResult.error)return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] MCP 连接失败 ('+conn.name+'): '+singleResult.error+'\n[SUGGEST] 检查服务器地址和网络连接';
+  // singleResult 已在上面定义并检查
   return ' MCP已连接: '+conn.name+' ('+conn.url+')\n 发现工具: '+singleResult.tools.join(', ')+'\n 通过 custom_api_call 调用，端点: '+conn.url.replace(/\/$/,'')+'/tools/call';
 }
 
 // --- 自定义函数调用 ---
 async function toolUserFunctionCall(args){
-  if(!settings.user_func_enabled)return ' 自定义函数未启用。请在设置→外部工具中开启。';
+  if(!settings.user_func_enabled)return '[ERR_CODE] TOOL_DISABLED\n[MESSAGE] 自定义函数未启用\n[SUGGEST] 在设置→外部工具中开启';
   var funcs=settings.user_functions||[];
   var fn=null;
   for(var i=0;i<funcs.length;i++){if(funcs[i].id===args.function_id){fn=funcs[i];break;}}
-  if(!fn)return ' 未找到函数: '+args.function_id+'。已注册: '+(funcs.map(function(f){return f.id;}).join(', ')||'无');
-  if(fn.enabled===false)return ' 函数 '+args.function_id+' 已禁用。';
+  if(!fn)return '[ERR_CODE] NOT_FOUND\n[PARAM] function_id\n[VALUE] '+args.function_id+'\n[MESSAGE] 未找到函数\n[SUGGEST] 已注册: '+(funcs.map(function(f){return f.id;}).join(', ')||'无');
+  if(fn.enabled===false)return '[ERR_CODE] TOOL_DISABLED\n[PARAM] function_id\n[VALUE] '+args.function_id+'\n[MESSAGE] 函数已禁用\n[SUGGEST] 在设置中启用该函数';
   try{
     // 通过 Web Worker 隔离执行（移除主线程全局访问权）
     var workerCode='self.onmessage=function(e){var ctx=e.data;try{var fn='+JSON.stringify(fn.code)+';Promise.resolve(fn(ctx)).then(function(r){self.postMessage({ok:true,result:r});}).catch(function(err){self.postMessage({ok:false,error:err.message});});}catch(err){self.postMessage({ok:false,error:err.message});}}';
@@ -12240,7 +12284,7 @@ async function toolUserFunctionCall(args){
     var display=resultStr;
     if(display.length>8000)display=display.substring(0,8000)+'\n\n══════════════════\n输出过长，已展示前 8000 / 共 '+resultStr.length+' 字符。\n建议：让函数返回精简摘要，或将完整结果写入文件。';
     return ' 函数 '+args.function_id+' 执行完成:\n'+display;
-  }catch(e){return ' 函数 '+args.function_id+' 执行失败: '+e.message;}
+  }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 函数 '+args.function_id+' 执行失败: '+e.message+'\n[SUGGEST] 检查函数代码';}
 }
 
 // --- 格式转换 ---
@@ -12258,14 +12302,14 @@ var CONVERT_MAP={
 function parseCSV(line){var result=[],current='',inQuotes=false;for(var i=0;i<line.length;i++){var c=line[i];if(inQuotes){if(c==='"'){if(i+1<line.length&&line[i+1]==='"'){current+='"';i++;}else{inQuotes=false;}}else{current+=c;}}else{if(c==='"'){inQuotes=true;}else if(c===','){result.push(current);current='';}else{current+=c;}}}result.push(current);return result;}
 
 async function toolConvertFormat(args){
-  if(!args.input_path)return ' 缺少参数: input_path';
+  if(!args.input_path)return '[ERR_CODE] MISSING_PARAM\n[PARAM] input_path\n[MESSAGE] 请指定 input_path\n[SUGGEST] 补充 input_path="/path/to/file"';
   var input=await readFile(args.input_path);
-  if(input===null)return ' 源文件不存在: '+args.input_path;
+  if(input===null)return '[ERR_CODE] NOT_FOUND\n[PARAM] input_path\n[VALUE] '+args.input_path+'\n[MESSAGE] 源文件不存在\n[SUGGEST] 检查文件路径';
   var fromExt=(args.from_format||args.input_path.split('.').pop()||'').toLowerCase();
   var toFmt=args.to_format.toLowerCase();
   var key=fromExt+'→'+toFmt;
   var fn=CONVERT_MAP[key];
-  if(!fn)return ' 不支持的转换: '+fromExt+' → '+toFmt+'\n 支持: '+Object.keys(CONVERT_MAP).join(', ');
+  if(!fn)return '[ERR_CODE] INVALID_PARAM\n[PARAM] to_format\n[MESSAGE] 不支持的转换: '+fromExt+' → '+toFmt+'\n[SUGGEST] 支持: '+Object.keys(CONVERT_MAP).join(', ');
   try{
     var result=await fn(input,args.options||{});
     if(result instanceof Blob){
@@ -12279,7 +12323,7 @@ async function toolConvertFormat(args){
     var display=result;
     if(display.length>8000)display=display.substring(0,8000)+'\n\n══════════════════\n转换结果过长，已展示前 8000 / 共 '+result.length+' 字符。\n建议：指定 output_path 将完整结果写入文件。';
     return ' 转换完成 ('+key+'):\n'+display;
-  }catch(e){return ' 转换失败: '+e.message;}
+  }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 转换失败: '+e.message+'\n[SUGGEST] 检查源文件格式和目标格式是否匹配';}
 }
 
 // --- 地理位置工具 (移植自 吃什么.html CORS免费策略) ---
@@ -12367,8 +12411,8 @@ async function toolSendEmail(args){
   if(isNaN(smtpPort)||smtpPort<1||smtpPort>65535)smtpPort=587;
   var smtpUser=env.SMTP_USER||settings.smtp_user||'';
   var smtpPass=env.SMTP_PASS||settings.smtp_pass||'';
-  if(!settings.email_enabled)return ' 邮件工具未启用。请在设置→邮件中开启并配置SMTP。';
-  if(!smtpUser||!smtpPass)return ' 请先在设置→邮件中配置 SMTP 用户名和密码。\n\n 常用配置: Gmail需开启两步验证+应用专用密码; QQ邮箱→smtp.qq.com:465(SSL); 163→smtp.163.com:465';
+  if(!settings.email_enabled)return '[ERR_CODE] TOOL_DISABLED\n[MESSAGE] 邮件工具未启用\n[SUGGEST] 在设置→邮件中开启并配置SMTP';
+  if(!smtpUser||!smtpPass)return '[ERR_CODE] MISSING_PARAM\n[MESSAGE] SMTP 未配置\n[SUGGEST] 在设置→邮件中配置 SMTP 用户名和密码';
   var body=args.body||'';
   var plainBody='';
   if(args.body_type==='markdown'){
@@ -12382,8 +12426,9 @@ async function toolSendEmail(args){
     try{
       var resp=await fetch(relayUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:smtpHost,port:smtpPort,user:smtpUser,pass:smtpPass,to:args.to,subject:args.subject||'',body:body,plainBody:plainBody,cc:args.cc||'',isHtml:args.body_type==='markdown'}),signal:AbortSignal.timeout(20000)});
       if(resp.ok)return ' 邮件已发送至 '+args.to;
-      return ' 中继发送失败 (HTTP '+resp.status+')';
-    }catch(e){return ' 中继发送失败: '+e.message+'\n\n 已打开默认邮件客户端作为备选。';}
+      if(resp.ok)return ' 邮件已发送至 '+args.to;
+      return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 中继发送失败 (HTTP '+resp.status+')\n[SUGGEST] 检查 SMTP 配置或稍后重试';
+    }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 中继发送失败: '+e.message+'\n[SUGGEST] 检查网络连接或改用默认邮件客户端';}
   }
   var bodyText=args.body||'';
   var truncated=bodyText.length>1500;
@@ -12412,7 +12457,7 @@ async function toolArchive(args){
     if(!files.length){
       // 没有指定文件列表,尝试压缩整个目录
       try{var allPaths=await listDir(dirPath);files=allPaths;}catch(e){files=[];}
-      if(!files.length)return ' 没有可压缩的文件。请指定 files 数组或确保目录非空。';
+      if(!files.length)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 没有可压缩的文件\n[SUGGEST] 请指定 files 数组或确保目录非空';
     }
     await loadLibrary('jszip');
     var zip=new JSZip();
@@ -12426,7 +12471,7 @@ async function toolArchive(args){
       zip.file(entryName,content,{createFolders:true});
       added++;
     }
-    if(!added)return ' 所有文件读取失败。';
+    if(!added)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 所有文件读取失败\n[SUGGEST] 检查 files 中的路径是否都存在';
     var genOpts={type:'blob',compression:'DEFLATE',compressionOptions:{level:6}};
     if(args.password)genOpts.password=args.password;
     var zipBlob=await zip.generateAsync(genOpts,function(meta){});
@@ -12435,16 +12480,16 @@ async function toolArchive(args){
     var bytes=new Uint8Array(ab);
     for(var bi=0;bi<bytes.byteLength;bi++)b64+=String.fromCharCode(bytes[bi]);
     var b64str=btoa(b64);
-    try{await createFile(outPath,b64str);}catch(e){return ' 写入失败: '+e.message;}
+    try{await createFile(outPath,b64str);}catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 写入失败: '+e.message+'\n[SUGGEST] 检查 output_path 是否可写';}
     registerGeneratedFile(zipBlob,outPath.split('/').pop(),'application/zip');
     return ' 已压缩: '+added+' 个文件 → '+outPath+' ('+formatSize(zipBlob.size)+')';
   }
   
   if(action==='extract'){
     var zipPath=args.target_path;
-    if(!zipPath)return '请指定 target_path 为zip文件路径';
+    if(!zipPath)return '[ERR_CODE] MISSING_PARAM\n[PARAM] target_path\n[MESSAGE] 请指定 target_path 为 zip 文件路径\n[SUGGEST] 补充 target_path="/downloads/file.zip"';
     var zipContent=await readFile(zipPath);
-    if(zipContent===null)return ' 文件不存在: '+zipPath;
+    if(zipContent===null)return '[ERR_CODE] NOT_FOUND\n[PARAM] target_path\n[VALUE] '+zipPath+'\n[MESSAGE] 文件不存在\n[SUGGEST] 检查文件路径是否正确';
     // ★ 兼容 Blob/File 返回值（下载修复引入）
     var _isBlob_z=zipContent instanceof Blob;
     await loadLibrary('jszip');
@@ -12483,9 +12528,9 @@ async function toolArchive(args){
   
   if(action==='list'){
     var listPath=args.target_path;
-    if(!listPath)return '请指定 target_path 为zip文件路径';
+    if(!listPath)return '[ERR_CODE] MISSING_PARAM\n[PARAM] target_path\n[MESSAGE] 请指定 target_path 为 zip 文件路径\n[SUGGEST] 补充 target_path="/downloads/file.zip"';
     var lc=await readFile(listPath);
-    if(lc===null)return ' 文件不存在: '+listPath;
+    if(lc===null)return '[ERR_CODE] NOT_FOUND\n[PARAM] target_path\n[VALUE] '+listPath+'\n[MESSAGE] 文件不存在\n[SUGGEST] 检查文件路径';
     var _isBlob_l=lc instanceof Blob;
     await loadLibrary('jszip');
     var lf;
@@ -12510,7 +12555,7 @@ async function toolArchive(args){
     }
     return ' '+listPath+' | '+lEntries.length+' 条目:\n'+tree.join('\n');
   }
-  return '未知action: '+action;
+  return '[ERR_CODE] UNKNOWN_ACTION\n[PARAM] action\n[VALUE] '+action+'\n[MESSAGE] 不支持的 action\n[SUGGEST] 支持 compress/extract/list';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -12752,7 +12797,7 @@ async function toolSpeechTTS(args){
   }
 
   var text=args.text||'';
-  if(!text.trim())return '请指定要朗读的 text';
+  if(!text.trim())return '[ERR_CODE] MISSING_PARAM\n[PARAM] text\n[MESSAGE] 请指定要朗读的 text\n[SUGGEST] 补充 text="要朗读的内容"';
   _ttsAborted=false;
 
   var lang=args.lang||'auto';
@@ -12962,7 +13007,7 @@ async function _saveCalendar(cal){
 function _eventId(){return 'evt_'+Date.now()+'_'+Math.random().toString(36).substr(2,6);}
 
 async function toolCalendar(args){
-  if(!settings.calendar_enabled)return ' 日历工具未启用。请在设置→日历中开启。';
+  if(!settings.calendar_enabled)return '[ERR_CODE] TOOL_DISABLED\n[MESSAGE] 日历工具未启用\n[SUGGEST] 在设置→日历中开启';
   var action=args.action||'list';
   var cal=await _loadCalendar();
   
@@ -12973,7 +13018,7 @@ async function toolCalendar(args){
       var es=new Date(ev.start).getTime();
       return es>=startFilter&&es<=endFilter;
     }).sort(function(a,b){return new Date(a.start).getTime()-new Date(b.start).getTime();});
-    if(!filtered.length)return '该时间段内没有事件。';
+    if(!filtered.length)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 该时间段内没有事件\n[SUGGEST] 调整 start/end 参数扩大范围';
     var lines=filtered.map(function(ev){
       var startStr=new Date(ev.start).toLocaleString('zh-CN');
       var endStr=ev.end?new Date(ev.end).toLocaleString('zh-CN'):'';
@@ -12986,7 +13031,7 @@ async function toolCalendar(args){
   }
   
   if(action==='schedule'){
-    if(!args.title||!args.start)return '请指定 title 和 start';
+    if(!args.title||!args.start)return '[ERR_CODE] MISSING_PARAM\n[PARAM] title/start\n[MESSAGE] 请指定 title 和 start\n[SUGGEST] 补充 title="事件标题" start="2025-12-25T10:00:00"';
     var evt={id:args.id||_eventId(),title:args.title,start:args.start,end:args.end||args.start,description:args.description||'',location:args.location||'',all_day:args.all_day===true,recurrence:args.recurrence||'none',reminder_minutes:args.reminder_minutes||0,auto_wake:args.auto_wake!==false,createdAt:new Date().toISOString()};
     // upsert
     var found=false;
@@ -12997,19 +13042,19 @@ async function toolCalendar(args){
   }
   
   if(action==='delete'){
-    if(!args.id)return '请指定 id 要删除的事件ID';
+    if(!args.id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] id\n[MESSAGE] 请指定 id\n[SUGGEST] 使用 calendar action="list" 查看全部事件ID';
     var before=cal.events.length;
     cal.events=cal.events.filter(function(ev){return ev.id!==args.id;});
-    if(cal.events.length===before)return ' 未找到事件: '+args.id;
+    if(cal.events.length===before)return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+args.id+'\n[MESSAGE] 未找到事件\n[SUGGEST] 使用 calendar action="list" 查看全部事件ID';
     await _saveCalendar(cal);
     return ' 已删除事件: '+args.id;
   }
   
   if(action==='search'){
     var q=(args.query||'').toLowerCase();
-    if(!q)return '请指定 query 搜索关键词';
+    if(!q)return '[ERR_CODE] MISSING_PARAM\n[PARAM] query\n[MESSAGE] 请指定 query 搜索关键词\n[SUGGEST] 补充 query="关键词"';
     var matched=cal.events.filter(function(ev){return (ev.title||'').toLowerCase().indexOf(q)>=0||(ev.description||'').toLowerCase().indexOf(q)>=0||(ev.location||'').toLowerCase().indexOf(q)>=0;}).sort(function(a,b){return new Date(a.start).getTime()-new Date(b.start).getTime();});
-    if(!matched.length)return ' 未找到包含"'+args.query+'"的事件。';
+    if(!matched.length)return '[ERR_CODE] NOT_FOUND\n[PARAM] query\n[VALUE] '+args.query+'\n[MESSAGE] 未找到包含"'+args.query+'"的事件\n[SUGGEST] 换一个关键词重试';
     var mlines=matched.map(function(ev){return '['+ev.id+'] '+new Date(ev.start).toLocaleString('zh-CN')+' | '+ev.title+(ev.location?' | '+ev.location:'');});
     return ' 找到 '+matched.length+' 个事件:\n'+mlines.join('\n');
   }
@@ -13068,7 +13113,7 @@ async function toolCalendar(args){
     return ' 日历定时唤醒已禁用。';
   }
   
-  return '未知action: '+action+'。支持: list/schedule/delete/search/export/wake_status/enable_wake/disable_wake';
+  return '[ERR_CODE] UNKNOWN_ACTION\n[PARAM] action\n[VALUE] '+action+'\n[MESSAGE] 不支持的 action\n[SUGGEST] 支持 list/schedule/delete/search/export/wake_status/enable_wake/disable_wake';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -13235,18 +13280,18 @@ async function toolPreciseTime(args){
     var toTz=args.to_tz||'UTC';
     try{
       var dt=new Date(timeStr);
-      if(isNaN(dt.getTime()))return ' 无效的时间字符串: '+timeStr;
+      if(isNaN(dt.getTime()))return '[ERR_CODE] INVALID_PARAM\n[PARAM] time_str\n[VALUE] '+timeStr+'\n[MESSAGE] 无效的时间字符串\n[SUGGEST] 使用 ISO 8601 格式如 "2026-07-17T12:00:00" 或 "2026-07-17 12:00"';
       var fromStr=dt.toLocaleString('zh-CN',{timeZone:fromTz,timeZoneName:'longOffset'});
       var toStr=dt.toLocaleString('zh-CN',{timeZone:toTz,timeZoneName:'longOffset'});
       var utcStr=dt.toISOString();
       return JSON.stringify({input:timeStr,utc:utcStr,from_timezone:fromTz,from_locale:fromStr,to_timezone:toTz,to_locale:toStr},null,2);
-    }catch(e){return ' 时区转换失败: '+e.message+'。请使用IANA时区名如 "Asia/Shanghai", "America/New_York", "Europe/London"。';}
+    }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 时区转换失败: '+e.message+'\n[SUGGEST] 使用 IANA 时区名如 "Asia/Shanghai", "America/New_York", "Europe/London"';}
   }
   
   if(action==='countdown'){
-    if(!args.target_time)return '请指定 target_time ISO8601目标时间';
+    if(!args.target_time)return '[ERR_CODE] MISSING_PARAM\n[PARAM] target_time\n[MESSAGE] 请指定 target_time ISO8601 目标时间\n[SUGGEST] 补充 target_time="2025-12-25T10:00:00"';
     var target=new Date(args.target_time);
-    if(isNaN(target.getTime()))return ' 无效的目标时间: '+args.target_time;
+    if(isNaN(target.getTime()))return '[ERR_CODE] INVALID_PARAM\n[PARAM] target_time\n[VALUE] '+args.target_time+'\n[MESSAGE] 无效的目标时间\n[SUGGEST] 使用 ISO8601 格式: 2025-12-25T10:00:00';
     var nowT=new Date();
     var diff=target.getTime()-nowT.getTime();
     if(diff<=0)return ' 倒计时已结束! 目标时间: '+target.toLocaleString('zh-CN')+' (已过 '+Math.abs(Math.round(diff/1000))+'秒)';
@@ -14464,12 +14509,12 @@ function _dagSummary(dag){
 
 // ===== 主工具函数 =====
 async function toolPipeline(args){
-  if(!settings.pipeline_enabled)return ' 流水线引擎未启用。请在设置中开启。';
+  if(!settings.pipeline_enabled)return '[ERR_CODE] TOOL_DISABLED\n[MESSAGE] 流水线引擎未启用\n[SUGGEST] 在设置中开启流水线引擎';
   var action=args.action||'list',store=await _loadPipes();
 
   if(action==='list'){
     var runs=Object.values(_pipelineRuns),defs=store.definitions||{};
-    if(!runs.length&&!Object.keys(defs).length)return ' 暂无活跃流水线。使用 action="create" 创建。';
+    if(!runs.length&&!Object.keys(defs).length)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 暂无活跃流水线\n[SUGGEST] 使用 pipeline action="create" name="xxx" dag={...} 创建';
     var lines=[];
     for(var ri=0;ri<runs.length;ri++){
       var r=runs[ri],d=r.pipeline_id?defs[r.pipeline_id]:null;
@@ -14482,8 +14527,8 @@ async function toolPipeline(args){
   }
 
   if(action==='create'){
-    if(!args.name||!args.dag)return ' 请指定 name 和 dag';
-    var vd=_validateDAG(args.dag);if(!vd.valid)return ' DAG验证失败:\n'+vd.errors.join('\n');
+    if(!args.name||!args.dag)return '[ERR_CODE] MISSING_PARAM\n[PARAM] name/dag\n[MESSAGE] 请指定 name 和 dag\n[SUGGEST] 补充 name="流水线名" dag={nodes:{...},edges:[...]}';
+    var vd=_validateDAG(args.dag);if(!vd.valid)return '[ERR_CODE] INVALID_PARAM\n[PARAM] dag\n[MESSAGE] DAG验证失败:\n'+vd.errors.join('\n')+'\n[SUGGEST] 检查 DAG 结构：nodes 节点定义 + edges 边连接';
     var pid=_pid();
     var def={id:pid,name:args.name,description:args.description||'',dag:args.dag,acceptance_metrics:args.acceptance_metrics||[],created_at:new Date().toISOString()};
     _pipelines[pid]=def;store.definitions[pid]=def;await _savePipes(store);
@@ -14492,9 +14537,9 @@ async function toolPipeline(args){
   }
 
   if(action==='run'){
-    if(!args.pipeline_id)return ' 请指定 pipeline_id';
+    if(!args.pipeline_id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] pipeline_id\n[MESSAGE] 请指定 pipeline_id\n[SUGGEST] 使用 pipeline action="list" 查看已创建的流水线';
     var def=_pipelines[args.pipeline_id]||store.definitions[args.pipeline_id];
-    if(!def)return ' 未找到流水线: '+args.pipeline_id;
+    if(!def)return '[ERR_CODE] NOT_FOUND\n[PARAM] pipeline_id\n[VALUE] '+args.pipeline_id+'\n[MESSAGE] 未找到流水线\n[SUGGEST] 使用 pipeline action="list" 查看全部';
     var existingRun=args.run_id?_pipelineRuns[args.run_id]:null;
     var rid,state;
     if(existingRun){
@@ -14517,16 +14562,16 @@ async function toolPipeline(args){
         return ' 流水线报告门 ['+state._reportNodeId+']\n'+JSON.stringify(report,null,2).substring(0,6000)+'\n\n 使用 pipeline action="decide" run_id="'+rid+'" decision="approve|revise|reroute|abort"';
       }
       if(state.status==='completed'){return ' 流水线已完成: '+rid;}
-      if(state.status==='failed'){return ' 流水线失败: '+rid+' | '+(state.error||'');}
+      if(state.status==='failed'){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 流水线失败: '+rid+' | '+(state.error||'')+'\n[SUGGEST] 检查流水线定义和节点执行日志';}
       await _sleep(2000);
     }
     return ' 流水线结束: '+rid+' | '+state.status;
   }
 
   if(action==='status'){
-    if(!args.run_id)return ' 请指定 run_id';
+    if(!args.run_id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] run_id\n[MESSAGE] 请指定 run_id\n[SUGGEST] 使用 pipeline action="list" 查看全部运行实例';
     var s=_pipelineRuns[args.run_id];if(!s){try{var raw=await readFile('/pipelines/'+args.run_id+'/state.json');if(raw)s=JSON.parse(raw);}catch(e){}}
-    if(!s)return ' 未找到运行实例: '+args.run_id;
+    if(!s)return '[ERR_CODE] NOT_FOUND\n[PARAM] run_id\n[VALUE] '+args.run_id+'\n[MESSAGE] 未找到运行实例\n[SUGGEST] 使用 pipeline action="list" 查看全部实例';
     var lines=[],total=0,done=0;
     for(var nid in s.node_states){
       total++;var ns=s.node_states[nid],icon=ns.status==='completed'?'':ns.status==='running'?'':ns.status==='failed'?'':ns.status==='reporting'?'':ns.status==='pending'?'':'◽';
@@ -14539,14 +14584,14 @@ async function toolPipeline(args){
   }
 
   if(action==='get_report'){
-    if(!args.run_id)return ' 请指定 run_id';
-    var s2=_pipelineRuns[args.run_id];if(!s2||!s2._reportData)return ' 当前无待处理报告，流水线可能未到达报告门';
+    if(!args.run_id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] run_id\n[MESSAGE] 请指定 run_id\n[SUGGEST] 使用 pipeline action="list" 查看全部运行实例';
+    var s2=_pipelineRuns[args.run_id];if(!s2||!s2._reportData)return '[ERR_CODE] NOT_FOUND\n[PARAM] run_id\n[VALUE] '+args.run_id+'\n[MESSAGE] 当前无待处理报告\n[SUGGEST] 流水线可能未到达报告门';
     return ' 报告门: '+s2._reportNodeId+'\n'+JSON.stringify(s2._reportData,null,2).substring(0,8000);
   }
 
   if(action==='decide'){
-    if(!args.run_id||!args.decision)return ' 请指定 run_id 和 decision';
-    var s3=_pipelineRuns[args.run_id];if(!s3||s3.status!=='waiting_report')return ' 流水线未处于等待决策状态';
+    if(!args.run_id||!args.decision)return '[ERR_CODE] MISSING_PARAM\n[PARAM] run_id/decision\n[MESSAGE] 请指定 run_id 和 decision\n[SUGGEST] 补充 run_id="xxx" decision="approve|revise|reroute|abort"';
+    var s3=_pipelineRuns[args.run_id];if(!s3||s3.status!=='waiting_report')return '[ERR_CODE] INVALID_STATE\n[PARAM] run_id\n[VALUE] '+args.run_id+'\n[MESSAGE] 流水线未处于等待决策状态\n[SUGGEST] 使用 pipeline action="status" run_id="'+args.run_id+'" 查看当前状态';
     var dec=args.decision,dDetail=args.decision_detail||{};
     s3.report_history.push({node_id:s3._reportNodeId,timestamp:Date.now(),decision:dec,detail:dDetail});
     if(dec==='approve'){
@@ -14613,11 +14658,11 @@ async function toolPipeline(args){
     return ' 决策已执行: '+dec+' | 流水线已重新启动';
   }
 
-  if(action==='pause'){var s4=_pipelineRuns[args.run_id];if(!s4)return ' 未找到';s4.status='paused';await _saveRun(args.run_id,s4);return ' 已暂停';}
-  if(action==='resume'){var s5=_pipelineRuns[args.run_id];if(!s5)return ' 未找到';s5.status='running';await _saveRun(args.run_id,s5);return ' 已恢复';}
-  if(action==='stop'){var s6=_pipelineRuns[args.run_id];if(!s6)return ' 未找到';s6.status='stopped';await _saveRun(args.run_id,s6);return ' 已停止';}
+  if(action==='pause'){var s4=_pipelineRuns[args.run_id];if(!s4)return '[ERR_CODE] NOT_FOUND\n[PARAM] run_id\n[VALUE] '+args.run_id+'\n[MESSAGE] 未找到运行实例\n[SUGGEST] 使用 pipeline action="list" 查看全部';s4.status='paused';await _saveRun(args.run_id,s4);return ' 已暂停: '+args.run_id+' |  使用 pipeline action="resume" run_id="'+args.run_id+'" 恢复';}
+  if(action==='resume'){var s5=_pipelineRuns[args.run_id];if(!s5)return '[ERR_CODE] NOT_FOUND\n[PARAM] run_id\n[VALUE] '+args.run_id+'\n[MESSAGE] 未找到运行实例\n[SUGGEST] 使用 pipeline action="list" 查看全部';s5.status='running';await _saveRun(args.run_id,s5);return ' 已恢复: '+args.run_id;}
+  if(action==='stop'){var s6=_pipelineRuns[args.run_id];if(!s6)return '[ERR_CODE] NOT_FOUND\n[PARAM] run_id\n[VALUE] '+args.run_id+'\n[MESSAGE] 未找到运行实例\n[SUGGEST] 使用 pipeline action="list" 查看全部';s6.status='stopped';await _saveRun(args.run_id,s6);return ' 已停止: '+args.run_id;}
   if(action==='checkpoint'){
-    var s7=_pipelineRuns[args.run_id];if(!s7)return ' 未找到';
+    var s7=_pipelineRuns[args.run_id];if(!s7)return '[ERR_CODE] NOT_FOUND\n[PARAM] run_id\n[VALUE] '+args.run_id+'\n[MESSAGE] 未找到运行实例\n[SUGGEST] 使用 pipeline action="list" 查看全部';
     var ckid='ckpt_'+Date.now();
     var snapshot={id:s7.id,pipeline_id:s7.pipeline_id,node_states:JSON.parse(JSON.stringify(s7.node_states)),context:JSON.parse(JSON.stringify(s7.context||{})),checkpoints:s7.checkpoints||[],started_at:s7.started_at};
     s7.checkpoints.push({id:ckid,timestamp:Date.now(),snapshot:snapshot});
@@ -14626,9 +14671,9 @@ async function toolPipeline(args){
     return ' 检查点已创建: '+ckid+' | 可恢复节点状态';
   }
   if(action==='restore'){
-    if(!args.run_id||!args.checkpoint_id)return ' 请指定 run_id 和 checkpoint_id';
-    try{var _ckRaw=await readFile('/pipelines/'+args.run_id+'/checkpoints/'+args.checkpoint_id+'.json');if(!_ckRaw)return ' 检查点文件不存在';var _ck=JSON.parse(_ckRaw);}
-    catch(e){return ' 读取检查点失败: '+e.message;}
+    if(!args.run_id||!args.checkpoint_id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] run_id/checkpoint_id\n[MESSAGE] 请指定 run_id 和 checkpoint_id\n[SUGGEST] 使用 pipeline action="checkpoint" run_id="xxx" 查看可用检查点';
+    try{var _ckRaw=await readFile('/pipelines/'+args.run_id+'/checkpoints/'+args.checkpoint_id+'.json');if(!_ckRaw)return '[ERR_CODE] NOT_FOUND\n[PARAM] checkpoint_id\n[VALUE] '+args.checkpoint_id+'\n[MESSAGE] 检查点文件不存在\n[SUGGEST] 检查 checkpoint_id 是否正确';var _ck=JSON.parse(_ckRaw);}
+    catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 读取检查点失败: '+e.message+'\n[SUGGEST] 检查点文件可能已损坏，请尝试其他检查点';}
     var _s=_pipelineRuns[args.run_id];
     if(!_s){_s=_ck;_s.checkpoints=_ck.checkpoints||[];_s.status='running';_pipelineRuns[args.run_id]=_s;}
     else{
@@ -14645,7 +14690,7 @@ async function toolPipeline(args){
       }
       _s.context=_ck.context||_s.context;_s.status='running';
     }
-    var _def=_pipelines[_s.pipeline_id];if(!_def)return ' 流水线定义丢失';
+    var _def=_pipelines[_s.pipeline_id];if(!_def)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 流水线定义丢失\n[SUGGEST] 流水线定义可能已被删除，请重新创建';
     _s.updated_at=Date.now();await _saveRun(args.run_id,_s);
     debugLogger.info(' 恢复检查点: '+args.checkpoint_id+' | 已完成: '+Object.values(_s.node_states).filter(function(n){return n.status==='completed';}).length+'节点');
     _pipelineTokenUsed=0; // ★ restore也重置流水线token计数
@@ -14653,7 +14698,7 @@ async function toolPipeline(args){
     return ' 检查点恢复中: '+args.run_id+' | 使用 pipeline run run_id="'+args.run_id+'" 阻塞等待';
   }
   if(action==='deliver'){
-    var s8=_pipelineRuns[args.run_id];if(!s8)return ' 未找到';
+    var s8=_pipelineRuns[args.run_id];if(!s8)return '[ERR_CODE] NOT_FOUND\n[PARAM] run_id\n[VALUE] '+args.run_id+'\n[MESSAGE] 未找到运行实例\n[SUGGEST] 使用 pipeline action="list" 查看全部';
     // 收集所有产出
     var delivery={};
     for(var nid in s8.node_states){var ns2=s8.node_states[nid];if(ns2.output)delivery[nid]=ns2.output;}
@@ -14662,8 +14707,8 @@ async function toolPipeline(args){
   }
 
   if(action==='delete'){
-    if(!args.pipeline_id)return ' 请指定 pipeline_id';
-    if(!_pipelines[args.pipeline_id]&&!store.definitions[args.pipeline_id])return ' 流水线不存在: '+args.pipeline_id;
+    if(!args.pipeline_id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] pipeline_id\n[MESSAGE] 请指定 pipeline_id\n[SUGGEST] 使用 pipeline action="list" 查看全部流水线';
+    if(!_pipelines[args.pipeline_id]&&!store.definitions[args.pipeline_id])return '[ERR_CODE] NOT_FOUND\n[PARAM] pipeline_id\n[VALUE] '+args.pipeline_id+'\n[MESSAGE] 流水线不存在\n[SUGGEST] 使用 pipeline action="list" 查看全部';
     var _delName=((_pipelines[args.pipeline_id]||store.definitions[args.pipeline_id]).name||'');
     delete _pipelines[args.pipeline_id];delete store.definitions[args.pipeline_id];
     await _savePipes(store);
@@ -14671,14 +14716,14 @@ async function toolPipeline(args){
   }
 
   if(action==='update'){
-    if(!args.pipeline_id)return ' 请指定 pipeline_id';
+    if(!args.pipeline_id)return '[ERR_CODE] MISSING_PARAM\n[PARAM] pipeline_id\n[MESSAGE] 请指定 pipeline_id\n[SUGGEST] 使用 pipeline action="list" 查看全部流水线';
     var _tgt=_pipelines[args.pipeline_id]||store.definitions[args.pipeline_id];
-    if(!_tgt)return ' 流水线不存在: '+args.pipeline_id;
+    if(!_tgt)return '[ERR_CODE] NOT_FOUND\n[PARAM] pipeline_id\n[VALUE] '+args.pipeline_id+'\n[MESSAGE] 流水线不存在\n[SUGGEST] 使用 pipeline action="list" 查看全部';
     if(args.name!==undefined)_tgt.name=args.name;
     if(args.description!==undefined)_tgt.description=args.description;
     if(args.dag){
       var _vd2=_validateDAG(args.dag);
-      if(!_vd2.valid)return ' DAG验证失败:\n'+_vd2.errors.join('\n');
+      if(!_vd2.valid)return '[ERR_CODE] INVALID_PARAM\n[PARAM] dag\n[MESSAGE] DAG 验证失败:\n'+_vd2.errors.join('\n')+'\n[SUGGEST] 检查 DAG 结构';
       var _oldNodes=_tgt.dag.nodes||{};
       var _newNodes=args.dag.nodes||{};
       for(var _kn in _newNodes){_oldNodes[_kn]=_newNodes[_kn];}
@@ -14697,9 +14742,9 @@ async function toolPipeline(args){
   }
 
   if(action==='overwrite'){
-    if(!args.pipeline_id||!args.dag)return ' 请指定 pipeline_id 和 dag';
+    if(!args.pipeline_id||!args.dag)return '[ERR_CODE] MISSING_PARAM\n[PARAM] pipeline_id/dag\n[MESSAGE] 请指定 pipeline_id 和 dag\n[SUGGEST] 补充 pipeline_id="xxx" dag={nodes:{...},edges:[...]}';
     var _vd3=_validateDAG(args.dag);
-    if(!_vd3.valid)return ' DAG验证失败:\n'+_vd3.errors.join('\n');
+    if(!_vd3.valid)return '[ERR_CODE] INVALID_PARAM\n[PARAM] dag\n[MESSAGE] DAG 验证失败:\n'+_vd3.errors.join('\n')+'\n[SUGGEST] 检查 DAG 结构';
     var _wasExisting=!!(_pipelines[args.pipeline_id]||store.definitions[args.pipeline_id]);
     _pipelines[args.pipeline_id]={id:args.pipeline_id,name:args.name||'',description:args.description||'',dag:args.dag,acceptance_metrics:args.acceptance_metrics||[],created_at:new Date().toISOString()};
     store.definitions[args.pipeline_id]=_pipelines[args.pipeline_id];
@@ -14707,7 +14752,7 @@ async function toolPipeline(args){
     return (_wasExisting?' 已覆盖: ':' 已创建: ')+'['+args.pipeline_id+'] '+_pipelines[args.pipeline_id].name;
   }
 
-  return '未知action: '+action;
+  return '[ERR_CODE] UNKNOWN_ACTION\n[PARAM] action\n[VALUE] '+action+'\n[MESSAGE] 不支持的 action\n[SUGGEST] 支持 create/update/list/run/status/get_report/decide';
 }
 
 // ===== reqalign 工具 =====
@@ -14716,7 +14761,7 @@ async function toolReqalign(args){
   var basePath='/projects/'+pid+'/requirements/';
 
   if(action==='analyze'){
-    if(!args.user_request)return ' 请提供 user_request';
+    if(!args.user_request)return '[ERR_CODE] MISSING_PARAM\n[PARAM] user_request\n[MESSAGE] 请提供 user_request\n[SUGGEST] 补充 user_request="用户需求描述"';
     // 存储原始需求
     await createFile(basePath+'initial_request.json',JSON.stringify({request:args.user_request,timestamp:new Date().toISOString()},null,2));
     // ★ LLM 分析需求模糊点
@@ -14741,14 +14786,14 @@ async function toolReqalign(args){
   }
 
   if(action==='submit_questions'){
-    if(!args.questions||!args.questions.length)return ' 请提供 questions 数组';
+    if(!args.questions||!args.questions.length)return '[ERR_CODE] MISSING_PARAM\n[PARAM] questions\n[MESSAGE] 请提供 questions 数组\n[SUGGEST] 补充 questions=[{question:"xxx",type:"text"}]';
     await createFile(basePath+'questions.json',JSON.stringify({questions:args.questions,round:1,timestamp:new Date().toISOString()},null,2));
     var qtext=args.questions.map(function(q,i){return (i+1)+'. '+q.question+(q.options?'\n   '+q.options.map(function(o,j){return String.fromCharCode(65+j)+') '+o;}).join('\n   '):'');}).join('\n\n');
     return ' 请回答以下问题以澄清需求:\n\n'+qtext+'\n\n 请逐条回答，用 reqalign action="check_convergence" project_id="'+pid+'" user_answers="..." 提交';
   }
 
   if(action==='check_convergence'){
-    if(!args.user_answers)return ' 请提供 user_answers';
+    if(!args.user_answers)return '[ERR_CODE] MISSING_PARAM\n[PARAM] user_answers\n[MESSAGE] 请提供 user_answers\n[SUGGEST] 补充 user_answers="逐条回答内容"';
     var _ansObj=args.user_answers;
     await createFile(basePath+'answers.json',JSON.stringify({answers:_ansObj,timestamp:new Date().toISOString()},null,2));
 
@@ -14801,14 +14846,14 @@ async function toolReqalign(args){
   }
 
   if(action==='generate_confirmation'){
-    if(!args.confirmation_text)return ' 请提供 confirmation_text';
+    if(!args.confirmation_text)return '[ERR_CODE] MISSING_PARAM\n[PARAM] confirmation_text\n[MESSAGE] 请提供 confirmation_text\n[SUGGEST] 补充 confirmation_text="确认书内容"';
     await createFile(basePath+'confirmation.json',JSON.stringify({text:args.confirmation_text,locked:false,timestamp:new Date().toISOString()},null,2));
     return ' 需求确认书已生成:\n\n'+args.confirmation_text.substring(0,5000)+'\n\n 请用户确认。确认后使用 reqalign action="lock" project_id="'+pid+'" 锁定需求。';
   }
 
   if(action==='lock'){
     var cf;try{cf=JSON.parse(await readFile(basePath+'confirmation.json'));}catch(e){}
-    if(!cf)return ' 未找到确认书，请先 generate_confirmation';
+    if(!cf)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 未找到确认书\n[SUGGEST] 请先执行 generate_confirmation';
     cf.locked=true;cf.locked_at=new Date().toISOString();
     await createFile(basePath+'confirmation.json',JSON.stringify(cf,null,2));
     return ' 需求已锁定 (项目: '+pid+')。可进入Phase 1: 使用 generatespec generate 生成开发文档。';
@@ -14820,7 +14865,7 @@ async function toolReqalign(args){
     try{status.confirmation=JSON.parse(await readFile(basePath+'confirmation.json'));}catch(e){}
     return ' 需求对齐状态: '+pid+'\n'+(status.confirmation&&status.confirmation.locked?' 已锁定':' 进行中');
   }
-  return '未知action: '+action;
+  return '[ERR_CODE] UNKNOWN_ACTION\n[PARAM] action\n[VALUE] '+action+'\n[MESSAGE] 不支持的 action\n[SUGGEST] 支持 analyze/submit_questions/check_convergence/generate_confirmation/lock/status';
 }
 
 // ===== generatespec 工具 =====
@@ -14829,7 +14874,7 @@ async function toolGeneratespec(args){
   var specPath='/projects/'+pid+'/spec/';
 
   if(action==='generate'){
-    if(!args.spec_content)return ' 请提供 spec_content(开发文档Markdown全文)';
+    if(!args.spec_content)return '[ERR_CODE] MISSING_PARAM\n[PARAM] spec_content\n[MESSAGE] 请提供 spec_content (开发文档Markdown全文)\n[SUGGEST] 补充 spec_content="完整Markdown文档"';
     await createFile(specPath+'v1_draft.md',args.spec_content);
     return ' 开发文档已生成 (项目: '+pid+')\n已保存到 '+specPath+'v1_draft.md\n\n 使用 generatespec action="review" project_id="'+pid+'" 提交审查。';
   }
@@ -14839,7 +14884,7 @@ async function toolGeneratespec(args){
     if(!draft){
       try{draft=await readFile(specPath+'FINAL.md');}catch(e){}
     }
-    if(!draft)return ' 未找到开发文档。请先 generate。';
+    if(!draft)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 未找到开发文档\n[SUGGEST] 请先执行 generatespec action="generate"';
 
     // ★ 调用子Agent审查（不预设评分）
     var reviewPrompt='审阅以下开发文档，检查:\n1. 模块划分是否合理/有无遗漏\n2. 验收标准是否可量化\n3. 接口契约是否完整无矛盾\n4. 约束条件是否现实可行\n\n## 评分参考\n0-3: 严重缺陷(模块缺失/矛盾)\n4-6: 有缺陷但不致命\n7-8: 基本完善\n9-10: 无问题\n\n## 开发文档\n'+draft.substring(0,12000);
@@ -14861,11 +14906,11 @@ async function toolGeneratespec(args){
       var rj=JSON.parse(reviewResult.content);
       if(rj.passed)return ' 开发文档审查通过 (评分:'+rj.score+')\n 使用 generatespec action="finalize" project_id="'+pid+'" 锁定文档。';
       return ' 审查发现 '+rj.issues.length+' 个问题:\n'+rj.issues.map(function(is,i){return (i+1)+'. ['+is.severity+'] '+is.description+'\n   建议: '+is.suggestion;}).join('\n')+'\n\n 使用 generatespec action="fix" project_id="'+pid+'" 修复后重新审查。';
-    }catch(e){return '审查结果: '+reviewResult.content.substring(0,3000);}
+    }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 审查结果解析失败\n[SUGGEST] 原始结果: '+reviewResult.content.substring(0,3000);}
   }
 
   if(action==='fix'){
-    if(!args.spec_content)return ' 请提供修复后的 spec_content';
+    if(!args.spec_content)return '[ERR_CODE] MISSING_PARAM\n[PARAM] spec_content\n[MESSAGE] 请提供修复后的 spec_content\n[SUGGEST] 补充 spec_content="修复后的Markdown全文"';
     var vn=2;
     try{var oldReview=JSON.parse(await readFile(specPath+'review.json'));vn=(oldReview._round||1)+1;}catch(e){}
     await createFile(specPath+'v'+vn+'_fixed.md',args.spec_content);
@@ -14876,7 +14921,7 @@ async function toolGeneratespec(args){
     var finalDraft;
     try{finalDraft=await readFile(specPath+'v2_fixed.md');}catch(e){}
     if(!finalDraft){try{finalDraft=await readFile(specPath+'v1_draft.md');}catch(e){}}
-    if(!finalDraft)return ' 未找到开发文档';
+    if(!finalDraft)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 未找到开发文档\n[SUGGEST] 请先执行 generatespec action="generate"';
     await createFile(specPath+'FINAL.md',finalDraft);
     return ' 开发文档已锁定 (项目: '+pid+')\n保存至 '+specPath+'FINAL.md\n\n 可进入Phase 2: 使用 pipeline create 构建DAG。开发文档需注入每个子Agent的system_prompt。';
   }
@@ -14888,7 +14933,7 @@ async function toolGeneratespec(args){
     try{s.final=!!(await readFile(specPath+'FINAL.md'));}catch(e){}
     return ' 开发文档状态: '+pid+'\n草稿: '+(s.draft?'':'')+' | 已审查: '+(s.reviewed?'':'')+' | 已锁定: '+(s.final?'':'');
   }
-  return '未知action: '+action;
+  return '[ERR_CODE] UNKNOWN_ACTION\n[PARAM] action\n[VALUE] '+action+'\n[MESSAGE] 不支持的 action\n[SUGGEST] 支持 generate/review/fix/finalize/status';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -14966,13 +15011,13 @@ async function toolSqlDb(args){
   var db;
   try{
     db=await Promise.race([_getSqlDb(),new Promise(function(_,rej){setTimeout(function(){rej(new Error('SQL加载超时(15s)'));},15000);})]);
-  }catch(e){return ' SQL数据库初始化失败: '+e.message;}
+  }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] SQL数据库初始化失败: '+e.message+'\n[SUGGEST] 检查数据库文件是否存在或重新初始化';}
 
   if(action==='query'){
-    if(!args.sql)return '请指定 sql 查询语句';
+    if(!args.sql)return '[ERR_CODE] MISSING_PARAM\n[PARAM] sql\n[MESSAGE] 请指定 sql 查询语句\n[SUGGEST] 补充 sql="SELECT * FROM table"';
     var sqlUp=args.sql.trim().toUpperCase();
     if(!sqlUp.startsWith('SELECT')&&!sqlUp.startsWith('PRAGMA')&&!sqlUp.startsWith('EXPLAIN')){
-      return ' query 仅支持 SELECT / PRAGMA / EXPLAIN。INSERT/UPDATE/DELETE/DDL请使用 action="exec"';
+      return '[ERR_CODE] INVALID_PARAM\n[PARAM] sql\n[MESSAGE] query 仅支持 SELECT / PRAGMA / EXPLAIN\n[SUGGEST] 如需 INSERT/UPDATE/DELETE/DDL 请使用 action="exec"';
     }
     try{
       var limit=args.limit||100;
@@ -14983,17 +15028,17 @@ async function toolSqlDb(args){
       stmt.free();
       var result={columns:columns,rows:rows,count:rows.length,truncated:count>=limit};
       return JSON.stringify(result,null,2);
-    }catch(e){return ' SQL查询失败: '+e.message+'\nSQL: '+(args.sql||'').substring(0,200);}
+    }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] SQL查询失败: '+e.message+'\n[SUGGEST] 检查 SQL 语法\nSQL: '+(args.sql||'').substring(0,200);}
   }
 
   if(action==='exec'){
-    if(!args.sql)return '请指定 sql 语句';
+    if(!args.sql)return '[ERR_CODE] MISSING_PARAM\n[PARAM] sql\n[MESSAGE] 请指定 sql 语句\n[SUGGEST] 补充 sql="SELECT * FROM table"';
     try{
       db.run(args.sql);
       await _saveSqlDb();
       var summary=args.sql.substring(0,120).replace(/\n/g,' ');
       return ' SQL已执行: '+summary+(args.sql.length>120?'...':'');
-    }catch(e){return ' SQL执行失败: '+e.message+'\nSQL: '+(args.sql||'').substring(0,200);}
+    }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] SQL执行失败: '+e.message+'\n[SUGGEST] 检查 SQL 语法\nSQL: '+(args.sql||'').substring(0,200);}
   }
 
   if(action==='schema'){
@@ -15002,22 +15047,22 @@ async function toolSqlDb(args){
       var stmt2=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
       while(stmt2.step()){var tVals=stmt2.get();var tName=tVals[0];var cols=[];var cs=db.prepare("PRAGMA table_info('"+tName.replace(/'/g,"''")+"')");var pragmaCols=cs.getColumnNames();while(cs.step()){var ci=cs.get();var ciObj={};for(var pc=0;pc<pragmaCols.length;pc++)ciObj[pragmaCols[pc]]=ci[pc];cols.push({name:ciObj.name,type:ciObj.type,pk:!!ciObj.pk,notNull:!!ciObj.notnull,default:ciObj.dflt_value});}cs.free();tables.push({table:tName,columns:cols,rowCount:_countTable(db,tName)});}
       stmt2.free();
-      if(!tables.length)return ' 数据库为空，尚无表。使用 create_table 建表或 exec 执行 CREATE TABLE。';
+      if(!tables.length)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 数据库为空，尚无表\n[SUGGEST] 使用 sql_db action="create_table" 建表或 action="exec" 执行 CREATE TABLE';
       return JSON.stringify(tables,null,2);
-    }catch(e){return ' 读取schema失败: '+e.message;}
+    }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 读取 schema 失败: '+e.message+'\n[SUGGEST] 检查数据库文件完整性';}
   }
 
   if(action==='create_table'){
-    if(!args.table||!args.columns||!args.columns.length)return '请指定 table 表名和 columns 列定义';
+    if(!args.table||!args.columns||!args.columns.length)return '[ERR_CODE] MISSING_PARAM\n[PARAM] table/columns\n[MESSAGE] 请指定 table 表名和 columns 列定义\n[SUGGEST] 补充 table="表名" columns=[{name:"id",type:"INTEGER",pk:true}]';
     var colDefs=args.columns.map(function(c){return c.name+' '+((c.type||'TEXT').toUpperCase())+(c.pk?' PRIMARY KEY':'')+(c.notNull?' NOT NULL':'')+(c.default!=null?' DEFAULT '+JSON.stringify(c.default):'');}).join(', ');
     try{db.run('CREATE TABLE IF NOT EXISTS '+args.table+' ('+colDefs+')');await _saveSqlDb();return ' 表已创建: '+args.table+' ('+args.columns.length+'列)';}
-    catch(e){return ' 建表失败: '+e.message;}
+    catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 建表失败: '+e.message+'\n[SUGGEST] 检查列定义语法';}
   }
 
   if(action==='drop_table'){
-    if(!args.table)return '请指定 table 表名';
+    if(!args.table)return '[ERR_CODE] MISSING_PARAM\n[PARAM] table\n[MESSAGE] 请指定 table 表名\n[SUGGEST] 补充 table="表名"';
     try{db.run('DROP TABLE IF EXISTS '+args.table);await _saveSqlDb();return ' 表已删除: '+args.table;}
-    catch(e){return ' 删表失败: '+e.message;}
+    catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 删表失败: '+e.message+'\n[SUGGEST] 检查表名是否存在';}
   }
 
   if(action==='export'){
@@ -15031,9 +15076,9 @@ async function toolSqlDb(args){
   }
 
   if(action==='import'){
-    if(!args.filename)return '请指定 filename 已上传的.db文件';
+    if(!args.filename)return '[ERR_CODE] MISSING_PARAM\n[PARAM] filename\n[MESSAGE] 请指定 filename\n[SUGGEST] 补充 filename="database.db"（已上传到 /uploads/ 的文件）';
     var content=await readFile('/uploads/'+args.filename);
-    if(!content)return ' 文件不存在: '+args.filename;
+    if(!content)return '[ERR_CODE] NOT_FOUND\n[PARAM] filename\n[VALUE] '+args.filename+'\n[MESSAGE] 文件不存在\n[SUGGEST] 先上传文件到 /uploads/';
     var arrBuf;
     if(content.indexOf('data:')===0){var ib64=content.split(',')[1];var ibin=atob(ib64);arrBuf=new Uint8Array(ibin.length);for(var ii=0;ii<ibin.length;ii++)arrBuf[ii]=ibin.charCodeAt(ii);}
     else{arrBuf=new TextEncoder().encode(content);}
@@ -15211,9 +15256,9 @@ async function toolSkillManager(args){
 
   // ── query：语义搜索技能 ──
   if(action==='query'){
-    if(!args.query)return '请指定 query 搜索描述。示例: skill_manager action="query" query="代码分析"';
+    if(!args.query)return '[ERR_CODE] MISSING_PARAM\n[PARAM] query\n[MESSAGE] 请指定 query 搜索描述\n[SUGGEST] 补充 query="关键词"';
     var limit=args.limit||5;
-    if(allIds.length===0)return '技能库为空。你可以建议用户通过设置面板上传Skill JSON文件来添加技能。';
+    if(allIds.length===0)return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 技能库为空\n[SUGGEST] 通过设置面板上传 Skill JSON 文件来添加技能';
     var queryEmb=null;
     try{var resp=await sendToTaskWorker('embed',{text:args.query.substring(0,500)});
       if(resp&&resp.data&&Array.isArray(resp.data)&&resp.data.length===384)queryEmb=resp.data;
@@ -15266,8 +15311,11 @@ async function toolSkillManager(args){
       }
     }
     scored.sort(function(a,b){return b.score-a.score;});
+    // 按 ID 去重（防止同一技能重复出现）
+    var _seenIds={};
+    scored=scored.filter(function(item){if(_seenIds[item.id])return false;_seenIds[item.id]=true;return true;});
     var top=scored.slice(0,limit);
-    if(!top.length)return '未找到与「'+args.query+'」相关的技能。使用 skill_manager list 查看全部技能。';
+    if(!top.length)return '[ERR_CODE] NOT_FOUND\n[PARAM] query\n[VALUE] '+args.query+'\n[MESSAGE] 未找到相关技能\n[SUGGEST] 使用 skill_manager list 查看全部技能';
     var lines=['##  技能搜索: '+args.query+' (前'+top.length+'条)\n'];
     for(var j=0;j<top.length;j++){
       var r=top[j];
@@ -15291,7 +15339,7 @@ async function toolSkillManager(args){
 
   if(action==='list'){
     if(allIds.length===0){
-      return ' 技能库为空。你可以建议用户通过设置面板上传Skill JSON文件来添加技能。';
+    return '[ERR_CODE] NOT_FOUND\n[MESSAGE] 技能库为空\n[SUGGEST] 通过设置面板上传 Skill JSON 文件来添加技能';
     }
     var lines=[];
     lines.push('##  全部技能列表 ('+allIds.length+'个)\n');
@@ -15322,7 +15370,7 @@ async function toolSkillManager(args){
   if(action==='set'){
     var targetId=(args.id||'').trim();
     if(!targetId){
-      return ' 请指定技能ID。先用 `skill_manager action="query" query="关键词"` 搜索或 `skill_manager action="list"` 查看全部，然后 `skill_manager action="set" id="技能ID"` 激活。';
+      return '[ERR_CODE] MISSING_PARAM\n[PARAM] id\n[MESSAGE] 请指定技能 ID\n[SUGGEST] 先用 skill_manager action="query" query="关键词" 搜索，或 skill_manager list 查看全部';
     }
     var found=null;
     for(var i=0;i<allIds.length;i++){
@@ -15334,7 +15382,7 @@ async function toolSkillManager(args){
       }
     }
     if(!found){
-      return ' 未找到技能 `'+targetId+'`。可用ID: '+allIds.map(function(k){
+      return '[ERR_CODE] NOT_FOUND\n[PARAM] id\n[VALUE] '+targetId+'\n[MESSAGE] 未找到技能\n[SUGGEST] 可用ID: '+allIds.map(function(k){
         var s=skills[k];return '`'+(s.id||k.replace('.json',''))+'`';
       }).join(', ');
     }
@@ -15358,7 +15406,7 @@ async function toolSkillManager(args){
     return ' 已卸载全部激活技能 (之前有 '+prevCount+' 个激活)。现在所有技能的prompt_fragment都不会注入system prompt。使用 `skill_manager action="set" id="技能ID"` 重新激活。';
   }
 
-  return '未知action: '+action;
+  return '[ERR_CODE] UNKNOWN_ACTION\n[PARAM] action\n[VALUE] '+action+'\n[MESSAGE] 不支持的 action\n[SUGGEST] 支持 query/list/set/reset';
 }
 
 // 持久化 activeSkillIds 到当前对话 IndexedDB 记录
@@ -15422,7 +15470,18 @@ window.downloadSkill=function(skillId){
 
 window.deleteSkill=async function(skillId){
   var skills=skillCache.skills||{};
-  var s=skills[skillId];
+  // 查找: 先按原名(可能带 /skills/ 前缀)，再按 id 字段匹配
+  var filename=skillId;
+  if(!filename.endsWith('.json'))filename=filename+'.json';
+  var s=skills[filename]||skills['/skills/'+filename];
+  if(!s){
+    var allKeys=Object.keys(skills);
+    for(var dk=0;dk<allKeys.length;dk++){
+      if(skills[allKeys[dk]].id===skillId||skills[allKeys[dk]].id===filename.replace('.json','')){
+        filename=allKeys[dk];s=skills[allKeys[dk]];break;
+      }
+    }
+  }
   if(!s){showToast('技能不存在','error');return;}
   var confirmed=await showConfirmDialog('确定删除技能「'+(s.name||skillId)+'」？此操作不可撤销。','删除技能');
   if(!confirmed)return;
@@ -15430,8 +15489,10 @@ window.deleteSkill=async function(skillId){
     var indexContent=await readFile('/skills/current_version.json');
     if(!indexContent){showToast('技能索引不存在','error');return;}
     var index=JSON.parse(indexContent);
-    index.active_skills=(index.active_skills||[]).filter(function(f){return f!==skillId;});
-    await deleteFile('/skills/'+skillId);
+    index.active_skills=(index.active_skills||[]).filter(function(f){return f!==filename&&f!=='/skills/'+filename&&f!==skillId;});
+    // filename 可能带 /skills/ 前缀，确保删除正确路径
+    var deletePath=filename.indexOf('/skills/')===0?filename:'/skills/'+filename;
+    await deleteFile(deletePath);
     index.version=(index.version||0)+1;
     index.updated_at=new Date().toISOString();
     await updateFile('/skills/current_version.json',JSON.stringify(index,null,2));
@@ -15455,10 +15516,18 @@ async function refreshSkillCache(){
     var jsonFiles=allSkillFiles.filter(function(f){
       return f.endsWith('.json') && f.indexOf('current_version')===-1 && f.indexOf('_usage_stats')===-1;
     });
+    var _loadedSkillIds={};
     for(var i=0;i<jsonFiles.length;i++){
       try{
         var content=await readFile(jsonFiles[i]);
-        if(content)skills[jsonFiles[i]]=JSON.parse(content);
+        if(content){
+          var _parsed=JSON.parse(content);
+          // 按 skill.id 去重（防止进化系统产生的大量重复技能文件）
+          var _pid=_parsed.id||jsonFiles[i].replace('.json','');
+          if(_loadedSkillIds[_pid])continue;
+          _loadedSkillIds[_pid]=true;
+          skills[jsonFiles[i]]=_parsed;
+        }
       }catch(e){}
     }
     // 尝试从当前对话恢复 activeSkillIds；若无则从索引文件迁移（向后兼容），否则空数组
@@ -15572,25 +15641,7 @@ function editSkill(filename){
   skillEditForm.scrollIntoView({behavior:'smooth',block:'center'});
 }
 
-async function deleteSkill(filename){
-  var s=skillCache.skills[filename];
-  var name=s?s.name||filename:filename;
-  var confirmed=await showConfirmDialog('确定删除技能「'+name+'」？','确认删除');
-  if(!confirmed)return;
-  try{
-    await deleteFile('/skills/'+filename);
-    var indexContent=await readFile('/skills/current_version.json');
-    if(indexContent){
-      var index=JSON.parse(indexContent);
-      index.active_skills=(index.active_skills||[]).filter(function(f){return f!==filename;});
-      index.version=(index.version||0)+1;
-      index.updated_at=new Date().toISOString();
-      await updateFile('/skills/current_version.json',JSON.stringify(index,null,2));
-    }
-    await refreshSkillCache();
-    showToast('技能已删除 ','success');
-  }catch(e){showToast('删除失败: '+e.message,'error');}
-}
+// 已迁移至 window.deleteSkill (行15472)
 
 function downloadSkill(filename){
   var s=skillCache.skills[filename];
@@ -18667,6 +18718,9 @@ function getTriggeredSkillFragments(userText){
     if(alreadyInjected)continue;
     names.push('`'+sid+'`('+(sk.name||keys[i])+')');
   }
+  // 去重（同一技能触发多次时不重复推荐）
+  var _seenRec={};
+  names=names.filter(function(n){if(_seenRec[n])return false;_seenRec[n]=true;return true;});
   if(names.length>0){
     fragments.push(' 未激活相关技能(用 skill_manager set 激活): '+names.join(', '));
   }
@@ -20914,8 +20968,8 @@ function initEventBindings(){
       fp=bubbles.length-1;
       for(var fi=bubbles.length-1;fi>=0;fi--){if(bubbles[fi].classList.contains('user')){fp=fi;break;}}
     }
-    // ★ 始终以当前分支为父（嵌套分叉），不再复用curBr.parentId
-    var pid=curId;
+    // ★ 同级分叉：新分支与当前分支共享父级，使分支间可左右导航（替代原嵌套分叉）
+    var pid=curBr.parentId||curId;
     // 保存旧分支items并删除forkPoint之后的DOM气泡
     bd._branches[curId].items=_collectBubbles(msgList);
     for(var bi=bubbles.length-1;bi>fp;bi--){
