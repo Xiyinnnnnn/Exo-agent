@@ -654,7 +654,7 @@ button,label,[role="button"],.file-upload-btn{
   <div class="toolbar-left">
     <span class="app-logo">Exo</span>
     <span class="status-dot idle" id="statusDot" title="系统就绪"></span>
-    <span class="token-counter" id="tokenCounter" title="当前上下文累计Token量，点击触发压缩">0 tok</span>
+    <span class="token-counter" id="tokenCounter" title="当前上下文累计Token量，点击触发压缩" onclick="_triggerManualCompression()">0 tok</span>
   </div>
   <div class="toolbar-right">
     <button id="btnToggleSidebar" title="对话历史" aria-label="对话历史">
@@ -781,8 +781,6 @@ button,label,[role="button"],.file-upload-btn{
         <div class="settings-field"><label for="settingDailyLimit">每日 LLM 调用上限</label><input type="number" id="settingDailyLimit" value="100000" min="10" max="100000"></div>
         <div class="settings-field"><label for="settingDailyTokenLimit">每日总Token消耗量</label><input type="number" id="settingDailyTokenLimit" value="222000000" min="10000" max="1000000000" step="10000" onchange="var v=parseInt(this.value);settings.daily_token_limit=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);updateTokenDisplay();"> <div class="help-text">基于API返回的usage信息精确计费。当API未返回usage时自动回退为字符估算。设为任意值控制每日消耗上限。</div></div>
         <div class="settings-field"><label>Token消耗进度</label><div>已消耗: <strong id="tokenUsedLabel">0</strong> / <span id="tokenTotalLabel">222M</span> (<span id="tokenUsedPercent">0%</span>)</div><div class="progress-bar"><div class="fill" id="tokenBar" style="width:0%"></div></div></div>
-        <div class="settings-field" style="border-top:1px solid var(--color-border);padding-top:10px;margin-top:4px"><label style="font-weight:600;color:var(--color-primary)"> API调用日志（当前对话·每轮用量）</label><button class="btn btn-outline btn-sm" onclick="var el=document.getElementById('apiUsageLogBody');if(el){el.style.display=el.style.display==='none'?'block':'none';} if(typeof _renderApiUsageLog==='function')_renderApiUsageLog();" style="float:right;font-size:11px;padding:2px 8px"> 刷新</button></div>
-        <div id="apiUsageLogBody" style="display:none;max-height:200px;overflow-y:auto;font-size:11px;line-height:1.4;background:var(--color-bg-secondary);border-radius:6px;padding:6px;margin-top:4px;font-family:monospace"><em style="color:var(--color-text-secondary)">点击「刷新」加载日志</em></div>
         <div class="settings-field"><label>用户服务保留比例: <span id="reserveLabel">50%</span></label><input type="range" id="settingReserveRatio" min="0" max="50" value="50" step="5"><div class="help-text">此部分配额仅用于您的对话，后台进化不可使用</div></div>
         <div class="settings-field"><label>当前用量</label><div>已用: <strong id="budgetUsed">0</strong> / <span id="budgetTotal">100000</span></div><div class="progress-bar"><div class="fill" id="budgetBar" style="width:0%"></div></div><div class="help-text">用户可用: <span id="budgetUser">50000</span> | 进化可用: <span id="budgetEvo">50000</span></div></div>
         <div class="settings-field" style="border-top:1px solid var(--color-border);padding-top:10px;margin-top:4px"><label style="font-weight:600;color:var(--color-primary)"> MCTS 搜索预算</label></div>
@@ -3905,13 +3903,14 @@ var _convTokenAccumulator={};
 function _updateTokenAccumulator(convId, tokens){
   convId=convId||currentConversationId;
   if(arguments.length===1||tokens===null||tokens===undefined){
-    // ★ 从当前对话的消息数组累加每条消息的 _tokens（API精确值），天然对话隔离
+    // ★ 从当前对话的消息数组累加每条消息的 _tokens（API精确值）
+    //   无 _tokens 的消息贡献 0（等下次 API 返回后被标记）
     var msgs=window._persistentMessages&&window._persistentMessages[convId];
     if(!msgs||!msgs.length){_convTokenAccumulator[convId]=0;return;}
     var total=0;
     for(var i=0;i<msgs.length;i++){
       if(typeof msgs[i]._tokens==='number')total+=msgs[i]._tokens;
-      else total+=_estimateTokens(msgs[i].content||'');
+      // ★ 无精确 _tokens 时不估算，等 _tagMessageTokens 标记
     }
     _convTokenAccumulator[convId]=total;
   }else{
@@ -3977,6 +3976,10 @@ function _appendToApiUsageLog(convId,entry){
   if(!convId)return;
   if(!_convApiUsageLog[convId])_convApiUsageLog[convId]=[];
   _convApiUsageLog[convId].push(entry);
+  /* ★ 每次API调用记录丢到debug日志 */
+  if(typeof debugLogger!=='undefined'&&debugLogger.info){
+    debugLogger.info('API调用: P='+(entry.prompt_tokens||'?')+' C='+(entry.completion_tokens||'?')+' T='+(entry.total_tokens||'?')+' | msg='+(entry.message_count||'?')+' | conv='+convId.slice(-8));
+  }
   _persistApiUsageLog(convId).catch(function(){});
 }
 async function _persistApiUsageLog(convId){
@@ -4040,7 +4043,6 @@ async function _triggerManualCompression(){
   var cs=_ensureConvState(convId);
   if(cs&&cs.isProcessing){showToast('正在处理中，无法压缩','warning');return;}
   var msgs=window._persistentMessages&&window._persistentMessages[convId];
-  // ★ 回退：_persistentMessages 为空（如页面刷新后）→ 从分支数据读取
   if(!msgs){
     var _bd=_getBranchData(convId);
     var _br=_bd._branches[_bd._currentBranchId];
@@ -4061,12 +4063,22 @@ async function _triggerManualCompression(){
     var compressed=await _compressOldMessages(msgs,0);
     clearInterval(dotTimer);
     if(compressed){
-      if(!window._persistentMessages)window._persistentMessages={}; window._persistentMessages[convId]=compressed;
+      if(!window._persistentMessages)window._persistentMessages={};
+      window._persistentMessages[convId]=msgs;
+      var _archiveMsg=compressed[compressed.length-1];
+      if(_archiveMsg&&_archiveMsg._injected){
+        for(var _ai=0;_ai<msgs.length;_ai++){
+          if(msgs[_ai]._injected&&msgs[_ai].content&&msgs[_ai].content.indexOf('[系统归档]')>=0){
+            msgs.splice(_ai,1);break;
+          }
+        }
+        msgs.push(_archiveMsg);
+      }
       _updateTokenAccumulator(convId);
       _updateToolbarTokenDisplay();
       _saveTokenCounts();
       toast.className='toast success';
-      toast.textContent='上下文已成功压缩 → '+compressed.length+' 条消息';
+      toast.textContent='上下文已成功压缩 → 标记 '+msgs.length+' 条消息（含 '+(msgs.length-compressed.length+1)+' 条旧消息已过期）';
     }else{
       toast.className='toast info';
       toast.textContent='当前上下文无需压缩';
@@ -4083,6 +4095,8 @@ async function _triggerManualCompression(){
   },3000);
   _compressingLock=false;
 }
+// ★ 暴露给全局 onclick 调用（IIFE 内函数不会自动挂到 window）
+window._triggerManualCompression=_triggerManualCompression;
 
 /* ===== 定时刷新Token显示 + 启动 ===== */
 function _startTokenDisplayTimer(){
@@ -4252,28 +4266,29 @@ async function _compressOldMessages(messages,modelMaxTokens){
   var rawText=compressItems.join('\n---\n');
 
   // ★ 工具感知摘要提示 + 动态 max_tokens（最大384，按需缩减）
-  var systemPrompt='[ROLE] 结构化三通道摘要生成器 | [LANG] zh-CN\n'+
+  var systemPrompt='[ROLE] 结构化摘要生成器 | [LANG] zh-CN\n'+
     '[THINK] ▸ P1 扫描轮次 — 按 user/assistant/tool 分布\n'+
-    '▸ P2 提取3通道 — 执行迹(trace)/推理链(chain)/关键数据(data)\n'+
-    '▸ P3 按通道组织 — trace+chain+data 交错排列保持时序\n'+
+    '▸ P2 提取4通道 — 执行迹/推理链/关键数据/待办\n'+
+    '▸ P3 按通道组织，保持时序\n'+
     '▸ P4 交叉去重 — 同类信息合并，保留路径/ID/exitCode\n'+
     '[MUST] 每工具结果必含exitCode或路径。关键数据必标来源。推理链保留决策原因。\n'+
     '[MUST_NOT] 不编造不存在的工具调用。不篡改原始数值。不遗漏已完成的步骤。不在摘要中引入新信息。\n'+
-    '[OUTPUT] 三通道Markdown | [MAX_TOKENS] 1200\n'+
+     '[OUTPUT] 四通道标记格式 | [MAX_TOKENS] 8000\n'+
     '[OUTPUT_FORMAT]\n'+
-    '## 执行迹 (Trace)\n- [工具名] 操作 | exitCode:0/路径\n\n'+
-    '## 推理链 (Chain)\n- [决策] 选择理由/方案对比 | score\n\n'+
-    '## 关键数据 (Data)\n- 指标名: 值 (来源/时间)\n\n'+
-    '## 待办 (Open)\n- 未完成/待处理\n'+
-    '<EXAMPLE>\n'+
-    '## 执行迹 (Trace)\n- [search] 2025GDP增长率 | 获取国家统计局页面\n- [code_runner] /analysis.py | exitCode:0 | 输出: 增长率3.2%\n\n'+
-    '## 推理链 (Chain)\n- [决策] 因search数据不全，改用calculator从原始数据重算\n- [决策] 方案A分数0.65 < 方案B分数0.82，选B\n\n'+
-    '## 关键数据 (Data)\n- GDP增长率: 3.2% (国家统计局, 2025)\n- 温度阈值: 80°C (用户要求)\n\n'+
-    '## 待办 (Open)\n- 未完成：暂无\n'+
+     '〈执行迹〉\n- [工具名] 操作 | exitCode:0/路径\n\n'+
+     '〈推理链〉\n- [决策] 选择理由/方案对比\n\n'+
+     '〈关键数据〉\n- 指标名: 值 (来源)\n\n'+
+     '〈待办〉\n- 未完成/待处理\n'+
+     '<EXAMPLE>\n'+
+     '〈执行迹〉\n- [search] 2025GDP增长率 | 获取国家统计局页面\n- [code_runner] /analysis.py | exitCode:0 | 输出: 3.2%\n\n'+
+     '〈推理链〉\n- [决策] 因search数据不全，改用calculator从原始数据重算\n\n'+
+     '〈关键数据〉\n- GDP增长率: 3.2% (国家统计局, 2025)\n- 温度阈值: 80°C (用户要求)\n\n'+
+     '〈待办〉\n- 未完成：暂无\n'+
     '</EXAMPLE>\n'+
     '<REMINDER> 严格遵循OUTPUT_FORMAT。不编造数据。不遗漏关键信息。</REMINDER>';
   var _compInputEst=_estimateTokens(systemPrompt+rawText);
-  var _compMaxTokens=Math.min(2000,Math.max(400,1048565-_compInputEst-200));
+
+  var _compMaxTokens=Math.min(8000,Math.max(400,1048565-_compInputEst-200));
 
   try{
     var msgs=[{role:'system',content:systemPrompt},{role:'user',content:'请压缩以下对话历史：\n\n'+rawText}];
@@ -4306,10 +4321,10 @@ async function _compressOldMessages(messages,modelMaxTokens){
       if(toKeep[k]._sentCount)_clean._sentCount=toKeep[k]._sentCount;
       compressed.push(_clean);
     }
-    // ★ 摘要以 user 角色追加到保留消息之后（不产生 system），system 由外部调用方维护
+    // ★ 归档注入：以 user 角色追加到保留消息之后（非当前指令，仅供查看）
     var _sumText=summary.trim();
     if(_sumText){
-      compressed.push({role:'user',content:'[历史对话摘要] '+_sumText,_injected:true});
+      compressed.push({role:'user',content:'[系统归档] '+_sumText,_injected:true});
     }
 
     // ★ 极端回退：摘要+保留仍超限 → 丢弃最旧消息直到安全
@@ -4336,6 +4351,10 @@ async function _compressOldMessages(messages,modelMaxTokens){
       }
     }
 
+    // ★ 被压缩的旧消息标记 token=0，不删消息只标记过期
+    for(var _zti=0;_zti<messages.length-keepCount;_zti++){
+      if(messages[_zti]&&!messages[_zti]._injected)messages[_zti]._tokens=0;
+    }
     debugLogger.info(' 智能压缩: '+messages.length+'条→'+compressed.length+'条 | est:'+totalEst+'→~'+_compEst+' | 触发:'+limit+' | 保留'+keepCount+'条');
     compressed._estTokens = _compEst;
     return compressed;
@@ -4344,34 +4363,59 @@ async function _compressOldMessages(messages,modelMaxTokens){
 
 // ★ 用API返回的精确 prompt_tokens 按字符比例分配，给每条消息打上 _tokens 标签
 //    后续压缩时优先使用 _tokens（精确），回退到字符估算
-  function _utf8Len(str){return (new TextEncoder().encode(str||'')).length;}
+  function _utf8Len(str){if(typeof str!=='string')str=str?String(str):'';return (new TextEncoder().encode(str)).length;}
   function _tagMessageTokens(messages, apiUsage){
   if(!apiUsage||!Array.isArray(messages)||messages.length===0)return;
   var promptTokens=apiUsage.prompt_tokens;
   if(typeof promptTokens!=='number'||promptTokens<=0)return;
-  // ★ 增量标记：只给还没有 _tokens 的消息分配，已有标记的不再覆盖
-  //   这样每轮 API 调用的 prompt_tokens 只分配到本轮新增的消息上，
-  //   保留旧消息的上一轮标记值，实现「按API调用步长」精确追踪。
+  // ★ 安全获取一条消息的 UTF-8 字节数，兼容：
+  //    纯文本(string) / vision array / null / 非标准格式
+  function _msgBytes(m){
+    if(!m)return 0;
+    var total=0;
+    var c=m.content;
+    if(c===null||c===undefined){/* 跳过 */}
+    else if(typeof c==='string'){total+=_utf8Len(c);}
+    else if(Array.isArray(c)){
+      for(var _pi=0;_pi<c.length;_pi++){
+        var _part=c[_pi];
+        if(_part&&_part.type==='text'&&typeof _part.text==='string')total+=_utf8Len(_part.text);
+        // image / audio 等不贡献 prompt token 估算
+      }
+    }else{total+=_utf8Len(String(c));}
+    if(m.reasoning_content)total+=_utf8Len(m.reasoning_content);
+    if(m.tool_calls){
+      for(var _tj=0;_tj<m.tool_calls.length;_tj++){
+        var _tc=m.tool_calls[_tj];
+        if(!_tc||!_tc.function)continue;
+        if(typeof _tc.function.name==='string')total+=_utf8Len(_tc.function.name);
+        if(typeof _tc.function.arguments==='string')total+=_utf8Len(_tc.function.arguments);
+      }
+    }
+    return total;
+  }
+  // ★ 第一遍：扫描区分已标记/未标记/过期消息
+  //   已过期（_tokens<=0）→ 不参与 ratio 计算，不重新标记
+  //   已标记（_tokens>0）  → 保留原值，参与 ratio 分母但不被覆盖
+  //   未标记（_tokens===undefined）→ 加入 untagged，等待分配
+  var totalAllBytes=0;
   var untagged=[];
-  var totalUntaggedChars=0;
   for(var i=0;i<messages.length;i++){
-    var m=messages[i];
-    if(m._tokens!==undefined&&m._tokens>0)continue; // 已有标记→跳过
-    untagged.push(i);
-    totalUntaggedChars+=_utf8Len(m.content);
-    if(m.reasoning_content)totalUntaggedChars+=_utf8Len(m.reasoning_content);
-    if(m.tool_calls){for(var j=0;j<m.tool_calls.length;j++){var tc=m.tool_calls[j];totalUntaggedChars+=(tc.function?_utf8Len(tc.function.name)+_utf8Len(tc.function.arguments):0);}}
+    var _m=messages[i];
+    if(_m._tokens!==undefined&&_m._tokens<=0)continue; // 已过期→跳过
+    totalAllBytes+=_msgBytes(_m);
+    if(_m._tokens===undefined)untagged.push(i); // 只加真正未标记的
   }
   if(untagged.length===0)return;
-  if(totalUntaggedChars<=0)return;
-  var ratio=promptTokens/totalUntaggedChars;
+  if(totalAllBytes<=0)return;
+  var ratio=promptTokens/totalAllBytes;
+  // ★ 第二遍：只给未标记的消息分配
   for(var k=0;k<untagged.length;k++){
     var idx=untagged[k];
     var m=messages[idx];
-    var chars=_utf8Len(m.content);
-    if(m.reasoning_content)chars+=_utf8Len(m.reasoning_content);
-    if(m.tool_calls){for(var j=0;j<m.tool_calls.length;j++){var tc=m.tool_calls[j];chars+=(tc.function?_utf8Len(tc.function.name)+_utf8Len(tc.function.arguments):0);}}
-    m._tokens=Math.max(1,Math.round(chars*ratio));
+    var bytes=_msgBytes(m);
+    if(bytes<=0){m._tokens=0;continue;}
+    m._tokens=Math.max(1,Math.round(bytes*ratio));
   }
   // ★ 记录本次 API 调用 usage 到日志
   if(typeof currentConversationId!=='undefined'&&currentConversationId){
@@ -6444,15 +6488,24 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
     dailyTokenUsed = 0;
     _dailyTokenDate = todayStr;
   }
-  // ★ 优先使用API返回的精确usage信息（OpenAI兼容格式）
+  // ★ 增量计算：只累加本次新增的token，而非全量（修复累积对话中重复计数bug）
+  //   · prompt_tokens → 记录每轮累计值，delta = 本轮累计 - 上轮累计（即新加入的prompt内容）
+  //   · completion_tokens → 每次都是全新的，直接加
   var tokensToAdd = 0;
   var sourceLabel = '';
   if (apiUsage && typeof apiUsage.total_tokens === 'number' && apiUsage.total_tokens > 0) {
-    tokensToAdd = apiUsage.total_tokens;
-    sourceLabel = ' (API精确)';
+    if(!window._lastApiPromptTokens) window._lastApiPromptTokens = {};
+    var convKey = currentConversationId || '__default__';
+    var lastPrompt = window._lastApiPromptTokens[convKey] || 0;
+    var curPrompt = apiUsage.prompt_tokens || 0;
+    var curComp = apiUsage.completion_tokens || (apiUsage.total_tokens - curPrompt) || 0;
+    var promptDelta = Math.max(0, curPrompt - lastPrompt);
+    tokensToAdd = promptDelta + curComp;
+    window._lastApiPromptTokens[convKey] = curPrompt;
+    sourceLabel = ' (API增量)';
   } else if (apiUsage && typeof apiUsage.prompt_tokens === 'number' && typeof apiUsage.completion_tokens === 'number') {
     tokensToAdd = apiUsage.prompt_tokens + apiUsage.completion_tokens;
-    sourceLabel = ' (API精确)';
+    sourceLabel = ' (API精确-旧路径)';
   } else {
     var totalChars = 0;
     if (Array.isArray(messages)) {
@@ -6464,13 +6517,18 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
     tokensToAdd = _estimateTokensFromChars(totalChars);
     sourceLabel = ' (估算)';
   }
+  // ★ 兜底：增量异常（≤0）时改用 full total_tokens
+  if(tokensToAdd <= 0 && apiUsage && apiUsage.total_tokens > 0){
+    tokensToAdd = apiUsage.total_tokens;
+    sourceLabel = ' (API总-回退)';
+  }
   dailyTokenUsed += tokensToAdd;
   saveDailyUsage();
   updateTokenDisplay();
   // ★ Token消耗日志：API精确计费每次都记录；估算按10%节流
   var tokenLimit = settings.daily_token_limit || 222000000;
   var tokenPct = Math.round(dailyTokenUsed / tokenLimit * 100);
-  var isPrecise = (sourceLabel.indexOf('精确') >= 0);
+  var isPrecise = (sourceLabel.indexOf('增量') >= 0);
   if (isPrecise && tokenPct >= 50 || tokenPct >= 90) {
     var usedStr = dailyTokenUsed >= 1000000 ? (dailyTokenUsed / 1000000).toFixed(1) + 'M' : dailyTokenUsed.toLocaleString();
     var limitStr = tokenLimit >= 1000000 ? (tokenLimit / 1000000).toFixed(0) + 'M' : tokenLimit.toLocaleString();
@@ -6481,6 +6539,7 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
     _lastTokenWarning = Date.now();
     showToast(' 每日Token消耗已达 ' + tokenPct + '%', 'warning', 5000);
   }
+  _updateToolbarTokenDisplay(); // ★ 每次API调用后更新顶部计数器
 }
 
 function updateTokenDisplay(){
@@ -6502,41 +6561,6 @@ function updateTokenDisplay(){
   }
 }
 // ★ 渲染 API 调用日志到预算面板
-function _renderApiUsageLog(){
-  var el=document.getElementById('apiUsageLogBody');
-  if(!el)return;
-  var convId=currentConversationId;
-  if(!convId){el.innerHTML='<em style="color:var(--color-text-secondary)">未选择对话</em>';return;}
-  var log=_convApiUsageLog&&_convApiUsageLog[convId];
-  if(!log||log.length===0){
-    el.innerHTML='<em style="color:var(--color-text-secondary)">暂无 API 调用记录。发送消息后自动记录。</em>';
-    return;
-  }
-  var html='';
-  var promptTotal=0,completionTotal=0,totalTotal=0;
-  for(var i=0;i<log.length;i++){
-    var e=log[i];
-    var t=new Date(e.ts);
-    var timeStr=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0')+':'+t.getSeconds().toString().padStart(2,'0');
-    var label='#'+(i+1);
-    if(i>0&&e.message_count>=(log[i-1]||{}).message_count)label+=' ↗';
-    html+='<div style="padding:3px 4px;border-bottom:1px solid var(--color-border);display:flex;gap:6px">'+
-      '<span style="color:var(--color-text-secondary);min-width:44px">'+label+'</span>'+
-      '<span style="min-width:56px;color:var(--color-text-secondary)">'+timeStr+'</span>'+
-      '<span>P:<b>'+e.prompt_tokens+'</b></span>'+
-      '<span>C:<b>'+e.completion_tokens+'</b></span>'+
-      '<span style="color:var(--color-primary)">T:<b>'+e.total_tokens+'</b></span>'+
-      '</div>';
-    promptTotal+=e.prompt_tokens||0;
-    completionTotal+=e.completion_tokens||0;
-    totalTotal+=e.total_tokens||0;
-  }
-  html+='<div style="padding:4px;border-top:2px solid var(--color-primary);font-weight:600;display:flex;gap:8px;justify-content:flex-end">'+
-    '∑ P:<b>'+promptTotal+'</b> C:<b>'+completionTotal+'</b> '+
-    '<span style="color:var(--color-primary)">T:<b>'+totalTotal+'</b></span></div>';
-  el.innerHTML=html;
-  el.style.display='block';
-}
 // ================================================================
 // 第12部分：【修复】短期记忆 — 完整的锁安全机制
 // ================================================================
@@ -8540,7 +8564,11 @@ class WorkerManager{
     setTimeout(function(){
       if(self.fatal)return;
       self.createWorker();
-      if(self.type==='evo'){evoWorker=self.worker;}
+      if(self.type==='evo'){
+        evoWorker=self.worker;
+        // ★ 重启后立即传递当前设置（否则 isPaused 永远为 false）
+        evoWorker.postMessage({type:'config_update',payload:{key:'settings',value:settings}});
+      }
       else if(self.type==='task'){taskWorker=self.worker;}
       debugLogger.warn(self.type+' 已重启 (#'+self.totalCrashes+', '+delay+'ms)');
     },delay);
@@ -9234,7 +9262,8 @@ function _buildLLMRequest(messages,tools,stream,source){
     
     // 【修复】清理messages — 使用模块级 _safeMessageStr（三条LLM路径统一复用）
     var _safeStr = _safeMessageStr;
-    var cleanedMessages=messages.map(function(m){
+    // ★ 跳过 _tokens===0 的过期消息（压缩标记），不发送到 API，但仍保留在 messages 中用于持久化
+    var cleanedMessages=messages.filter(function(m){return m._tokens!==0;}).map(function(m){
         var cleaned={role:m.role};
         if(m.content!==undefined&&m.content!==null)cleaned.content=_safeStr(m.content);
         else if(m.tool_calls)cleaned.content=null;
@@ -9258,7 +9287,11 @@ function _buildLLMRequest(messages,tools,stream,source){
     var _safeMsgTokens=_MODEL_MAX-_desiredMax-200;
     var _estMsgTotal=0;
     for(var _mi=0;_mi<cleanedMessages.length;_mi++){
-      _estMsgTotal+=(cleanedMessages[_mi]._tokens||_estimateTokens((cleanedMessages[_mi].content||'')+(cleanedMessages[_mi].reasoning_content||'')));
+      var _tok=cleanedMessages[_mi]._tokens;
+      var _charEst=_estimateTokens((cleanedMessages[_mi].content||'')+(cleanedMessages[_mi].reasoning_content||''));
+      // ★ 容错：_tokens 严重偏离字符估算(>3倍)时，用字符估算兜底
+      if(_tok&&_charEst&&_tok>_charEst*3)_tok=_charEst;
+      _estMsgTotal+=(_tok||_charEst);
     }
     // ★ 跨轮精炼：N-3轮保留原始内容，N-3轮之前的旧结果降级为引导语句
     for(var _mi2=0;_mi2<cleanedMessages.length;_mi2++){
@@ -9295,15 +9328,7 @@ function _buildLLMRequest(messages,tools,stream,source){
     }
     _estMsgTotal=0;
     for(var _mii=0;_mii<cleanedMessages.length;_mii++){_estMsgTotal+=(cleanedMessages[_mii]._tokens||_estimateTokens(cleanedMessages[_mii].content||''));}
-    // 第二层：仍超限 → 丢弃最旧非system非user消息
-    while(_estMsgTotal>_safeMsgTokens&&cleanedMessages.length>3){
-      var _dropIdx=1;
-      while(_dropIdx<cleanedMessages.length&&cleanedMessages[_dropIdx].role==='user'){_dropIdx++;}
-      if(_dropIdx>=cleanedMessages.length)break;
-      var _dropped=cleanedMessages.splice(_dropIdx,1)[0];
-      _estMsgTotal-=(_dropped._tokens||_estimateTokens((_dropped.content||'')+(_dropped.reasoning_content||'')));
-      debugLogger.warn(' 极端丢弃: 丢弃1条旧消息('+_dropped.role+') | 剩余est:'+_estMsgTotal+'/'+_safeMsgTokens);
-    }
+    // ★ 极端丢弃已移除：跨轮精炼已压缩大块工具结果，剩余超限由 API 自行截断
     for(var _ocj=cleanedMessages.length-1;_ocj>=1;_ocj--){
       if(cleanedMessages[_ocj].role==='tool'){
         var _ocaller2=false;
@@ -9385,12 +9410,6 @@ async function streamChatCompletion(messages,tools,onChunk,source){
     }
     attempt++;
 
-    var _msgs = await _compressOldMessages(messages,1048565);
-    if(_msgs){
-      var _sysSave=messages[0];messages.length=0;messages.push(_sysSave);
-      Array.prototype.push.apply(messages,_msgs);showToast('上下文已自动压缩','success',2000);
-      _updateTokenAccumulator(currentConversationId);
-    }
     var req=_buildLLMRequest(messages,tools,true,source);
     var response;
     var lastFetchError=null;
@@ -9473,7 +9492,10 @@ async function streamChatCompletion(messages,tools,onChunk,source){
             activeStreamReader=null;
             recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
             _tagMessageTokens(messages, streamUsage);
-            return finishReason;
+            // ★ 立即同步累计器：只用精确 _tokens，无标记的消息贡献 0
+            _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+            _updateToolbarTokenDisplay();
+            return finishReason||'stop';
           }
           try{
             var parsed=JSON.parse(data);
@@ -9489,16 +9511,23 @@ async function streamChatCompletion(messages,tools,onChunk,source){
               if(delta2.reasoning_content)totalStreamContent+=delta2.reasoning_content;
             }
             await onChunk(parsed);
-          }catch(e){}
+          }catch(e){debugLogger.warn('流式数据异常: '+e.message+' | data(前200): '+data.substring(0,200));}
         }
+      }
+      // ★ 诊断：流结束后检查是否收到过 choices 数据
+      if(finishReason===null && totalStreamContent===''){
+        debugLogger.warn(' 流中无choices: lines='+(typeof lines!=='undefined'?lines.length:'?')+' | finishReason=null | content空');
       }
       if(!streamError){
         activeStreamReader=null;
         recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
         _tagMessageTokens(messages, streamUsage);
+        // ★ 立即同步累计器：只用精确 _tokens，无标记的消息贡献 0
+        _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+        _updateToolbarTokenDisplay();
         debugLogger.info(' 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length+(streamUsage?' | usage:精确':' | usage:估算'));
         if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_success',payload:{taskId:currentConversationId||'',relevantSkills:skillCache.activeSkillIds||[],summary:totalStreamContent.substring(0,200)}});}
-        return finishReason;
+        return finishReason||'stop';
       }
     }finally{
       if(streamTimeoutId)clearTimeout(streamTimeoutId);
@@ -11701,8 +11730,8 @@ async function toolFlowMode(args){
     var _trace=[],_chain=[],_open=[];
     for(var _ti=0;_ti<_todoItems.length;_ti++){var _it=_todoItems[_ti];if(_it.status==='done'){_trace.push('['+_it.id+'] '+_it.desc+(_it.evidence?' | '+_it.evidence:''));}else if(_it.status==='failed'){_open.push('['+_it.id+'] '+_it.desc+' | 受阻: '+(_it.reason||''));}}
     if(sess.deliveryMessage)_chain.push('最终方案 | 质量:'+(sess.bestScore*100).toFixed(0)+'%');
-    var structured='心流已完成，以下是执行结果摘要（主Agent据此向用户汇报）：\n\n## 执行迹 (Trace)\n'+(_trace.length?'- '+_trace.join('\n- '):'(无)')+'\n\n## 推理链 (Chain)\n'+(_chain.length?'- '+_chain.join('\n- '):'(自动迭代)')+'\n\n## 关键数据 (Data)\n- 迭代: '+sess.iteration+'轮\n- 质量评分: '+(sess.bestScore*100).toFixed(0)+'%\n- 交付目录: '+sess.workingDir+'\n\n## 待办 (Open)\n'+(_open.length?'- '+_open.join('\n- '):'(无)');
-    if(sess.deliveryMessage)structured+='\n\n## 交付快照\n'+sess.deliveryMessage;
+     var structured='心流已完成，以下是执行结果摘要（主Agent据此向用户汇报）：\n\n〈执行迹〉\n'+(_trace.length?'- '+_trace.join('\n- '):'(无)')+'\n\n〈推理链〉\n'+(_chain.length?'- '+_chain.join('\n- '):'(自动迭代)')+'\n\n〈关键数据〉\n- 迭代: '+sess.iteration+'轮\n- 质量评分: '+(sess.bestScore*100).toFixed(0)+'%\n- 交付目录: '+sess.workingDir+'\n\n〈待办〉\n'+(_open.length?'- '+_open.join('\n- '):'(无)');
+    if(sess.deliveryMessage)structured+='\n\n【交付快照】\n'+sess.deliveryMessage;
     return '---tool:flow_mode ok 0ms '+structured.length+'ch structured---\n'+structured;
   }
   return JSON.stringify({ok:true,message:'心流模式已启动（未交付）',workingDir:workingDir});
@@ -16534,15 +16563,67 @@ async function processUserMessage(userText,taskId){
       if (compressed) {
         _autoToast.className = 'toast success';
         _autoToast.textContent = '已自动压缩 → ' + compressed.length + ' 条消息';
-        _updateTokenAccumulator(currentConversationId);
         setTimeout(function () {
           _autoToast.style.opacity = '0';
           _autoToast.style.transition = 'opacity 0.3s ease';
           setTimeout(function () { if (_autoToast.parentNode) _autoToast.remove(); }, 300);
         }, 3000);
-        var _sysMsg = messages[0];
-        messages = [_sysMsg];
-        Array.prototype.push.apply(messages, compressed);
+        
+        // ★ 保留所有原始消息，标记旧消息 token 过期，注入归档摘要
+        //   compressed 结构: [kept_msg_1, ..., kept_msg_n, archived_summary(_injected)]
+        var _archivedSummary = compressed[compressed.length - 1];
+        var _keptMsgCount = compressed.length - 1; // 保留的非system消息数（不含归档摘要）
+        var _expiredEnd = messages.length - 1 - _keptMsgCount; // 过期消息在原始数组中的结束索引
+        
+        // 标记旧消息 token 过期（_tokens = 0）
+        for (var _ei = 1; _ei <= _expiredEnd && _ei < messages.length; _ei++) {
+          messages[_ei]._tokens = 0;
+        }
+        
+        // ★ 构建新消息数组：system + 旧消息(_tokens=0) + 保留消息(清理版) + 归档摘要
+        var _newMessages = [messages[0]]; // system
+        // 旧消息（已标记过期）
+        for (var _ei2 = 1; _ei2 <= _expiredEnd && _ei2 < messages.length; _ei2++) {
+          _newMessages.push(messages[_ei2]);
+        }
+        // 保留消息使用压缩返回的清理版
+        for (var _ki = 0; _ki < _keptMsgCount; _ki++) {
+          _newMessages.push(compressed[_ki]);
+        }
+        // 注入归档摘要
+        if (_archivedSummary && _archivedSummary._injected) {
+          _newMessages.push(_archivedSummary);
+        }
+        
+        // 替换 messages（供给后续 API 调用）
+        messages.length = 0;
+        Array.prototype.push.apply(messages, _newMessages);
+        
+        // ★ 同步 _persistentMessages 到 DOM data-tokens（仅同步可见气泡）
+        if (window._persistentMessages && window._persistentMessages[currentConversationId]) {
+          var _pmArr = window._persistentMessages[currentConversationId];
+          var _msgEls = document.getElementById('convMessages' + currentConversationId);
+          var _bubbles = _msgEls ? _msgEls.querySelectorAll('.message.user,.message.agent') : null;
+          var _domIdx = 0;
+          // 标记 _pmArr 中对应过期消息的 DOM data-tokens
+          for (var _ei3 = 1; _ei3 < _pmArr.length; _ei3++) {
+            var _isSkippable = (_pmArr[_ei3]._injected || _pmArr[_ei3].role === 'tool');
+            if (_ei3 <= _expiredEnd && !_isSkippable && _bubbles && _domIdx < _bubbles.length) {
+              var _cd = _bubbles[_domIdx].querySelector('.message-content');
+              if (_cd) _cd.setAttribute('data-tokens', '0');
+            }
+            if (!_isSkippable) _domIdx++;
+          }
+          // 保存完整消息列表（含过期标记）到 _persistentMessages
+          window._persistentMessages[currentConversationId] = messages.slice();
+        } else {
+          if(!window._persistentMessages)window._persistentMessages={};
+          window._persistentMessages[currentConversationId] = messages.slice();
+        }
+        
+        _updateTokenAccumulator(currentConversationId);
+        _saveTokenCounts();
+        _updateToolbarTokenDisplay();
       } else {
         if (_autoToast.parentNode) _autoToast.remove();
       }
@@ -19960,6 +20041,21 @@ function initEventBindings(){
   // 保存设置
   var btnSaveSettings=document.getElementById('btnSaveSettings');
   if(btnSaveSettings)btnSaveSettings.addEventListener('click',saveSettings);
+
+  // ★ 自动进化开关即时生效（不依赖保存按钮）
+  var evoCheckbox=document.getElementById('settingEvoEnabled');
+  if(evoCheckbox){
+    evoCheckbox.addEventListener('change',function(){
+      if(window.evoWorker){
+        if(this.checked){
+          window.evoWorker.postMessage({type:'resume_evo'});
+        }else{
+          window.evoWorker.postMessage({type:'pause_evo'});
+        }
+      }
+    });
+  }
+
   var btnAddTavilyKey=document.getElementById('btnAddTavilyKey');
   if(btnAddTavilyKey)btnAddTavilyKey.addEventListener('click',function(){addTavilyKeyInput();});
   var btnVerifyAllTavilyKeys=document.getElementById('btnVerifyAllTavilyKeys');
@@ -21171,7 +21267,10 @@ function initEventBindings(){
       }
     });
     _scrollToBottomBtn.addEventListener('click',function(){
-      msgListDel.scrollTop=msgListDel.scrollHeight;
+      if(!msgListDel||msgListDel.childNodes.length===0)return;
+      requestAnimationFrame(function(){
+        if(msgListDel&&msgListDel.childNodes.length>0)msgListDel.scrollTop=msgListDel.scrollHeight;
+      });
       _userScrolledUp=false;
       _scrollToBottomBtn.style.display='none';
     });
@@ -21227,7 +21326,13 @@ async function initApp(){
     renderUploadedFilesList();
     updateStorageInfo();
 
-    // 10. 通知进化Worker启动完成
+    // 10. 传递初始设置 → 进化Worker（否则它永远不知道 evolution_enabled 的值）
+    //     ★ 必须在 startup_complete 之前发送，防止反射启动时 isPaused 未初始化
+    if(evoWorker){
+      evoWorker.postMessage({type:'config_update',payload:{key:'settings',value:settings}});
+    }
+
+    // 11. 通知进化Worker启动完成
     if(evoWorker){
       evoWorker.postMessage({type:'startup_complete',payload:{}});
     }
@@ -21584,7 +21689,7 @@ async function switchConversation(convId,forceSwitch){
               continue;
             }
             var _txt=(m.content||'');
-            if((_txt.indexOf('flow_mode')>=0||_txt.indexOf('"flow_mode"')>=0)&&(_txt.indexOf('---tool:flow_mode ok')>=0||(_txt.indexOf('心流已完成')>=0&&_txt.indexOf('## 执行迹')>=0))){
+             if((_txt.indexOf('flow_mode')>=0||_txt.indexOf('"flow_mode"')>=0)&&(_txt.indexOf('---tool:flow_mode ok')>=0||(_txt.indexOf('心流已完成')>=0&&(_txt.indexOf('## 执行迹')>=0||_txt.indexOf('【摘要·执行迹】')>=0||_txt.indexOf('〈执行迹〉')>=0)))){
               msgList.appendChild(div);
               if(cd)_injectCodeCopyButtons(cd);
               _flowBuf={toggle:null,wrapDiv:null,nodes:[],_hasSummary:true};
@@ -21726,7 +21831,7 @@ function _collapseFlowMessagesOnRestore(msgList){
     if(!cd)continue;
     var txt=cd.textContent||'';
     // 检测 agentMsgDiv 内部包含的结构化摘要（flow_mode 工具结果 + 完成通知）
-    if(txt.indexOf('---tool:flow_mode ok')>=0||(txt.indexOf('心流已完成')>=0&&txt.indexOf('## 执行迹')>=0)){
+     if(txt.indexOf('---tool:flow_mode ok')>=0||(txt.indexOf('心流已完成')>=0&&(txt.indexOf('## 执行迹')>=0||txt.indexOf('【摘要·执行迹】')>=0||txt.indexOf('〈执行迹〉')>=0))){
       // 检查是否已有 wrapper（已折叠过），通过下一个兄弟判断
       var nextEl=c.nextElementSibling;
       if(nextEl&&nextEl.id&&nextEl.id.indexOf('flow-ctx-')===0)continue;
