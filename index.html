@@ -744,9 +744,9 @@ button,label,[role="button"],.file-upload-btn{
         <div class="settings-field"><label for="settingMaxTokens">最大输出 Token</label><input type="number" id="settingMaxTokens" value="384000" min="256" max="384000" step="256"></div>
         <div class="range-slider-group">
           <label><span>压缩积极度</span><span class="range-value" id="compressionAggressivenessValue">适中 (~594K)</span></label>
-           <input type="range" id="settingCompressionAggressiveness" min="0" max="100" value="50" step="5" oninput="var v=parseInt(this.value);var el=document.getElementById('compressionAggressivenessValue');var thresh=Math.round(1048565*(0.5+v/100*0.4));var unit=thresh>=1000000?(thresh/1000000).toFixed(1)+'M':(thresh/1000).toFixed(0)+'K';if(v<=20){el.textContent='激进 ('+unit+')';el.style.color='#e74c3c';}else if(v<=40){el.textContent='较激进 ('+unit+')';el.style.color='#e67e22';}else if(v<=60){el.textContent='适中 ('+unit+')';el.style.color='#f39c12';}else if(v<=80){el.textContent='较保守 ('+unit+')';el.style.color='#27ae60';}else{el.textContent='保守 ('+unit+')';el.style.color='#2ecc71';}settings.compression_aggressiveness=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);">
-           <div class="range-labels"><span>0 激进 (524K)</span><span>50 适中 (734K)</span><span>100 保守 (944K)</span></div>
-           <div class="help-text">降低压缩频率以保留更多上下文。100保守下约944K触发压缩，压缩后摘要仅2K token。</div>
+           <input type="range" id="settingCompressionAggressiveness" min="0" max="100" value="50" step="5" oninput="var v=parseInt(this.value);var el=document.getElementById('compressionAggressivenessValue');var _ctx=parseInt(localStorage.getItem('_model_ctx'))||1048565;var thresh=Math.round(_ctx*(0.5+v/100*0.4));var unit=thresh>=1000000?(thresh/1000000).toFixed(1)+'M':(thresh/1000).toFixed(0)+'K';if(v<=20){el.textContent='激进 ('+unit+')';el.style.color='#e74c3c';}else if(v<=40){el.textContent='较激进 ('+unit+')';el.style.color='#e67e22';}else if(v<=60){el.textContent='适中 ('+unit+')';el.style.color='#f39c12';}else if(v<=80){el.textContent='较保守 ('+unit+')';el.style.color='#27ae60';}else{el.textContent='保守 ('+unit+')';el.style.color='#2ecc71';}settings.compression_aggressiveness=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);">
+           <div class="range-labels"><span>0 激进 (≈50%)</span><span>50 适中 (≈70%)</span><span>100 保守 (≈90%)</span></div>
+           <div class="help-text">拖拽滑块调节压缩触发阈值。越保守保留越多上下文，触发范围从约50%到90%模型上下文窗口，摘要token预算动态分配。</div>
         </div>
       </div>
     </div>
@@ -3925,24 +3925,21 @@ function _getCumulativeTokens(convId){
 var TOKEN_LOCAL_KEY = 'exo_token_counts';
 async function _saveTokenCounts(){
   try{
+    // ★ 同步写入localStorage FIRST → 确保 beforeunload 场景不丢失
+    try{
+      var _lsRaw=localStorage.getItem(TOKEN_LOCAL_KEY);
+      var _lsData=_lsRaw?JSON.parse(_lsRaw):{};
+      _lsData[currentConversationId]=_getCumulativeTokens(currentConversationId);
+      localStorage.setItem(TOKEN_LOCAL_KEY,JSON.stringify(_lsData));
+    }catch(e){}
+    // 异步写入IndexedDB（可能被beforeunload中断，但不影响localStorage已有最新值）
     var raw=await readFile('/config/token_counts.json');
     var data=raw?JSON.parse(raw):{};
-    var tokens=_getCumulativeTokens(currentConversationId);
-    data[currentConversationId]=tokens;
+    data[currentConversationId]=_getCumulativeTokens(currentConversationId);
     var meta=await getFileMeta('/config/token_counts.json');
     if(meta)await updateFile('/config/token_counts.json',JSON.stringify(data));
     else await createFile('/config/token_counts.json',JSON.stringify(data));
-    // ★ 同步写入localStorage作为可靠回退（同步写入,无异步丢失风险）
-    try{localStorage.setItem(TOKEN_LOCAL_KEY,JSON.stringify(data));}catch(e){}
-  }catch(e){
-    // ★ IndexedDB失败时localStorage兜底
-    try{
-      var lsRaw=localStorage.getItem(TOKEN_LOCAL_KEY);
-      var lsData=lsRaw?JSON.parse(lsRaw):{};
-      lsData[currentConversationId]=_getCumulativeTokens(currentConversationId);
-      localStorage.setItem(TOKEN_LOCAL_KEY,JSON.stringify(lsData));
-    }catch(e2){}
-  }
+  }catch(e){}
 }
 async function _loadTokenCounts(){
   try{
@@ -4006,17 +4003,36 @@ async function _loadApiUsageLog(convId){
 /* ===== 同步 _tokens 到 DOM 元素 ===== */
 function _syncTokensToDOM(messages,messagesDiv){
   if(!messages||!messagesDiv)return;
-  // messages 数组与 DOM 元素的映射：跳过 system(index 0) / _injected / tool(不占独立DOM)
+  // ★ 先清除所有 data-tokens，确保幂等（多次调用不累加）
+  var _allCts=messagesDiv.querySelectorAll('.message-content');
+  for(var _ci=0;_ci<_allCts.length;_ci++)_allCts[_ci].removeAttribute('data-tokens');
+  // messages 数组与 DOM 元素的映射：跳过 system(index 0) / _injected
+  // tool 不占独立DOM气泡 → _tokens 累加到前一个 assistant 的 data-tokens
   var domIdx=0;
   var msgEls=messagesDiv.querySelectorAll('.message.user,.message.agent');
   for(var mi=1;mi<messages.length;mi++){
     var m=messages[mi];
     if(m._injected)continue;
-    if(m.role==='tool')continue;  // ★ 工具结果渲染在 assistant DOM 内部，不占独立消息气泡
+    if(m.role==='tool'){
+      // ★ 工具结果渲染在 assistant DOM 内部 → 累加 _tokens 到前一个泡泡
+      if(domIdx>0&&domIdx<=msgEls.length&&typeof m._tokens==='number'){
+        var _prevCd=msgEls[domIdx-1].querySelector('.message-content');
+        if(_prevCd){
+          var _cur=parseInt(_prevCd.getAttribute('data-tokens'),10)||0;
+          _prevCd.setAttribute('data-tokens',_cur+m._tokens);
+        }
+      }
+      continue;
+    }
     if(domIdx>=msgEls.length)break;
     var cd=msgEls[domIdx].querySelector('.message-content');
     if(cd&&m._tokens!==undefined){
-      cd.setAttribute('data-tokens',m._tokens);
+      var _base=m._tokens;
+      // ★ system(messages[0])不占独立气泡 → _tokens 累加到第一个泡泡
+      if(domIdx===0&&messages[0]&&messages[0].role==='system'&&typeof messages[0]._tokens==='number'){
+        _base+=messages[0]._tokens;
+      }
+      cd.setAttribute('data-tokens',_base);
     }
     domIdx++;
   }
@@ -4196,8 +4212,40 @@ function _estimateTokens(str){
   }
   return Math.ceil(cn*0.6+en*0.3);
 }
+// ★ 动态模型上下文窗口（从API获取，localStorage持久化，兜底1048565）
+var _cachedModelCtx=null;
+var _MODEL_CTX_FALLBACK=1048565;
+// 立即从localStorage恢复（同步操作，不阻塞后续代码）
+try{
+  var _savedCtx=localStorage.getItem('_model_ctx');
+  if(_savedCtx)_cachedModelCtx=parseInt(_savedCtx,10)||null;
+}catch(_e){}
+
+async function _fetchModelCtx(){
+  if(_cachedModelCtx)return _cachedModelCtx;
+  try{
+    var _saved=localStorage.getItem('_model_ctx');
+    if(_saved){_cachedModelCtx=parseInt(_saved,10)||_MODEL_CTX_FALLBACK;return _cachedModelCtx;}
+  }catch(_e){}
+  try{
+    var _base=(document.getElementById('base-url')||{}).value||'https://api.openai.com/v1';
+    var _model=(document.getElementById('model-select')||{}).value||'gpt-3.5-turbo';
+    var _baseModel=_model.replace(/-[\d]{4}$/,'');
+    var _resp=await fetch(_base.replace(/\/+$/,'')+'/models/'+_baseModel,{
+      headers:{'Authorization':'Bearer '+((document.getElementById('api-key')||{}).value||'')}
+    });
+    if(_resp.ok){
+      var _data=await _resp.json();
+      _cachedModelCtx=_data.context_window||_data.max_context_length||_data.max_total_tokens||_data.max_input_tokens||_MODEL_CTX_FALLBACK;
+      try{localStorage.setItem('_model_ctx',_cachedModelCtx);}catch(_e){}
+    }
+  }catch(_e){}
+  if(!_cachedModelCtx)_cachedModelCtx=_MODEL_CTX_FALLBACK;
+  return _cachedModelCtx;
+}
+
+var _MODEL_CTX=_cachedModelCtx||_MODEL_CTX_FALLBACK;
 async function _compressOldMessages(messages,modelMaxTokens){
-  var _MODEL_CTX=1048565;
   // ★ 用每条消息上的 _tokens 标签（API精确分配），回退到字符估算
   var totalEst=0;
   var perMsg=[];
@@ -4282,7 +4330,9 @@ async function _compressOldMessages(messages,modelMaxTokens){
     '<REMINDER> 严格遵循OUTPUT_FORMAT。不编造数据。不遗漏关键信息。</REMINDER>';
   var _compInputEst=_estimateTokens(systemPrompt+rawText);
 
-  var _compMaxTokens=Math.min(8000,Math.max(400,1048565-_compInputEst-200));
+  // ★ 动态 max_tokens：按整个上下文的剩余预算分配，最大100K保守，最小8K保底
+  var _remainingBudget=Math.max(0,_MODEL_CTX-totalEst-200);
+  var _compMaxTokens=Math.min(100000,Math.max(8000,_remainingBudget));
 
   try{
     var msgs=[{role:'system',content:systemPrompt},{role:'user',content:'请压缩以下对话历史：\n\n'+rawText}];
@@ -16615,7 +16665,7 @@ async function processUserMessage(userText,taskId){
     // + 本轮注入消息估算（技能推荐 ~200 token）
     _preTotal += 200;
     var _aggLvl = settings.compression_aggressiveness != null ? settings.compression_aggressiveness : 50;
-    _needCompress = _preTotal > Math.floor(1048565 * (0.5 + _aggLvl / 100 * 0.4)) && messages.length > 2;
+    _needCompress = _preTotal > Math.floor(_MODEL_CTX * (0.5 + _aggLvl / 100 * 0.4)) && messages.length > 2;
   } catch (e) {}
   
   if (_needCompress) {
@@ -20323,7 +20373,7 @@ function initEventBindings(){
       var resp=await fetch(url.replace(/\/$/,'')+'/models',{
         headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'}
       });
-      if(resp.ok){showToast('API Key 有效','success');}
+      if(resp.ok){showToast('API Key 有效','success');_fetchModelCtx().then(function(c){_MODEL_CTX=c;});}
       else{var t=await resp.text();showToast('失败: HTTP '+resp.status+' '+(t||'').slice(0,100),'error');}
     }catch(e){showToast('网络错误: '+e.message,'error');}
     btnVerifyApiKey.disabled=false;btnVerifyApiKey.textContent='验证Key';
@@ -20357,7 +20407,7 @@ function initEventBindings(){
       // ★ 将模型列表持久化缓存到 settings 中，下次直接复用无需 API 请求
       settings.cached_models = models.map(function(m){ return m.id; });
       saveSettings().catch(function(err){ debugLogger.warn('模型缓存持久化失败: '+err.message); });
-      showToast('已获取 '+models.length+' 个模型并缓存','success');
+      showToast('已获取 '+models.length+' 个模型并缓存','success');_fetchModelCtx().then(function(c){_MODEL_CTX=c;});
     }catch(e){showToast('网络错误: '+e.message,'error');}
     btnFetchModels.disabled=false;btnFetchModels.textContent='获取模型';
   });
@@ -21401,6 +21451,8 @@ async function initApp(){
       await _loadApiUsageLog(currentConversationId);
     }
     _startTokenDisplayTimer();
+    // ★ 预取模型上下文窗口（localStorage快速恢复 + 后台API异步更新）
+    if(!_cachedModelCtx)_fetchModelCtx().then(function(ctx){_MODEL_CTX=ctx;});
     setTimeout(function(){_updateToolbarTokenDisplay();},500);
 
     debugLogger.info('Exo 就绪');
@@ -21694,6 +21746,11 @@ async function switchConversation(convId,forceSwitch){
       }
       var curBranch=bd._branches[bd._currentBranchId];
       var branchItems=(curBranch&&curBranch.items)||[];
+      // ★ 修复：system 消息缺少 _tokens 时从内容估算（兼容旧数据）
+      if(branchItems.length>0&&branchItems[0].role==='system'&&branchItems[0]._tokens===undefined){
+        branchItems[0]._tokens=_estimateTokens(branchItems[0].content||'');
+      }
+
       if(branchItems.length){
         // ★ 心流感知渲染：检测到包含 flow_mode 摘要的 assistant 消息后，
         //   后续的 .message.agent 兄弟缓冲起来，渲染完毕时自动折叠
