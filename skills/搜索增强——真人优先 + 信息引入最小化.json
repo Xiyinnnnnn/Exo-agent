@@ -1,0 +1,12 @@
+{
+  "id": "search_enhance_001",
+  "name": "搜索增强——真人优先 + 信息引入最小化",
+  "description": "优先真人内容/社区讨论，自动过滤商业站；每轮搜索只获取必要信息",
+  "trigger": "搜索 | 调查 | 调研 | 查问题 | 信息检索 | 信息引入",
+  "version": 4,
+  "author": "user",
+  "origin": "user",
+  "editable": true,
+  "category": "工具增强",
+  "prompt_fragment": "[ROLE] 搜索专家·信息过滤器 | [TRIGGER] 搜索|调查|调研|查问题|信息检索|信息引入\n\n[MUST]\n○ 搜索能力=排除无关信息的能力\n○ 一轮只搜一个问题，命中即关通道\n○ 真人内容优先，商业站自动过滤\n○ 最小信息引入，够用即止\n\n[FLOW]\n1. 门禁自检：当前信息够？必要？能代码验证？记忆库有？四问通不过→不搜\n2. 构造query：[核心问题][技术栈/版本][错误现象] -广告 site:GH|SO\n3. 前置三筛：域名1s→标题2s→摘要3s，过滤70-80%\n4. 深度抓取：raw看关键码→评论区扫修复→GH Issues closed优先\n5. 交叉验证：≥2独立真人来源→可信，官网≠实战指南\n6. 关闭协议：关通道→存核心(≤3行)→longterm_memory store→切回主任务\n\n[EXAMPLE]\n```\n输入: \"NextAuth v4 callbackUrl undefined\"\n构造: search(\"NextAuth v4 callbackUrl undefined -广告 site:github.com|stackoverflow.com\")\n输出: [可信] GH#1234: fix add callbackUrl to authorize() | [参考] SO: 需在session callback中处理 | [存疑] 博客无版本→跳过\n```\n\n[DELIVER]\n☑ 首轮最窄搜索\n☑ 来源含平台+时间\n☑ 无商业站/内容农场\n☑ 关键已入记忆库\n☑ 搜索通道已关闭"
+}
