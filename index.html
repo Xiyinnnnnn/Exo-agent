@@ -5386,6 +5386,19 @@ async function collectVfsSnapshot(sandboxDir){
 // 第7部分：文件锁
 // ================================================================
 
+// 文件锁等待队列
+var _fileLockQueue = [];
+
+function _processFileLockQueue(){
+  if(_fileLockQueue.length===0)return;
+  if(fileLock.owner&&Date.now()<fileLock.expiresAt)return; // 锁仍被持有
+  var next=_fileLockQueue.shift();
+  var expiresAt=Date.now()+Math.min(next.estimatedDuration||30000,60000);
+  fileLock={owner:next.ownerId,expiresAt:expiresAt,reason:next.reason||''};
+  debugLogger.debug('文件锁队列→授予: '+next.ownerId+', 原因: '+next.reason);
+  next.resolve({granted:true,expiresAt:expiresAt,owner:next.ownerId});
+}
+
 function requestFileLock(ownerId,reason,estimatedDuration){
   var now=Date.now();
   if(fileLock.owner&&fileLock.expiresAt>now&&fileLock.owner!==ownerId){
@@ -5406,9 +5419,33 @@ function renewFileLock(ownerId){
 function releaseFileLock(ownerId){
   if(fileLock.owner===ownerId){
     fileLock={owner:null,expiresAt:0,reason:''};
+    _processFileLockQueue(); // 释放后立即唤醒下一个等待者
     return true;
   }
   return false;
+}
+
+// ★ 异步等待文件锁（带排队功能）
+async function awaitFileLock(ownerId,reason,estimatedDuration,maxWaitMs){
+  maxWaitMs=maxWaitMs||45000;
+  // 先尝试直接获取
+  var result=requestFileLock(ownerId,reason,estimatedDuration);
+  if(result.granted)return result;
+  // 加入等待队列
+  return new Promise(function(resolve){
+    var timer=setTimeout(function(){
+      var idx=-1;
+      for(var i=0;i<_fileLockQueue.length;i++){
+        if(_fileLockQueue[i].resolve===resolve){idx=i;break;}
+      }
+      if(idx>=0)_fileLockQueue.splice(idx,1);
+      resolve({granted:false,reason:'等待文件锁超时 ('+maxWaitMs+'ms)'});
+    },maxWaitMs);
+    _fileLockQueue.push({
+      ownerId:ownerId,reason:reason||'',estimatedDuration:estimatedDuration||30000,
+      resolve:function(r){clearTimeout(timer);resolve(r);}
+    });
+  });
 }
 
 // 文件锁超时回收定时器
@@ -5417,6 +5454,7 @@ var _fileLockTimer=setInterval(function(){
     debugLogger.warn('文件锁已过期，强制回收: '+fileLock.owner);
     var revokedOwner=fileLock.owner;
     fileLock={owner:null,expiresAt:0,reason:''};
+    _processFileLockQueue(); // 回收后唤醒下一个等待者
     if(revokedOwner==='evo_worker'&&evoWorker){
       evoWorker.postMessage({type:'file_lock_revoked',payload:{reason:'锁已超时回收'}});
     }
@@ -8916,8 +8954,8 @@ async function handleApplySkillPatch(payload){
   var lockRenewalTimer=null;
   try{
     var patch=payload.patch||payload;
-    if(!patch)return {success:false,error:'缺少补丁数据'};
-    var lockResp=requestFileLock('main_thread','apply_skill_patch',30000);
+    var lockResp=await awaitFileLock('main_thread','apply_skill_patch',30000);
+    if(!lockResp||!lockResp.granted)return {success:false,error:'获取文件锁失败: '+(lockResp&&lockResp.reason||'未知')};
     if(!lockResp||!lockResp.granted)return {success:false,error:'无法获取文件锁'};
     lockAcquired=true;
     lockRenewalTimer=setInterval(function(){renewFileLock('main_thread');},10000);
@@ -9031,8 +9069,8 @@ async function handleDiscardTestBranch(payload){
   try{
     var patch=payload.patch||{};
     var version=payload.version;
-    debugLogger.info('丢弃测试分支 v'+version);
-    var lockResp=requestFileLock('main_thread','discard_test_branch',15000);
+    var lockResp=await awaitFileLock('main_thread','discard_test_branch',15000);
+    if(!lockResp||!lockResp.granted)return {success:false,error:'获取文件锁失败: '+(lockResp&&lockResp.reason||'未知')};
     if(!lockResp||!lockResp.granted)return {success:false,error:'无法获取文件锁'};
     lockAcquired=true;
     // ★ 无额外版本备份文件：update_skill 的字段级增量不可逆还原，
@@ -9062,8 +9100,8 @@ async function handleRollbackToVersion(payload){
   var lockAcquired=false;
   try{
     var targetVersion=payload.version;
-    var reason=payload.reason||'manual_rollback';
-    var lockResp=requestFileLock('main_thread','rollback',15000);
+    var lockResp=await awaitFileLock('main_thread','rollback',15000);
+    if(!lockResp||!lockResp.granted)return {success:false,error:'获取文件锁失败: '+(lockResp&&lockResp.reason||'未知')};
     if(!lockResp||!lockResp.granted)return {success:false,error:'无法获取文件锁'};
     lockAcquired=true;
     var currentIndexJson=await readFile('/skills/current_version.json');
@@ -13427,14 +13465,27 @@ async function _calendarWakeCheck(){
       if(currentConversationId){
         var cs=_ensureConvState(currentConversationId);
         if(cs&&!cs.isProcessing){
-          var wp=settings.calendar_wake_prompt||'';
-          if(!wp.trim())wp=' **日程提醒！** 现在时间: '+new Date().toLocaleString('zh-CN')+'。\n\n以下日程已到提醒时间，请主动告知用户:';
-          wp=wp.replace(/\{title\}/g,tev.title||'').replace(/\{description\}/g,tev.description||'').replace(/\{location\}/g,tev.location||'').replace(/\{start\}/g,tev.start||'').replace(/\{end\}/g,tev.end||'');
-          wp+='\n\n **'+tev.title+'** | '+new Date(tev.start).toLocaleString('zh-CN');
-          if(tev.location)wp+=' |  '+tev.location;
-          if(tev.description)wp+='\n '+tev.description.substring(0,200);
+      var wp=settings.calendar_wake_prompt||'';
+      if(!wp.trim()){
+        wp='⏰ **日程提醒**\n\n现在时间: '+new Date().toLocaleString('zh-CN')+'\n\n以下日程已到提醒时间:\n\n';
+        wp+='📌 **'+(tev.title||'(无标题)')+'**\n';
+        wp+='- **开始**: '+new Date(tev.start).toLocaleString('zh-CN')+'\n';
+        if(tev.end)wp+='- **结束**: '+new Date(tev.end).toLocaleString('zh-CN')+'\n';
+        if(tev.location)wp+='- **地点**: '+tev.location+'\n';
+        if(tev.description)wp+='- **描述**: '+tev.description+'\n';
+        if(tev.reminder_minutes)wp+='- **提前提醒**: '+tev.reminder_minutes+'分钟前\n';
+        wp+='\n请主动告知用户。';
+      }else{
+        wp=wp.replace(/\{title\}/g,tev.title||'').replace(/\{description\}/g,tev.description||'').replace(/\{location\}/g,tev.location||'').replace(/\{start\}/g,tev.start||'').replace(/\{end\}/g,tev.end||'');
+        wp+='\n\n---\n⏰ **日程详情**\n';
+        wp+='- **标题**: '+(tev.title||'(无标题)')+'\n';
+        wp+='- **开始**: '+new Date(tev.start).toLocaleString('zh-CN')+'\n';
+        if(tev.end)wp+='- **结束**: '+new Date(tev.end).toLocaleString('zh-CN')+'\n';
+        if(tev.location)wp+='- **地点**: '+tev.location+'\n';
+        if(tev.description)wp+='- **描述**: '+tev.description+'\n';
+      }
           window._skipAddUser=true;
-          processUserMessage(wp,'calendar_wake_'+tev.id).catch(function(e){debugLogger.warn('日历唤醒处理失败: '+e.message);});
+          processUserMessage(wp,'calendar_wake_'+tev.id).finally(function(){window._skipAddUser=false;}).catch(function(e){debugLogger.warn('日历唤醒处理失败: '+e.message);});
         }else{
           debugLogger.info(' 跳过唤醒（Agent正忙或无对话）');
         }
@@ -16797,7 +16848,13 @@ async function processUserMessage(userText,taskId){
     }
     messagesDiv.addEventListener('scroll',_onUserScroll,{passive:true});
     for(var round=0;;round++){ // 无限循环，由 pendingToolCalls 为空或 finishReason=stop 退出
-      if(cs.stopRequested){throw new Error('用户已中止');}
+      agentMsgDiv._currentRound = round;
+      // ★【进化同步】本轮开始前检测 skillCache 是否已被进化Worker变更，若变更则刷新 system prompt
+      if(messages[0] && messages[0].role==='system' && messages[0]._skillVer !== skillCache.version){
+        messages[0].content = _buildFullSystemPrompt('');
+        messages[0]._skillVer = skillCache.version;
+        debugLogger.info('系统提示已刷新（进化后同步，v'+skillCache.version+'）');
+      }
       agentMsgDiv._currentRound = round;
       var streamContent='';
       var streamReasoning='';
@@ -17913,7 +17970,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
     }catch(_){}
     updateSendButton();
     messagesDiv.scrollTop=messagesDiv.scrollHeight;
-    if(processingError)debugLogger.warn('对话处理完成（有错误）');
+    if(processingError){var _errBrief=processingError.message||'';if(processingError.stack){var _sl=processingError.stack.split('\n').filter(function(l){return l.trim();});if(_sl.length>1)_errBrief+=' | at '+_sl[1].trim();}debugLogger.warn('对话处理完成（有错误）: '+_errBrief);processingError=null;}
   }
 
   // ★ 心流模式自动启动——必须在 finally 之前、cs 仍在 processing 状态下触发
@@ -19121,11 +19178,120 @@ function addAgentMessageContainer(messageId){
 }
 
 function handleMessageDelete(msgDiv) {
+  // ★ 自动判断：有分支导航头 → 删除整个分支；否则 → 删除单条消息
+  var branchNav = msgDiv.querySelector('.bubble-branch-nav');
+  if (!branchNav) {
+    branchNav = msgDiv.closest('.bubble-branch-nav');
+  }
+  if (branchNav && currentConversationId) {
+    // 分支模式：删除整个分支
+    branchDeleteBranch(_getBranchData(currentConversationId)._currentBranchId);
+    return;
+  }
+  // 普通模式：删除单条消息
   if (!window.confirm('确定删除这条消息？')) return;
   if (msgDiv.parentNode) msgDiv.parentNode.removeChild(msgDiv);
   _saveBranchMessages(currentConversationId).catch(function(){});
   showToast('消息已删除','success');
 }
+
+function branchDeleteBranch(branchId) {
+  if (!currentConversationId) return;
+  var bd = _getBranchData(currentConversationId);
+  if (!bd._branches[branchId]) { showToast('分支不存在','error'); return; }
+  // 递归查找所有子分支
+  function _findAllDescendants(parentId) {
+    var descendants = [];
+    for (var bid in bd._branches) {
+      if (!bd._branches.hasOwnProperty(bid)) continue;
+      if (bd._branches[bid].parentId === parentId) {
+        descendants.push(bid);
+        descendants = descendants.concat(_findAllDescendants(bid));
+      }
+    }
+    return descendants;
+  }
+  var toDelete = [branchId].concat(_findAllDescendants(branchId));
+  // 确认：显示分支名和子分支数量
+  var br = bd._branches[branchId];
+  var branchLabel = br.label || branchId;
+  var extraMsg = toDelete.length > 1 ? '（含 ' + (toDelete.length - 1) + ' 个子分支）' : '';
+  if (!confirm('确定删除分支「' + branchLabel + '」' + extraMsg + '？此操作不可撤销。')) return;
+  // 如果删除的是当前分支，切换到父分支或第一个可用分支
+  var needSwitch = (branchId === bd._currentBranchId);
+  var switchTarget = null;
+  if (needSwitch) {
+    if (br.parentId && bd._branches[br.parentId]) {
+      switchTarget = br.parentId;
+    } else {
+      for (var bid in bd._branches) {
+        if (!bd._branches.hasOwnProperty(bid)) continue;
+        if (toDelete.indexOf(bid) >= 0) continue;
+        switchTarget = bid;
+        break;
+      }
+    }
+  }
+  // 从分支数据中删除
+  for (var i1 = 0; i1 < toDelete.length; i1++) {
+    delete bd._branches[toDelete[i1]];
+  }
+  bd._branchOrder = bd._branchOrder.filter(function(id) { return toDelete.indexOf(id) < 0; });
+  // 切到目标分支
+  if (needSwitch && switchTarget) {
+    bd._currentBranchId = switchTarget;
+    var msgList = document.getElementById('messagesList');
+    if (msgList) {
+      msgList.innerHTML = '';
+      var newItems = bd._branches[switchTarget].items || [];
+      for (var ni1 = 0; ni1 < newItems.length; ni1++) {
+        var nm = newItems[ni1];
+        if (nm.role === 'user') {
+          var udiv = document.createElement('div');
+          udiv.className = 'message user';
+          udiv.innerHTML = '<div class="message-content">' + sanitizeArtifactHTML(nm.content || '') + '</div>';
+          var tsd = document.createElement('div');
+          tsd.className = 'message-timestamp';
+          tsd.setAttribute('data-ts', nm.createdAt || Date.now());
+          tsd.textContent = _timeAgo(nm.createdAt || Date.now());
+          udiv.appendChild(tsd);
+          _addMsgActions(udiv, true);
+          msgList.appendChild(udiv);
+        } else {
+          var ndiv = document.createElement('div');
+          ndiv.className = 'message agent';
+          ndiv.innerHTML = sanitizeArtifactHTML(nm.content || '');
+          var cd = ndiv.querySelector('.message-content');
+          if (cd) {
+            var body = cd.querySelector('.msg-body');
+            if (!body) {
+              body = document.createElement('div');
+              body.className = 'msg-body';
+              while (cd.firstChild) body.appendChild(cd.firstChild);
+              cd.appendChild(body);
+            }
+            _injectCodeCopyButtons(cd);
+          }
+          _addMsgActions(ndiv, false);
+          msgList.appendChild(ndiv);
+        }
+      }
+    }
+  }
+  // 持久化
+  try {
+    getDB().then(function(db) {
+      var tx = db.transaction('messages', 'readwrite');
+      var store = tx.objectStore('messages');
+      store.put({id: currentConversationId, branches: bd._branches, currentBranchId: bd._currentBranchId, branchOrder: bd._branchOrder, updatedAt: Date.now()});
+    });
+  } catch(e) {}
+  _renderBubbleBranchNavs();
+  showToast('分支已删除','success');
+}
+
+
+
 
 function updateThinkingBlock(msgDiv, thinkingText) {
   var round = (msgDiv._currentRound || 0);
