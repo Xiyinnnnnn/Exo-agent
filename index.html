@@ -3838,6 +3838,8 @@ var budgetUsed=0;
 var evoUsed=0;
 var dailyTokenUsed=0;
 var _dailyTokenDate=null;
+var processingError=null;
+
 // 【多对话并行】每个对话独立管理自己的处理状态
 var convStates={};
 function _ensureConvState(convId){
