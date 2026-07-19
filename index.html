@@ -16849,12 +16849,6 @@ async function processUserMessage(userText,taskId){
     messagesDiv.addEventListener('scroll',_onUserScroll,{passive:true});
     for(var round=0;;round++){ // 无限循环，由 pendingToolCalls 为空或 finishReason=stop 退出
       agentMsgDiv._currentRound = round;
-      // ★【进化同步】本轮开始前检测 skillCache 是否已被进化Worker变更，若变更则刷新 system prompt
-      if(messages[0] && messages[0].role==='system' && messages[0]._skillVer !== skillCache.version){
-        messages[0].content = _buildFullSystemPrompt('');
-        messages[0]._skillVer = skillCache.version;
-        debugLogger.info('系统提示已刷新（进化后同步，v'+skillCache.version+'）');
-      }
       agentMsgDiv._currentRound = round;
       var streamContent='';
       var streamReasoning='';
