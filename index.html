@@ -3912,6 +3912,64 @@ async function _deleteTodos(convId){
   delete _convTodos[convId];
 }
 
+
+// ★ 增量优化：脏标记追踪
+var _dirtyMsgIds = new Set();
+var _syncTokenCounter = 0;
+function _markDirty(el) {
+  // String → treat as index
+  if (typeof el === 'string') { _dirtyMsgIds.add(el); return; }
+  // DOM element → find its index among bubbles
+  if (el && el.nodeType === 1) {
+    var parent = el.closest('.messages-list') || el.parentNode;
+    var bubbles = parent.querySelectorAll('.message.user,.message.agent');
+    for (var i = 0; i < bubbles.length; i++) {
+      if (bubbles[i] === el || bubbles[i].contains(el)) {
+        _dirtyMsgIds.add(String(i));
+        return;
+      }
+    }
+  }
+}
+// 按 messages 数组索引标记脏（仅用于跨轮精炼等场景）
+function _markDirtyMsgIdx(msgIdx) {
+  var msgList = document.getElementById('messagesList');
+  if (!msgList) return;
+  // 跳过 system/injected/tool → 它们没有独立气泡
+  // 对 user/assistant，气泡索引 ≈ msgIdx - 1（跳过 messages[0]=system）
+  // 但这不精确（tool/injected 穿插时偏移），只用 msgIdx 存入，save 时做 DOM 映射
+  _dirtyMsgIds.add('msg_'+msgIdx);
+}
+// 增量收集单条气泡
+function _collectSingleBubble(bub) {
+    var cd = bub.querySelector('.message-content');
+    if (!cd) return null;
+    var isUser = bub.classList.contains('user');
+    var _tsEl = bub.querySelector('.message-timestamp[data-ts]');
+    var _createdAt = _tsEl ? parseInt(_tsEl.getAttribute('data-ts')) : Date.now();
+    var entry = { role: isUser ? 'user' : 'assistant', id: crypto.randomUUID(), createdAt: _createdAt };
+    var _tkVal = cd.getAttribute('data-tokens');
+    if (_tkVal !== null && _tkVal !== '' && !isNaN(parseInt(_tkVal))) { entry._tokens = parseInt(_tkVal, 10); }
+    var actionsEl = bub.querySelector('.msg-actions');
+    if (actionsEl) actionsEl.remove();
+    var copyBtns = bub.querySelectorAll('.code-copy-btn');
+    for (var cbi = 0; cbi < copyBtns.length; cbi++) copyBtns[cbi].remove();
+    if (isUser) { entry.content = cd.textContent || cd.innerText || ''; }
+    else {
+        var clone = bub.cloneNode(true);
+        var _strip = clone.querySelectorAll('.message-timestamp,[style*="display:flex;gap:4px;margin-top:4px"]');
+        for (var si = _strip.length - 1; si >= 0; si--) { var _s = _strip[si]; if (_s.parentNode) _s.parentNode.removeChild(_s); }
+        entry.content = clone.innerHTML || '';
+        var _acClone = bub.cloneNode(true);
+        var _acStrip = _acClone.querySelectorAll('.thinking-block,.thinking-toggle,.tool-result-toggle,.tool-result-block,.message-timestamp,.msg-actions,.code-copy-btn,.message-files-card');
+        for (var _csi = _acStrip.length - 1; _csi >= 0; _csi--) { var _cs = _acStrip[_csi]; if (_cs.parentNode) _cs.parentNode.removeChild(_cs); }
+        entry.cleanContent = (_acClone.textContent || _acClone.innerText || '').replace(/\n{4,}/g, '\n\n\n').trim();
+    }
+    _addMsgActions(bub, isUser);
+    if (!isUser && cd) _injectCodeCopyButtons(cd);
+    return entry;
+}
+
 var _convTokenAccumulator={};
 function _updateTokenAccumulator(convId, tokens, msgs){
   convId=convId||currentConversationId;
@@ -4016,23 +4074,21 @@ async function _loadApiUsageLog(convId){
 /* ===== 同步 _tokens 到 DOM 元素 ===== */
 function _syncTokensToDOM(messages,messagesDiv){
   if(!messages||!messagesDiv)return;
-  // ★ 先清除所有 data-tokens，确保幂等（多次调用不累加）
-  var _allCts=messagesDiv.querySelectorAll('.message-content');
-  for(var _ci=0;_ci<_allCts.length;_ci++)_allCts[_ci].removeAttribute('data-tokens');
-  // messages 数组与 DOM 元素的映射：跳过 system(index 0) / _injected
-  // tool 不占独立DOM气泡 → _tokens 累加到前一个 assistant 的 data-tokens
+  _syncTokenCounter++;
+  var doFullSync=(_syncTokenCounter%10===1);
+  // 全量纠偏：只清除不在脏集中的消息，增量更新只设变化的
   var domIdx=0;
   var msgEls=messagesDiv.querySelectorAll('.message.user,.message.agent');
   for(var mi=1;mi<messages.length;mi++){
     var m=messages[mi];
     if(m._injected)continue;
     if(m.role==='tool'){
-      // ★ 工具结果渲染在 assistant DOM 内部 → 累加 _tokens 到前一个泡泡
       if(domIdx>0&&domIdx<=msgEls.length&&typeof m._tokens==='number'){
         var _prevCd=msgEls[domIdx-1].querySelector('.message-content');
         if(_prevCd){
           var _cur=parseInt(_prevCd.getAttribute('data-tokens'),10)||0;
-          _prevCd.setAttribute('data-tokens',_cur+m._tokens);
+          var _new=_cur+m._tokens;
+          if(_cur!==_new)_prevCd.setAttribute('data-tokens',_new);
         }
       }
       continue;
@@ -4041,11 +4097,14 @@ function _syncTokensToDOM(messages,messagesDiv){
     var cd=msgEls[domIdx].querySelector('.message-content');
     if(cd&&m._tokens!==undefined){
       var _base=m._tokens;
-      // ★ system(messages[0])不占独立气泡 → _tokens 累加到第一个泡泡
       if(domIdx===0&&messages[0]&&messages[0].role==='system'&&typeof messages[0]._tokens==='number'){
         _base+=messages[0]._tokens;
       }
-      cd.setAttribute('data-tokens',_base);
+      var oldVal=cd.getAttribute('data-tokens');
+      var newVal=String(_base);
+      if(doFullSync || oldVal!==newVal){
+        cd.setAttribute('data-tokens',newVal);
+      }
     }
     domIdx++;
   }
@@ -9673,6 +9732,8 @@ async function streamChatCompletion(messages,tools,onChunk,source){
             _tagMessageTokens(messages, streamUsage);
             // ★ 立即同步累计器：只用精确 _tokens，无标记的消息贡献 0
             _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+            saveCurrentMessages();
+
             _updateToolbarTokenDisplay();
             return finishReason||'stop';
           }
@@ -9703,6 +9764,8 @@ async function streamChatCompletion(messages,tools,onChunk,source){
         _tagMessageTokens(messages, streamUsage);
         // ★ 立即同步累计器：只用精确 _tokens，无标记的消息贡献 0
         _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+        saveCurrentMessages();
+
         _updateToolbarTokenDisplay();
         debugLogger.info(' 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length+(streamUsage?' | usage:精确':' | usage:估算'));
         if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_success',payload:{taskId:currentConversationId||'',relevantSkills:skillCache.activeSkillIds||[],summary:totalStreamContent.substring(0,200)}});}
@@ -18102,6 +18165,7 @@ async function flowExecuteLoop(session, cs, taskId, messagesDiv, convId){
 
     _updateFlowProgressDot(session);
     _saveFlowSession(convId);
+    saveCurrentMessages();
 
     if(session.delivered)break;
   }
@@ -19108,6 +19172,7 @@ function addUserMessage(text){
   msgDiv.appendChild(tsDiv);
   _addMsgActions(msgDiv,true);
   messagesDiv.appendChild(msgDiv);
+  _markDirty(msgDiv);
   messagesDiv.scrollTop=messagesDiv.scrollHeight;
 }
 
@@ -19142,6 +19207,7 @@ function addAgentMessageContainer(messageId){
   _addMsgActions(msgDiv,false);
   msgDiv._msgId = messageId;
   messagesDiv.appendChild(msgDiv);
+  _markDirty(msgDiv);
   return msgDiv;
 }
 
@@ -19329,6 +19395,7 @@ function addToolResultBlock(msgDiv, toolName, resultContent, toolIndex) {
     } else {
       existingBlock.textContent = resultContent;
     }
+    _markDirty(msgDiv);
     return;
   }
   var toggleEl = document.createElement('div');
@@ -19371,8 +19438,8 @@ function addToolResultBlock(msgDiv, toolName, resultContent, toolIndex) {
     msgDiv.appendChild(toggleEl);
     msgDiv.appendChild(resultBlock);
   }
+  _markDirty(msgDiv);
 }
-
 function toggleToolResult() {
   var block = document.getElementById(this.getAttribute('data-target'));
   if (block) block.classList.toggle('collapsed');
@@ -21469,7 +21536,7 @@ function initEventBindings(){
     var cd=_editTargetMsg.querySelector('.message-content');
     if(cd){var body=cd.querySelector('.msg-body');if(body)body.textContent=newText;else cd.textContent=newText;}
     document.getElementById('editMessageModal').style.display='none';_editTargetMsg=null;
-    saveCurrentMessages().catch(function(){});showToast('消息已更新 ','success');
+    saveCurrentMessages({forceFull:true}).catch(function(){});showToast('消息已更新 ','success');
   };
   document.getElementById('btnEditSaveSend').onclick=function(){
     if(!_editTargetMsg)return;
@@ -21480,7 +21547,7 @@ function initEventBindings(){
     document.getElementById('editMessageModal').style.display='none';_editTargetMsg=null;
     var cd2=target.querySelector('.message-content');
     if(cd2){var body2=cd2.querySelector('.msg-body');if(body2)body2.textContent=newText;else cd2.textContent=newText;}
-    saveCurrentMessages().catch(function(){});
+    saveCurrentMessages({forceFull:true}).catch(function(){});
     _forkAtForkPoint(newText);
   };
   document.getElementById('editMessageModal').addEventListener('click',function(e){
@@ -21489,7 +21556,7 @@ function initEventBindings(){
 
   // ★ 关闭/刷新前保存当前对话 + Token计数
   window.addEventListener('beforeunload',function(){
-    saveCurrentMessages();
+    saveCurrentMessages({forceFull:true});
     _saveTokenCounts();
   });
 
@@ -21827,6 +21894,7 @@ async function switchConversation(convId,forceSwitch){
   
   // 1) 当前对话：可见DOM子节点搬入 _container（解耦。同ID则跳过，强制从DB加载）
   if(oldCid && oldCid !== convId){
+    saveCurrentMessages({forceFull:true}); // 切换前持久化，防止异步窗口丢失
     var curState=_ensureConvState(oldCid);
     // ★ 全局变量通过代理自动反映当前对话状态；切换前保持旧状态已由代理自动同步
     curState._scrollPos=msgList.scrollTop;
@@ -22148,28 +22216,75 @@ async function _saveBranchMessages(convId,msgList){
   }catch(e){}
 }
 
-// 保存当前消息（保持旧签名兼容）
-async function saveCurrentMessages(){
-  await _saveBranchMessages(currentConversationId);
-}
+// 保存当前消息 — 带脏标记增量优化
+async function saveCurrentMessages(options){
+  options = options || {};
+  var msgList = document.getElementById('messagesList');
+  if (!msgList || msgList.childNodes.length === 0) return;
 
-// 【多对话并行】保存指定对话的消息到IndexedDB
-async function saveCurrentMessagesToState(convId){
-  if(!convId)return;
-  try{
-    var state=_ensureConvState(convId);
-    var msgList=(convId===currentConversationId)?document.getElementById('messagesList'):(state._container||null);
-    if(!msgList||msgList.childNodes.length===0)return;
-    var bd=_getBranchData(convId);
-    var items=_collectBubbles(msgList);
-    bd._branches[bd._currentBranchId].items=items;
-    var db=await getDB();
-    var tx=db.transaction('messages','readwrite');
-    var store=tx.objectStore('messages');
-    store.put({id:convId,branches:bd._branches,currentBranchId:bd._currentBranchId,branchOrder:bd._branchOrder,updatedAt:Date.now()});
-    await new Promise(function(res,rej){tx.oncomplete=res;tx.onerror=rej;});
-    state.msgItems=items;
-  }catch(e){}
+  // 强制全量保存（编辑/删除/beforeunload/对话切换）
+  if (options.forceFull) {
+    try {
+      await _saveBranchMessages(currentConversationId, msgList);
+    } catch(e) {}
+    _dirtyMsgIds.clear();
+    return;
+  }
+
+  // 增量保存：只遍历脏 DOM 节点
+  if (_dirtyMsgIds.size > 0) {
+    try {
+      var bubbles = msgList.querySelectorAll('.message.user,.message.agent');
+      var entries = {};
+      // 处理数字索引（DOM气泡索引）
+      for (var i = 0; i < bubbles.length; i++) {
+        if (_dirtyMsgIds.has(String(i))) {
+          entries[i] = _collectSingleBubble(bubbles[i]);
+        }
+      }
+      // 处理 'msg_' 前缀（messages 数组索引 → 尝试映射到 DOM 气泡）
+      var msgPrefixEntries = [];
+      _dirtyMsgIds.forEach(function(id) {
+        if (typeof id === 'string' && id.indexOf('msg_') === 0) {
+          var msgIdx = parseInt(id.substring(4), 10);
+          // 粗略映射：messages 中 user/assistant 跳过 system(0) + tool + _injected
+          var domIdx = 0, msgsSeen = 0;
+          // 无法精确映射，fallback: 收集所有气泡
+          msgPrefixEntries.push(msgIdx);
+        }
+      });
+      // 如果有 msg_ 前缀的脏标记，回退到全量收集（精确 DOM 映射太复杂）
+      var fallbackToFull = (msgPrefixEntries.length > 0);
+      if (!fallbackToFull && Object.keys(entries).length === 0) {
+        _dirtyMsgIds.clear();
+        return;
+      }
+      if (!fallbackToFull) {
+        var entryKeys = Object.keys(entries).map(Number).sort(function(a,b){return a-b;});
+        var bd = _getBranchData(currentConversationId);
+        var items = bd._branches[bd._currentBranchId].items || [];
+        for (var ki = 0; ki < entryKeys.length; ki++) {
+          var idx = entryKeys[ki];
+          if (idx < items.length) { items[idx] = entries[idx]; }
+          else { items.push(entries[idx]); }
+        }
+        bd._branches[bd._currentBranchId].items = items;
+        var db = await getDB();
+        var tx = db.transaction('messages', 'readwrite');
+        tx.objectStore('messages').put({id:currentConversationId,branches:bd._branches,currentBranchId:bd._currentBranchId,branchOrder:bd._branchOrder,updatedAt:Date.now()});
+        await new Promise(function(res,rej){tx.oncomplete=res;tx.onerror=rej;});
+        _dirtyMsgIds.clear();
+        _renderBubbleBranchNavs();
+        return;
+      }
+    } catch(e) {
+      debugLogger.warn('增量保存失败，保留脏标记: '+e.message);
+      return;
+    }
+  }
+
+  // 无脏标记或回退 → 全量兜底
+  await _saveBranchMessages(currentConversationId, msgList);
 }
 
 // 渲染侧边栏会话列表
