@@ -679,7 +679,7 @@ button,label,[role="button"],.file-upload-btn{
     <div class="welcome-message">
       <h2>Exo</h2>
       <p>浏览器端全栈智能体 — MCTS决策 · 流水线调度 · 世界验证 · 自主运行 · 自进化</p>
-      <p>请先在设置中配置 <strong>DeepSeek API Key</strong>，然后开始对话。</p>
+      <p>请先在设置中配置 <strong>API Key</strong>，然后开始对话。</p>
       <p style="margin-top:12px;font-size:13px;"> 我可以：搜索信息 · 执行代码 · 生成图表 · 处理文件 · 自我改进</p>
     </div>
   </div>
@@ -732,9 +732,9 @@ button,label,[role="button"],.file-upload-btn{
         <h3> 接口配置</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
-        <div class="settings-field"><label for="settingApiKey">DeepSeek API Key</label><input type="password" id="settingApiKey" placeholder="sk-..."></div>
-        <div class="settings-field"><label for="settingBaseUrl">Base URL</label><input type="text" id="settingBaseUrl" value="https://api.deepseek.com"></div>
-        <div class="settings-field"><label for="settingModel">模型名称</label><input type="text" id="settingModel" value="deepseek-v4-flash"></div>
+        <div class="settings-field"><label for="settingApiKey">API Key</label><input type="password" id="settingApiKey" placeholder="sk-..."></div>
+        <div class="settings-field"><label for="settingBaseUrl">Base URL</label><input type="text" id="settingBaseUrl" placeholder="https://api.deepseek.com"></div>
+        <div class="settings-field"><label for="settingModel">模型名称</label><input type="text" id="settingModel" placeholder="deepseek-v4-flash"></div>
         <div style="display:flex;gap:6px;margin:-6px 0 8px">
           <button class="btn btn-outline btn-sm" id="btnVerifyApiKey" style="flex:1;font-size:12px"> 验证Key</button>
           <button class="btn btn-outline btn-sm" id="btnFetchModels" style="flex:1;font-size:12px"> 获取模型</button>
@@ -1476,7 +1476,7 @@ async function _mctsLLM(systemPrompt,userPrompt,temperature,maxTokens,useThinkin
   if(useThinking&&settings.reasoning_effort!=='off'){body.thinking={type:'enabled'};body.reasoning_effort=settings.reasoning_effort||'high';}else{body.thinking={type:'disabled'};}
   var ctrl=new AbortController();var tid=setTimeout(function(){ctrl.abort();},useThinking?60000:15000);
   try{
-    var resp=await fetch(settings.base_url+'/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},body:JSON.stringify(body),signal:ctrl.signal});
+    var resp=await fetch(settings.base_url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},body:JSON.stringify(body),signal:ctrl.signal});
     clearTimeout(tid);
     if(!resp.ok){var _e='';try{_e=await resp.text();}catch(er){}throw new Error('MCTS API '+resp.status+(_e?' - '+_e.substring(0,200):''));}
     await budgetManager.recordCall('user');
@@ -4284,6 +4284,32 @@ function _estimateTokens(str){
   }
   return Math.ceil(cn*0.6+en*0.3);
 }
+
+// ★ 从 HTTP 400 错误文本中提取请求体总 token 数
+function _extractRequestTokens(errText){
+  if(!errText)return null;
+  var m;
+  // OpenAI/DeepSeek 常见格式: "you requested X tokens" / "your messages resulted in X tokens"
+  m=errText.match(/(?:requested|resulted\s+in|your\s+messages?\s+.*?)\s*(\d+)\s*tokens?/i);
+  if(m)return parseInt(m[1],10);
+  // 通用格式: "got X tokens" / "context length exceeded: X tokens"
+  m=errText.match(/context\s+(?:length\s+)?exceeded[:\s]+(\d+)\s*tokens?/i);
+  if(m)return parseInt(m[1],10);
+  m=errText.match(/got\s+(\d+)\s*tokens?/i);
+  if(m)return parseInt(m[1],10);
+  // 兜底: 提取 "X tokens" 中最大的数字（排除模型最大窗口数字之前的那一个）
+  var allNums=errText.match(/(\d+)\s*tokens?/gi);
+  if(allNums&&allNums.length>0){
+    var nums=allNums.map(function(s){return parseInt(s,10);}).filter(function(n){return n>0;});
+    if(nums.length>0){
+      // 取第一个非最大窗口的数字作为请求体token数（通常第一条是最大窗口，第二条是请求体）
+      if(nums.length>=2)return nums[1];
+      return nums[0];
+    }
+  }
+  return null;
+}
+
 // ★ 动态模型上下文窗口（从API获取，localStorage持久化，兜底1048565）
 var _cachedModelCtx=null;
 var _MODEL_CTX_FALLBACK=1048565;
@@ -4292,6 +4318,52 @@ try{
   var _savedCtx=localStorage.getItem('_model_ctx');
   if(_savedCtx)_cachedModelCtx=parseInt(_savedCtx,10)||null;
 }catch(_e){}
+
+function _getApiBase(url){
+  // 从完整 chat completions endpoint 中提取 API base URL
+  // https://xxx/v4/chat/completions → https://xxx/v4
+  // https://api.deepseek.com → https://api.deepseek.com (不变)
+  return url.replace(/\/chat\/completions\/?$/,'').replace(/\/+$/,'');
+}
+
+function _renderModelSelect(models,modelEl){
+  // 将 INPUT 替换为 SELECT，底部加空白选项；选择空白选项时切回 INPUT
+  if(!modelEl||modelEl.tagName!=='INPUT')return;
+  var sel=document.createElement('select');
+  sel.id='settingModel';
+  sel.style.cssText='width:100%;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;outline:none';
+  for(var _ri=0;_ri<models.length;_ri++){
+    var _ro=document.createElement('option');
+    _ro.value=models[_ri];
+    _ro.textContent=models[_ri];
+    if(models[_ri]===modelEl.value)_ro.selected=true;
+    sel.appendChild(_ro);
+  }
+  var _emptyOpt=document.createElement('option');
+  _emptyOpt.value='';
+  _emptyOpt.textContent='— 自定义输入 —';
+  sel.appendChild(_emptyOpt);
+  sel.addEventListener('change',function(){
+    if(this.value!=='')return;
+    var _inp=document.createElement('input');
+    _inp.type='text';
+    _inp.id='settingModel';
+    _inp.style.cssText=this.style.cssText;
+    _inp.placeholder='输入模型名';
+    this.parentNode.replaceChild(_inp,this);
+    _inp.focus();
+    if(!_inp.hasAttribute('data-auto-save-input')){
+      _inp.setAttribute('data-auto-save-input','1');
+      _inp.addEventListener('change',function(){
+        clearTimeout(this._saveTimer);
+        this._saveTimer=setTimeout(function(){saveSettings();},500);
+      });
+    }
+  });
+  modelEl.parentNode.replaceChild(sel,modelEl);
+}
+
+
 
 async function _fetchModelCtx(){
   if(_cachedModelCtx)return _cachedModelCtx;
@@ -4303,7 +4375,7 @@ async function _fetchModelCtx(){
     var _base=(document.getElementById('settingBaseUrl')||{}).value||'https://api.deepseek.com';
     var _model=(document.getElementById('settingModel')||{}).value||'deepseek-chat';
     var _baseModel=_model.replace(/-[\d]{4}$/,'');
-    var _resp=await fetch(_base.replace(/\/+$/,'')+'/models/'+_baseModel,{
+    var _resp=await fetch(_getApiBase(_base)+'/models/'+_baseModel,{
       headers:{'Authorization':'Bearer '+((document.getElementById('settingApiKey')||{}).value||'')}
     });
     if(_resp.ok){
@@ -4412,7 +4484,7 @@ async function _compressOldMessages(messages,modelMaxTokens){
     req.body.temperature=0.3;
     req.body.max_tokens=_compMaxTokens;
     if(settings.reasoning_effort==='off'){req.body.thinking={type:'disabled'};}else{req.body.thinking={type:'enabled'};req.body.reasoning_effort=settings.reasoning_effort||'max';}
-    var fetchResp=await fetch(req.baseUrl+'/v1/chat/completions',{
+     var fetchResp=await fetch(req.baseUrl,{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
       body:JSON.stringify(req.body)
@@ -5951,18 +6023,7 @@ function applySettingsToUI(){
   if (_cachedModels && Array.isArray(_cachedModels) && _cachedModels.length > 0) {
     var _modelInput = document.getElementById('settingModel');
     if (_modelInput && _modelInput.tagName === 'INPUT') {
-      var _parent = _modelInput.parentNode;
-      var _sel = document.createElement('select');
-      _sel.id = 'settingModel';
-      _sel.style.cssText = 'width:100%;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;outline:none';
-      for (var _mi = 0; _mi < _cachedModels.length; _mi++) {
-        var _o = document.createElement('option');
-        _o.value = _cachedModels[_mi];
-        _o.textContent = _cachedModels[_mi];
-        if (_cachedModels[_mi] === settings.model) _o.selected = true;
-        _sel.appendChild(_o);
-      }
-      _parent.replaceChild(_sel, _modelInput);
+      _renderModelSelect(_cachedModels, _modelInput);
     }
   }
   // ★ 开关自动保存：为所有 toggle-switch 绑定 change 事件（带防抖）
@@ -6000,7 +6061,7 @@ function applySettingsToUI(){
       });
     }
   }
-  // ★ 动态模型 select（"获取模型"按钮创建的 select 没有 data-auto-save-input，补绑）
+  // ★ 动态模型 select（缓存或"获取模型"创建的 select 可能没有 data-auto-save-input，补绑）
   var _modelEl = document.getElementById('settingModel');
   if(_modelEl && _modelEl.tagName === 'SELECT' && !_modelEl.hasAttribute('data-auto-save-input')) {
     _modelEl.setAttribute('data-auto-save-input', '1');
@@ -6010,7 +6071,6 @@ function applySettingsToUI(){
     });
   }
   // ★ 移除 Tavily Key 时自动保存（removeTavilyKeyInput 内部调 _syncTavilyKeys 后追加保存）
-  //   _syncTavilyKeys 本身不调 saveSettings，由 removeTavilyKeyInput 补调
   window._origRemoveTavilyKey = removeTavilyKeyInput;
   removeTavilyKeyInput = function(btn) {
     _origRemoveTavilyKey(btn);
@@ -6034,7 +6094,7 @@ function _onModelChange(){
   // ★ 自动保存模型选择（兼容用户手动切换和获取模型后的同步）
   saveSettings();
 }
-// 用事件委托监听模型变更（兼容 input→select 替换）
+// 用事件委托监听模型变更（兼容 input + datalist 方式）
 (function(){
   var _drawer=document.getElementById('settingsDrawer');
   if(_drawer) _drawer.addEventListener('change',function(e){
@@ -8955,7 +9015,7 @@ async function handleProxyLLMCall(msg){
   if(payload.thinking&&payload.thinking.type==='disabled'){body.thinking={type:'disabled'};}
   else if(rEff=='off'){body.thinking={type:'disabled'};}
   else{body.thinking={type:'enabled'};body.reasoning_effort=rEff;}
-  var response=await fetch(baseUrl+'/v1/chat/completions',{
+   var response=await fetch(baseUrl,{
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+settings.deepseek_api_key},
     body:JSON.stringify(body)
@@ -9468,7 +9528,7 @@ function _buildLLMRequest(messages,tools,stream,source){
     if(dailyTokenUsed>=tokenLimit){
         throw new Error('DAILY_TOKEN_LIMIT_REACHED: 每日Token已用尽('+dailyTokenUsed.toLocaleString()+'/'+tokenLimit.toLocaleString()+')');
     }
-    var baseUrl=settings.base_url||'https://api.deepseek.com';
+    var baseUrl=settings.base_url; if(!baseUrl)throw new Error('Base URL未配置，请在设置中填写');
     var model=settings.model||'deepseek-v4-flash';
     
     // 【修复】清理messages — 使用模块级 _safeMessageStr（三条LLM路径统一复用）
@@ -9634,29 +9694,66 @@ function _validateMessageSequence(messages){
 async function callLLM(messages,tools,stream,source){
   source=source||'user';
   var req=_buildLLMRequest(messages,tools,stream,source);
-  var response=await fetch(req.baseUrl+'/v1/chat/completions',{
+  var response=await fetch(req.baseUrl,{
     method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
     body:JSON.stringify(req.body)
   });
   if(!response.ok){
     var errText=await response.text();
-    // 400 maximum context length → API 偶发误报，重试一次
+    // 400 maximum context length → 从报错提取token判断能否回退max_tokens，否则压缩
     if(response.status===400&&errText.indexOf('maximum context length')>=0){
-      debugLogger.warn('callLLM 400 context length exceeded（疑似误报），重试...');
-      var req2=_buildLLMRequest(messages,tools,stream,source);
-      var response2=await fetch(req2.baseUrl+'/v1/chat/completions',{
-        method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req2.apiKey},
-        body:JSON.stringify(req2.body)
+      debugLogger.warn('callLLM 400 context length exceeded，从报错提取token...');
+      var _clReqTokens=_extractRequestTokens(errText);
+      if(_clReqTokens!==null&&_clReqTokens!==undefined){
+        var _clCurMaxTokens=req.body.max_tokens||0;
+        var _clActualCtx=_clReqTokens-_clCurMaxTokens;
+        var _clCtx=typeof _MODEL_CTX!=='undefined'?_MODEL_CTX:1048565;
+        if(_clActualCtx<_clCtx*0.9){
+          debugLogger.warn('callLLM 回退 max_token 重试,用满上下文窗口: actualCtx='+_clActualCtx+' ctx='+_clCtx);
+          var req2=_buildLLMRequest(messages,tools,stream,source);
+          req2.body.max_tokens=_clCtx-_clActualCtx;
+          var response2=await fetch(req2.baseUrl,{
+            method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req2.apiKey},
+            body:JSON.stringify(req2.body)
+          });
+          if(response2.ok){
+            await budgetManager.recordCall(source);
+            if(stream)return response2;
+            var data2=await response2.json();
+            var _llmRsp2=(data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.content)||'';
+            if(data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.reasoning_content)_llmRsp2+=data2.choices[0].message.reasoning_content;
+            recordDailyTokenUsage(messages||[],_llmRsp2,data2.usage||null);
+            _tagMessageTokens(messages,data2.usage);
+            return data2;
+          }
+          debugLogger.warn('callLLM 回退 max_token 仍失败，执行压缩...');
+        }else{
+          debugLogger.warn('callLLM 实际上下文已达上限，跳过回退直接压缩: actualCtx='+_clActualCtx+' ctx='+_clCtx);
+        }
+      }else{
+        debugLogger.warn('callLLM 无法从报错提取token数（_extractRequestTokens返回null），直接压缩...');
+      }
+      // ★ 估算总token ≥ 上下文窗口，或回退max_token失败 → 走压缩流程
+      debugLogger.warn('callLLM 400 context length exceeded，执行压缩上下文...');
+      var _clCompressed=await _compressOldMessages(messages,0);
+      if(_clCompressed){
+        messages.length=0;
+        Array.prototype.push.apply(messages,_clCompressed);
+      }
+      var req3=_buildLLMRequest(messages,tools,stream,source);
+      var response3=await fetch(req3.baseUrl,{
+        method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req3.apiKey},
+        body:JSON.stringify(req3.body)
       });
-      if(response2.ok){
+      if(response3.ok){
         await budgetManager.recordCall(source);
-        if(stream)return response2;
-        var data2=await response2.json();
-        var _llmRsp2=(data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.content)||'';
-        if(data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.reasoning_content)_llmRsp2+=data2.choices[0].message.reasoning_content;
-        recordDailyTokenUsage(messages||[],_llmRsp2,data2.usage||null);
-        _tagMessageTokens(messages,data2.usage);
-        return data2;
+        if(stream)return response3;
+        var data3=await response3.json();
+        var _llmRsp3=(data3.choices&&data3.choices[0]&&data3.choices[0].message&&data3.choices[0].message.content)||'';
+        if(data3.choices&&data3.choices[0]&&data3.choices[0].message&&data3.choices[0].message.reasoning_content)_llmRsp3+=data3.choices[0].message.reasoning_content;
+        recordDailyTokenUsage(messages||[],_llmRsp3,data3.usage||null);
+        _tagMessageTokens(messages,data3.usage);
+        return data3;
       }
     }
     throw new Error('API请求失败 ('+response.status+'): '+errText);
@@ -9696,6 +9793,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       await _interruptibleSleep(delay, cs);
     }
     attempt++;
+    var _maxTokenRolledBack=false;
 
     var req=_buildLLMRequest(messages,tools,true,source);
     var response;
@@ -9707,7 +9805,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       if(cs)cs.llmController=controller;
       var timeoutId=setTimeout(function(){controller.abort();},1800000);
       try{
-        response=await fetch(req.baseUrl+'/v1/chat/completions',{
+        response=await fetch(req.baseUrl,{
           method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
           body:JSON.stringify(req.body),signal:controller.signal
         });
@@ -9738,10 +9836,34 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       if(lastFetchError instanceof TypeError)continue;
       // 可恢复 HTTP 状态码 → 外层退避重试
       if(response&&(response.status===429||response.status===502||response.status===503||response.status===504))continue;
-      // 400 maximum context length → API 偶发误报，重试一次即可恢复
+      // 400 maximum context length → 从报错提取token判断能否回退max_tokens，否则压缩
       if(response&&response.status===400&&_httpErrText.indexOf('maximum context length')>=0){
-        debugLogger.warn('API 返回 400 context length exceeded（疑似误报），重试...');
-        continue;
+        debugLogger.warn('API 返回 400 context length exceeded，从报错提取token...');
+        var _stReqTokens=_extractRequestTokens(_httpErrText);
+        if(_stReqTokens!==null&&_stReqTokens!==undefined){
+          var _stCurMaxTokens=req.body.max_tokens||0;
+          var _stActualCtx=_stReqTokens-_stCurMaxTokens;
+          var _stCtx=typeof _MODEL_CTX!=='undefined'?_MODEL_CTX:1048565;
+          // 实际上下文 < 模型最大窗口×0.9 → 回退max_tokens重试（仅一次）
+          if(!_maxTokenRolledBack&&_stActualCtx<_stCtx*0.9){
+            _maxTokenRolledBack=true;
+            debugLogger.warn('streamChatCompletion 回退 max_token 重试,用满上下文窗口: actualCtx='+_stActualCtx+' ctx='+_stCtx);
+            req.body.max_tokens=_stCtx-_stActualCtx;
+            continue;
+          }
+          debugLogger.warn('streamChatCompletion 实际上下文已达上限或已回退过，直接压缩: actualCtx='+_stActualCtx+' ctx='+_stCtx);
+        }else{
+          debugLogger.warn('streamChatCompletion 无法从报错提取token数（_extractRequestTokens返回null），直接压缩...');
+        }
+        // ★ 回退max_token失败或总token已达上限 → 压缩上下文后跳出内层循环，让外层while重新build
+        debugLogger.warn('streamChatCompletion 400 context length exceeded，执行压缩上下文...');
+        var _stCompressed=await _compressOldMessages(messages,0);
+        if(_stCompressed){
+          messages.length=0;
+          Array.prototype.push.apply(messages,_stCompressed);
+        }
+        response=null;
+        break;
       }
       if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_failure',payload:{taskId:currentConversationId||'',errorType:response?'HTTP_'+response.status:'NetworkError',relevantSkills:skillCache.activeSkillIds||[],summary:(lastFetchError?lastFetchError.message:'API请求失败').substring(0,200)}});}
       throw lastFetchError||new Error('API请求失败');
@@ -14022,7 +14144,7 @@ async function _subAgentLLM(systemPrompt,userPrompt,toolsWhitelist,temperature,t
     req.body.temperature=temperature||settings.temperature||0.6;
     req.body.top_p=topP||0.9;
 
-    var resp=await fetch(req.baseUrl+'/v1/chat/completions',{
+     var resp=await fetch(req.baseUrl,{
       method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
       body:JSON.stringify(req.body)
     });
@@ -20648,7 +20770,7 @@ function initEventBindings(){
     if(!url){showToast('请先输入Base URL','warning');return;}
     btnVerifyApiKey.disabled=true;btnVerifyApiKey.textContent='验证中...';
     try{
-      var resp=await fetch(url.replace(/\/$/,'')+'/models',{
+      var resp=await fetch(_getApiBase(url)+'/models',{
         headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'}
       });
       if(resp.ok){showToast('API Key 有效','success');_fetchModelCtx().then(function(c){_MODEL_CTX=c;});}
@@ -20664,7 +20786,7 @@ function initEventBindings(){
     if(!url){showToast('请先输入Base URL','warning');return;}
     btnFetchModels.disabled=true;btnFetchModels.textContent='获取中...';
     try{
-      var resp=await fetch(url.replace(/\/$/,'')+'/models',{
+      var resp=await fetch(_getApiBase(url)+'/models',{
         headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'}
       });
       if(!resp.ok){var t=await resp.text();showToast('失败: HTTP '+resp.status+' '+(t||'').slice(0,100),'error');btnFetchModels.disabled=false;btnFetchModels.textContent='获取模型';return;}
@@ -20672,16 +20794,8 @@ function initEventBindings(){
       if(!models.length){showToast('未获取到模型列表','warning');btnFetchModels.disabled=false;btnFetchModels.textContent='获取模型';return;}
       var modelEl=document.getElementById('settingModel');
       if(!modelEl){btnFetchModels.disabled=false;btnFetchModels.textContent='获取模型';return;}
-      var parent=modelEl.parentNode;
-      var sel=document.createElement('select');
-      sel.id='settingModel';
-      sel.style.cssText='width:100%;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;outline:none';
-      for(var i=0;i<models.length;i++){
-        var o=document.createElement('option');o.value=models[i].id;o.textContent=models[i].id;
-        if(models[i].id===modelEl.value)o.selected=true;
-        sel.appendChild(o);
-      }
-      parent.replaceChild(sel,modelEl);
+      // 将 INPUT 替换为 SELECT，底部有空白选项可选择自定义输入
+      _renderModelSelect(models.map(function(m){return m.id;}), modelEl);
       // ★ 将模型列表持久化缓存到 settings 中，下次直接复用无需 API 请求
       settings.cached_models = models.map(function(m){ return m.id; });
       saveSettings().catch(function(err){ debugLogger.warn('模型缓存持久化失败: '+err.message); });
@@ -22627,7 +22741,7 @@ if(conv&&conv.title==='新对话'){
         req.body.temperature=0.2;
         req.body.max_tokens=36;
         req.body.thinking={type:'disabled'};
-        var resp=await fetch(req.baseUrl+'/v1/chat/completions',{
+         var resp=await fetch(req.baseUrl,{
           method:'POST',
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
           body:JSON.stringify(req.body)
