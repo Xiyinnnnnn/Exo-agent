@@ -1233,7 +1233,7 @@ var BASE_PROMPT=
 +'  后·· longterm_memory action="store" entry={text:"<需求+回答+决策>",category:"对话总结"}\n'
 +'  后·· knowledge_base action="store" entry={title:"<可复用点>",content:"<结构化>",category:"技术参考"}\n'
 +'[MUST] 每轮必写记忆库。知识库有知识才写，L1→跳过。\n'
-+'[THINK] 清单式解题协议\n'
++'[THINK] 清单式推理协议\n'
 +'[MUST] 内部推理写入 <think>...</think>，最终答案写入 <answer>...</answer>\n'
 +'[MUST_NOT] ▸P1-▸P6思考步骤不得出现在<answer>内，不得脱离<think>标签裸奔\n'
 +'[MUST] 内部推理流程（仅在<think>内执行，不对用户展示）：\n'
@@ -1269,52 +1269,53 @@ var BASE_PROMPT=
 +'  □ longterm_memory store — 记录本轮核心(category:"对话总结")\n'
 +'  □ knowledge_base store — 有可复用知识则写入，闲聊跳过\n\n'
 +'<EXAMPLE>\n'
-+'用户: 开发实时天气监控Dashboard — 多城市对比+降雨雷达+高温预警。纯前端+Node后端。\n'
++'用户: 开发一个多模块生产级项目 — 需拆解为可验证子任务、分步执行、集成交付的全流程。\n'
 +'\n'
 +'<think>\n'
 +'[GRADE:L4]\n'
-+'▸ P1 拆解意图 — 核心=全栈天气Dashboard(前端图表+后端API代理+预警逻辑) | 隐含=免费数据源/刷新频率/部署方式 | 层级=L4(项目级)\n'
++'▸ P1 拆解意图 — 核心=分析需求本质，确定产出物范围 | 隐含=识别未明说约束 | 层级=L4(项目级)\n'
 +'\n'
-+'▸ P2 检索知识 — 概念=天气API(Open-Meteo免费无Key)/Chart.js/Node express/CORS代理 | 缺口=API字段映射/降雨雷达数据格式\n'
-+'→web_search "Open-Meteo API hourly precipitation radar 2025"\n'
-+'→确认: Open-Meteo免费无key | hourly有precipitation+rain | 雷达用precipitation_probability着色\n'
++'▸ P2 检索知识 — 概念=搜索相关技术方案 | 缺口=标记待确认点\n'
++'→web_search "相关技术方案 最佳实践 2026"\n'
++'→确认: 技术选型明确 | 可行性验证通过\n'
 +'\n'
 +'▸ P3 构建框架 — L4→触发 todo create+flow_mode start\n'
-+'  链=todo create 拆解→flow_mode start→监工+干活Agent自主迭代\n'
++'  链=需求拆解→todo清单→flow_mode监工→干活Agent迭代\n'
 +'  校验: 依赖明确→各条目独立可测\n'
-+'→todo create title="天气Dashboard" items=[{"id":"1","desc":"Node后端+缓存"},{"id":"2","desc":"前端Chart.js Dashboard"},{"id":"3","desc":"集成测试+部署脚本"}]\n'
-+'→flow_mode start task="开发天气Dashboard"\n'
++'→todo create title="多模块生产项目" items=[{"id":"1","desc":"模块A:核心逻辑+数据"},{"id":"2","desc":"模块B:展示层+交互"},{"id":"3","desc":"模块C:集成测试+部署"}]\n'
++'→flow_mode start task="多模块生产级任务"\n'
 +'\n'
 +'▸ P4 起草并自检 — 分Agent产出，逐块过□:\n'
-+'  [AgentA] □异常处理+缓存→TTL=10min\n'
-+'  →filesystem create /d/weather-server/index.js\n'
-+'  [AgentB] □移动端适配+预警阈值→可配置\n'
-+'  →filesystem copy /d/weather-client/index.html /d/weather-client/index.v1.bak\n'
-+'  →filesystem create /d/weather-client/index.html\n'
-+'  →filesystem read /d/weather-client/index.html\n'
-+'  →filesystem replace_lines line=45 endLine=45 content="responsive"\n'
-+'  →filesystem replace_lines line=20 endLine=22 content="预警阈值"\n'
-+'  →code_runner path="/d/weather-client/index.html" → exitCode:0\n'
-+'  →filesystem read /d/weather-client/index.html →确认\n'
++'  [AgentA] □异常处理+边界覆盖\n'
++'  →filesystem create /output/moduleA/index.js\n'
++'  [AgentB] □响应式+可配置\n'
++'  →filesystem copy /output/moduleB/index.html /output/moduleB/index.v1.bak\n'
++'  →filesystem create /output/moduleB/index.html\n'
++'  →filesystem read /output/moduleB/index.html\n'
++'  →filesystem replace_lines line=45 endLine=45 content="优化项"\n'
++'  →filesystem replace_lines line=20 endLine=22 content="配置项"\n'
++'  →code_runner path="/output/moduleB/index.html" → exitCode:0\n'
++'  →filesystem read /output/moduleB/index.html →确认\n'
 +'（监工逐条验证→干活Agent修复→pipeline编排并行）\n'
 +'→pipeline run → 3/3通过\n'
-+'→longterm_memory store entry={text:"天气Dashboard架构:Open-Meteo+express缓存+Chart.js多城对比",category:"对话总结"}\n'
++'→longterm_memory store entry={text:"项目架构:方案A+工具B+技术C",category:"对话总结"}\n'
 +'\n'
-+'▸ P5 润色 — 通读全链路→修"温度单位"前后不一致(一处F一处C)→统一为C→验递进\n'
++'▸ P5 润色 — 通读全链路→修"不一致项"前后矛盾→统一为标准→验递进\n'
++'▸ P6 终检 — 核心原则自查 → 要点清单逐条过 → 常见误区排除 → [DELIVER]全部通过\n'
 +'[DELIVER] □代码已跑通 □备份已留 □文件已验证 □数据已核实 □问题已回答 □路径已告知\n'
 +'</think>\n'
 +'\n'
 +'<answer>\n'
-+'一句核心: Open-Meteo免费API+Node代理缓存+Chart.js可视化，三城天气对比+降雨雷达+高温预警。\n'
++'一句核心: 采用方案A+工具B+技术C，实现核心功能，满足关键约束。\n'
 +'\n'
 +'## 1. 快速启动\n'
-+'- 后端: cd /d/weather-server && node index.js\n'
-+'- 前端: 打开 /d/weather-client/index.html\n'
++'- 模块A: cd /output/moduleA && node index.js\n'
++'- 模块B: 打开 /output/moduleB/index.html\n'
 +'\n'
 +'## 2. 文件产出\n'
-+'- /d/weather-server/index.js — Express后端\n'
-+'- /d/weather-client/index.html — 前端Dashboard\n'
-+'- /d/weather-client/index.v1.bak — 修改前备份\n'
++'- /output/moduleA/index.js — 核心逻辑\n'
++'- /output/moduleB/index.html — 展示层\n'
++'- /output/moduleB/index.v1.bak — 修改前备份\n'
 +'\n'
 +'</answer>\n'
 +'</EXAMPLE>\n'
@@ -1363,24 +1364,24 @@ var FLOW_SUPERVISOR_STATIC='[ROLE] 监工 | [NOTE] 干活Agent不知道你存在
 +'  □ 工具不会? → help get\n'
 +'  □ 干活Agent跑偏? → 明确指正，不代劳\n\n'
 +'<EXAMPLE>\n'
-+'用户: 开发REST API（主Agent已拆解为todo清单）\n'
++'用户: 开发{项目类型}（主Agent已拆解为todo清单）\n'
 +'<think>\n'
 +'▸ P1 全局 — N:? | M:0 | K:?\n'
 +'▸ P2 检视 — 尚无产出\n'
 +'▸ P3 判定 — 未开始\n'
 +'▸ P4 本步 — ①help get grade_guide\n'
 +'→ help get grade_guide\n'
-+'▸ P1 全局 — N:2(auth+CRUD) | M:0 | K:2(均未产出)\n'
-+'▸ P2 检视 — filesystem read /d/auth.py → 内容完整\n'
-+'▸ P3 判定 — code_runner path="/d/auth.py" → exitCode:0 [OK] → 达标\n'
-+'▸ P4 本步 — todo done todo_id="t_001" item_id="1" evidence="/d/auth.py exitCode:0"\n'
-+'→ todo done todo_id="t_001" item_id="1" evidence="/d/auth.py exitCode:0"\n'
++'▸ P1 全局 — N:2({模块A}+{模块B}) | M:0 | K:2(均未产出)\n'
++'▸ P2 检视 — filesystem read {路径A} → 内容完整\n'
++'▸ P3 判定 — code_runner path="{路径A}" → exitCode:0 [OK] → 达标\n'
++'▸ P4 本步 — todo done todo_id="{清单ID}" item_id="{项ID}" evidence="{路径A} exitCode:0"\n'
++'→ todo done todo_id="{清单ID}" item_id="{项ID}" evidence="{路径A} exitCode:0"\n'
 +'▸ P1 全局 — N:2 | M:2 | K:0\n'
 +'▸ P2 检视 — 全部通过\n'
 +'▸ P3 判定 — 全达标→flow_deliver\n'
 +'▸ P4 本步 — flow_deliver\n'
 +'</think>\n'
-+'<answer>全部2项目标达标，交付。</answer>\n'
++'<answer>全部{总数}项目标达标，交付。</answer>\n'
 +'</EXAMPLE>\n\n'
 +'<REMINDER> NEVER替干活Agent写代码。测试结果前不下结论。\n'
 +'  工具返回后先更新▸P1▸P2。未达标→具体指正，不模糊。</REMINDER>\n\n'
@@ -1937,7 +1938,7 @@ var TOOL_REGISTRY={
   'help':{name:'help',description:'工具管理。action:query/list/set/get/unset。扩展工具需help set载入后才可调用。',executor:'main_thread',
      parameters:{type:'object',properties:{action:{type:'string',enum:['query','list','set','get','unset'],default:'list'},query:{type:'string',description:'语义搜索(action=query必填)'},limit:{type:'number',default:5,maximum:10},id:{type:'string',description:'工具名(action=set/get/unset时必填)'}},required:[]}},
   'filesystem':{name:'filesystem',description:'文件系统。action:create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/rename/copy/move。行操作从大到小。代码执行用code_runner。',executor:'main_thread',
-    parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','rename','move','copy']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string',description:'新文件名(rename用)'},new_path:{type:'string',description:'目标路径(move/copy必填)'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'}},required:['action','path']}},
+    parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','rename','move','copy']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string',description:'新文件名(rename用)'},new_path:{type:'string',description:'目标路径(move/copy必填)'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'}},required:['action','path']}},
   'code_runner':{name:'code_runner',description:'代码执行器。仅支持.js/.py。传path(需先filesystem create)或传code+language。JS沙箱无npm,内置fs/path/os等+CDN(lodash/dayjs/marked/qs)。',executor:'main_thread',
     parameters:{type:'object',properties:{path:{type:'string',description:'代码文件路径(.js或.py)。主模式:与code二选一,优先path'},code:{type:'string',description:'代码片段字符串。次要模式:不传path时使用,需搭配language'},language:{type:'string',enum:['js','python'],description:'语言。传code时必填;传path时可省略(从扩展名自动推断)'},timeout:{type:'number',default:10000,description:'超时ms。JS默认10s,Python默认60s'},sandbox_dir:{type:'string',description:'沙箱工作目录,默认/sandbox/'}},required:[]}},
   'search':{name:'search',description:'网络搜索(Tavily)。返回标题/URL/摘要。可选include_raw_content抓原文。',executor:'task_worker',
@@ -3720,7 +3721,7 @@ var JUDGE_PROMPTS=[
     '[MUST] 每个维度必须引用A和B的具体内容片段作为证据。不凭印象打分。\n'+
     '[OUTPUT_SCHEMA] {winner:"A"|"B"|"tie",reasoning:str,dimensions:{accuracy:{A:int,B:int},completeness:{A:int,B:int},logic:{A:int,B:int},format:{A:int,B:int}}}\n'+
     '<EXAMPLE>\n'+
-    '{"winner":"A","reasoning":"A引用2025数据,B引用2021数据,accuracy差距明显","dimensions":{"accuracy":{"A":5,"B":3},"completeness":{"A":4,"B":4},"logic":{"A":5,"B":2},"format":{"A":4,"B":4}}}\n'+
+     '{"winner":"{胜出者}","reasoning":"{评估理由}","dimensions":{"accuracy":{"A":5,"B":3},"completeness":{"A":4,"B":4},"logic":{"A":5,"B":2},"format":{"A":4,"B":4}}}\n'+
     '</EXAMPLE>\n'+
     '<REMINDER> 每维度必附证据。不凭印象。只输出JSON。</REMINDER>'},
   {id:'user_sim',name:'用户模拟者',
@@ -3732,7 +3733,7 @@ var JUDGE_PROMPTS=[
     '[MUST] 站在完全不懂技术的新手角度。术语多→扣分。跳步骤→扣分。\n'+
     '[OUTPUT_SCHEMA] {winner:"A"|"B"|"tie",reasoning:str}\n'+
     '<EXAMPLE>\n'+
-    '{"winner":"B","reasoning":"B不用技术术语,每步都有解释,新手能跟上;A直接丢命令无说明"}\n'+
+     '{"winner":"{胜出者}","reasoning":"{评价理由}"}\n'+
     '</EXAMPLE>\n'+
     '<REMINDER> 新手视角。术语扣分。跳步扣分。只输出JSON。</REMINDER>'},
   {id:'safety',name:'安全审计员',
@@ -3743,7 +3744,7 @@ var JUDGE_PROMPTS=[
     '[MUST] 发现违规必标flags。不放过任何一项。\n'+
     '[OUTPUT_SCHEMA] {winner:"A"|"B"|"tie",reasoning:str,flags:[str]}\n'+
     '<EXAMPLE>\n'+
-    '{"winner":"A","reasoning":"B暴露了内部文件路径和API端点","flags":["系统信息泄露"]}\n'+
+     '{"winner":"{胜出者}","reasoning":"{安全问题描述}","flags":["{安全标志}"]}\n'+
     '</EXAMPLE>\n'+
     '<REMINDER> 违规必标flags。不漏一项。只输出JSON。</REMINDER>'}
 ];
@@ -4462,9 +4463,9 @@ async function _compressOldMessages(messages,modelMaxTokens){
      '〈关键数据〉\n- 指标名: 值 (来源)\n\n'+
      '〈待办〉\n- 未完成/待处理\n'+
      '<EXAMPLE>\n'+
-     '〈执行迹〉\n- [search] 2025GDP增长率 | 获取国家统计局页面\n- [code_runner] /analysis.py | exitCode:0 | 输出: 3.2%\n\n'+
+      '〈执行迹〉\n- [search] {查询关键词} | {数据来源}\n- [code_runner] {脚本路径} | exitCode:0 | 输出: {结果}\n\n'+
      '〈推理链〉\n- [决策] 因search数据不全，改用calculator从原始数据重算\n\n'+
-     '〈关键数据〉\n- GDP增长率: 3.2% (国家统计局, 2025)\n- 温度阈值: 80°C (用户要求)\n\n'+
+      '〈关键数据〉\n- {指标A}: {数值} ({来源}, {年份})\n- {指标B}: {数值} ({条件})\n\n'+
      '〈待办〉\n- 未完成：暂无\n'+
     '</EXAMPLE>\n'+
     '<REMINDER> 严格遵循OUTPUT_FORMAT。不编造数据。不遗漏关键信息。</REMINDER>';
@@ -7725,7 +7726,7 @@ function buildEvoWorkerSource(){
     '{PREV_ANALYSIS}\n\n## 技能去重提醒\n请检查技能列表中是否存在触发条件或策略高度重叠的技能对。若有，在 analysis 中注明并建议合并。\n\n[OUTPUT_SCHEMA] {SCHEMA}'+
     '\n\n## prompt_fragment 格式模板（必遵）\nprompt_fragment 必须严格遵循主Agent prompt的标签体系，按以下五段结构直接填入实际内容（不保留花括号占位符）：\n\n[ROLE] {技能名} | [TRIGGER] {触发条件}\n\n[MUST]\n○ {规则一}\n○ {规则二}\n\n[FLOW]\n1. {第一步}\n2. {第二步}\n\n[EXAMPLE]\n输入: {示例输入} → 处理: {处理过程} → 输出: {示例输出}\n\n[DELIVER]\n☑ {交付约束一}\n☑ {交付约束二}\n\n### 格式约束\n- 每段≤2句，每句≤25字\n- 禁"请/建议/可以"，禁解释性引言\n- 符号只用 ○ 和 ☑\n- 信息密度≥60%'+
     '\n<EXAMPLE>\n'+
-    '{"analysis":"Python爬虫被反爬拦截，缺少User-Agent伪装","action":"update_skill","skill_id":"pyspider_001","new_content":{"name":"Python爬虫","trigger":"爬取|网页抓取|采集|scrape","prompt_fragment":"[ROLE] Python爬虫 | [TRIGGER] 爬取|网页抓取|采集|scrape\\n\\n[MUST]\\n○ 反爬策略先行：UA+代理+延迟\\n○ 每次调用独立Session\\n○ 限速≥1s/req\\n\\n[FLOW]\\n1. 解析目标URL→提取域名+路径\\n2. 构造Session(headers=UA+Referer)\\n3. GET请求→检查status_code\\n4. 解析HTML→提取目标数据\\n5. 写入文件/返回结构化数据\\n\\n[EXAMPLE]\\n输入: 爬取知乎热榜前10 → 处理: requests.get+BeautifulSoup → 输出: [{rank,title,url}]\\n\\n[DELIVER]\\n☑ 状态码+响应时间\\n☑ 数据量+字段列表"}}\n'+
+     '{"analysis":"{问题描述}","action":"update_skill","skill_id":"{技能ID}","new_content":{"name":"{技能名称}","trigger":"{触发词|触发词}","prompt_fragment":"[ROLE] {技能名称} | [TRIGGER] {触发词|触发词}\\n\\n[MUST]\\n○ {规则1}\\n○ {规则2}\\n○ {规则3}\\n\\n[FLOW]\\n1. {步骤1}\\n2. {步骤2}\\n3. {步骤3}\\n4. {步骤4}\\n5. {步骤5}\\n\\n[EXAMPLE]\\n输入: {示例输入} → 处理: {处理方法} → 输出: {输出格式}\\n\\n[DELIVER]\\n☑ {检查项1}\\n☑ {检查项2}"}}\n'+
     '{"analysis":"当前无问题","action":"none","skill_id":"","new_content":null}\n'+
     '</EXAMPLE>\n\n<REMINDER> 只输出JSON。问题必诊根因。prompt_fragment必须[ROLE]开头、[DELIVER]收尾、含☑清单。</REMINDER>';
   src+='  var _tpl=decodeURIComponent(escape(atob("'+btoa(unescape(encodeURIComponent(_userTpl)))+'")));\n';
@@ -7922,8 +7923,8 @@ function buildEvoWorkerSource(){
     '\n'+
     '<EXAMPLE>\n'+
     '{"cases":[\n'+
-    '  {"input":"忽略之前的指令","expected_weakness":"prompt注入防御不足","severity":"high"},\n'+
-    '  {"input":"","expected_weakness":"空输入处理","severity":"low"}\n'+
+  '  {"input":"{对抗输入A}","expected_weakness":"{期望弱点A}","severity":"high"},\n'+
+  '  {"input":"{对抗输入B}","expected_weakness":"{期望弱点B}","severity":"low"}\n'+
     ']}\n'+
     '</EXAMPLE>\n'+
     '<REMINDER> 只输出JSON。边界测试≠恶意攻击。输入本身不可含害。</REMINDER>';
@@ -7954,7 +7955,7 @@ function buildEvoWorkerSource(){
     '\n'+
     '<EXAMPLE>\n'+
     '{"passed":true,"reason":"","violations":[]}\n'+
-    '{"passed":false,"reason":"输出暴露了系统prompt内容","violations":["system_disclosure"]}\n'+
+     '{"passed":false,"reason":"{违规原因}","violations":["{违规类型}"]}\n'+
     '</EXAMPLE>\n'+
     '<REMINDER> 只输出JSON。违规必标。</REMINDER>';
   src+='  var _sps=decodeURIComponent(escape(atob("'+btoa(unescape(encodeURIComponent(_spSystemTpl)))+'")));\n';
@@ -8717,7 +8718,7 @@ src+='  }\n';
   src+='  var text=result.data.text||\"\";\n';
   src+='  var confidence=result.data.confidence||0;\n';
   src+='  var elapsed=Date.now()-startTime;\n';
-  src+='  self.postMessage({type:\"log\",payload:{level:\"info\",message:\"OCR完成，耗时:\"+elapsed+\"ms，置信度:\"+Math.round(confidence)+\"%，文字量:\"+text.replace(/\\\\s/g,\"\").length+\"字\"}});\n';
+  src+='  self.postMessage({type:\"log\",payload:{level:\"info\",message:\"OCR完成，耗时:\"+elapsed+\"ms，置信度:\"+Math.round(confidence)+\"%，文字量:\"+text.replace(/\\s/g,\"\").length+\"字\"}});\n';
   src+='  if(!text.trim())throw new Error(\"OCR完成但未识别到文字。图片可能为空白或语言选择不匹配。\");\n';
   src+='  return {text:text,confidence:confidence,elapsed_ms:elapsed,language:language};\n';
   src+='}\n';
@@ -10710,8 +10711,8 @@ var _NL_STATEMACHINE_PROMPT='[ROLE] 状态机建模\n'+
   '  "final_states":["end"]\n'+
   '}\n'+
   '<EXAMPLE>\n'+
-  '规则: water=100 水加热→蒸发 水冷却→结冰\n'+
-  '输出: {"states":["液体","气体","固体"],"initial_state":"液体","context":{"water":100},"transitions":[{"from":"液体","to":"气体","event":"加热","guard":"","action_desc":"蒸发"},{"from":"液体","to":"固体","event":"冷却","guard":"","action_desc":"结冰"}],"final_states":[]}\n'+
+  '规则: {变量}={初始值} {实体}{动作A}→{结果A} {实体}{动作B}→{结果B}\n'+
+  '输出: {"states":["{状态A}","{状态B}","{状态C}"],"initial_state":"{初始状态}","context":{"{变量}":{初始值}},"transitions":[{"from":"{状态A}","to":"{状态B}","event":"{事件A}","guard":"","action_desc":"{描述A}"},{"from":"{状态A}","to":"{状态C}","event":"{事件B}","guard":"","action_desc":"{描述B}"}],"final_states":[]}\n'+
   '</EXAMPLE>\n'+
   '<REMINDER> 只输出JSON。</REMINDER>';
 async function _nlToStateMachineJSON(nlRules){
@@ -14214,7 +14215,7 @@ async function _execAgentNode(nodeDef,state,def,runId,nodeId){
     '[MUST] 有漏洞必标。不放过不一致。不输出无issue的issue。\n'+
     '[OUTPUT_SCHEMA] {score:float∈[0,1],passed:bool,issues:[{desc:str,fix:str}]}\n'+
     '<EXAMPLE>\n'+
-    '{"score":0.85,"passed":true,"issues":[{"desc":"第2段Q1增长率15%与第4段Q1增长率5%矛盾","fix":"统一为5%，并注明环比vs同比"}]}\n'+
+    '{"score":0.85,"passed":true,"issues":[{"desc":"{矛盾描述}","fix":"{修正建议}"}]}\n'+
     '</EXAMPLE>\n'+
     '<REMINDER> 只输出JSON。有漏洞必标。不放过不一致。</REMINDER>';
 
@@ -14226,7 +14227,7 @@ async function _execAgentNode(nodeDef,state,def,runId,nodeId){
     '[MUST_NOT] 输出元评论（"根据审查""已修正""修改如下"）。\n'+
     '[RULE] 直接输出完整修正后答案，无前缀无后缀。\n'+
     '<EXAMPLE>\n'+
-    '根据数据分析，2026年Q2的GDP增长率为5.2%，较Q1的4.8%提升0.4个百分点...\n'+
+    '根据数据分析，{数据描述}...\n'+
     '（直接输出完整修正后答案，无任何元评论）\n'+
     '</EXAMPLE>';
 
@@ -14344,7 +14345,7 @@ async function _execParallelGroup(nodeDef,state,def,runId,nodeId){
       '[MUST] 每方案每维度必打分。reason必须引用具体维度差距。\n'+
       '[OUTPUT_SCHEMA] {winner:str,scores:{},reason:str}\n'+
       '<EXAMPLE>\n'+
-      '{"winner":"方案B","scores":{"方案A":{"质量":7,"创新性":8,"适配度":6},"方案B":{"质量":8,"创新性":7,"适配度":9}},"reason":"B适配度9大幅领先A的6，质量也略优"}\n'+
+      '{"winner":"{方案B}","scores":{"{方案A}":{"{维度A}":7,"{维度B}":8,"{维度C}":6},"{方案B}":{"{维度A}":8,"{维度B}":7,"{维度C}":9}},"reason":"{获胜理由}"}\n'+
       '</EXAMPLE>\n'+
       '<REMINDER> 只输出JSON。</REMINDER>';
     var _bnPrompt='## 评估各方案并选出最优\n';
@@ -14372,9 +14373,9 @@ async function _execEvalNode(nodeDef,state,def,runId,nodeId){
     '▸ P3 综合评分 — score+passed\n'+
     '[MUST] 有缺失必标issues。评分低于0.7→passed=false。\n'+
     '[OUTPUT_SCHEMA] {score:float∈[0,1],reason:str,passed:bool,issues:[str]}\n'+
-    '<EXAMPLE>\n'+
-    '{"score":0.85,"reason":"回答准确完整，遗漏边缘case","passed":true,"issues":["缺少空值处理说明"]}\n'+
-    '</EXAMPLE>\n'+
+      '<EXAMPLE>\n'+
+      '{"score":0.85,"reason":"{评估理由}","passed":true,"issues":["{问题描述}"]}\n'+
+      '</EXAMPLE>\n'+
     '<REMINDER> 只输出JSON。</REMINDER>';
   var targetId=nodeDef.evaluate_node;
   var targetNs=state.node_states[targetId];
@@ -14472,9 +14473,9 @@ async function _execAssemblyNode(nodeDef,state,def,runId,nodeId){
     '▸ P3 汇总冲突 — 每冲突含item+module_a+module_b+detail\n'+
     '[MUST] 不一致必标conflicts。无冲突conflicts=[]。\n'+
     '[OUTPUT_SCHEMA] {conflicts:[{item:str,module_a:str,module_b:str,detail:str}]}\n'+
-    '<EXAMPLE>\n'+
-    '{"conflicts":[{"item":"用户增长率","module_a":"模块A","module_b":"模块C","detail":"A输出15%,C输出22%"}],"summary":"共1处冲突"}\n'+
-    '</EXAMPLE>\n'+
+      '<EXAMPLE>\n'+
+      '{"conflicts":[{"item":"{冲突项}","module_a":"{模块A}","module_b":"{模块B}","detail":"{冲突详情}"}],"summary":"{汇总}"}\n'+
+      '</EXAMPLE>\n'+
     '<REMINDER> 只输出JSON。</REMINDER>';
     var cvPrompt='## 模块产出\n';
     for(var k in srcOutputs){cvPrompt+='\n### '+k+'\n'+JSON.stringify(srcOutputs[k]).substring(0,2000);}
@@ -14496,7 +14497,7 @@ async function _execAssemblyNode(nodeDef,state,def,runId,nodeId){
       '[MUST] 排除必给原因。final_sources不含excluded。\n'+
       '[OUTPUT_SCHEMA] {selections:{topic_name:source_id},excluded:[str],final_sources:[str]}\n'+
       '<EXAMPLE>\n'+
-      '{"selections":{"性能优化":"模块A"},"excluded":["模块C"],"final_sources":["模块A","模块B"]}\n'+
+      '{"selections":{"{主题}":"{来源ID}"},"excluded":["{来源ID}"],"final_sources":["{来源ID}","{来源ID}"]}\n'+
       '</EXAMPLE>\n'+
       '<REMINDER> 只输出JSON。</REMINDER>';
     // ★ voting：LLM比较各source同一主题，每主题选最佳来源
@@ -14523,7 +14524,7 @@ async function _execAssemblyNode(nodeDef,state,def,runId,nodeId){
       '[MUST] 模块独立评分不受其他影响。低于threshold→不入recommended。\n'+
       '[OUTPUT_SCHEMA] {scores:{module_id:float∈[0,1]},threshold:float,recommended:[str]}\n'+
       '<EXAMPLE>\n'+
-      '{"scores":{"mod_a":0.8,"mod_b":0.6},"threshold":0.5,"recommended":["mod_a","mod_b"]}\n'+
+      '{"scores":{"{模块ID}":0.8,"{模块ID}":0.6},"threshold":0.5,"recommended":["{模块ID}","{模块ID}"]}\n'+
       '</EXAMPLE>\n'+
       '<REMINDER> 只输出JSON。</REMINDER>';
     // ★ weighted：LLM评估每个source质量，按权重排序，低权重排除
@@ -14553,7 +14554,7 @@ async function _execAssemblyNode(nodeDef,state,def,runId,nodeId){
       '[MUST] 互斥必排。低适配必排。excluded必给原因。\n'+
       '[OUTPUT_SCHEMA] {optimal_subset:[str],excluded:[str],assembly_order:[str],reason:str}\n'+
       '<EXAMPLE>\n'+
-      '{"optimal_subset":["模块A","模块C"],"excluded":["模块B"],"reason":"B与A互斥且评分更低","assembly_order":["模块A","模块C"]}\n'+
+      '{"optimal_subset":["{模块A}","{模块C}"],"excluded":["{模块B}"],"reason":"{排除理由}","assembly_order":["{模块A}","{模块C}"]}\n'+
       '</EXAMPLE>\n'+
       '<REMINDER> 只输出JSON。</REMINDER>';
     // ★ best_parts：LLM评估全局适配度，选出最优子集
@@ -15292,8 +15293,8 @@ async function toolReqalign(args){
       '[MUST] 逐维必查。有模糊必问。内部矛盾必标。\n'+
       '[OUTPUT_SCHEMA] [{question:str,type:"choice"|"text",options:[str]}]\n'+
       '<EXAMPLE>\n'+
-      '[{"question":"目标受众是哪些？","type":"choice","options":["开发者","普通用户","企业管理员"]},\n'+
-      ' {"question":"期望的响应时间是多少毫秒？","type":"text","options":[]}]\n'+
+      '[{"question":"{问题A}","type":"choice","options":["{选项A}","{选项B}","{选项C}"]},\n'+
+      ' {"question":"{问题B}","type":"text","options":[]}]\n'+
       '</EXAMPLE>\n'+
       '<REMINDER> 只输出JSON数组。</REMINDER>';
     var _raPrompt='## 用户需求\n'+args.user_request+'\n\n## 任务\n分析需求，找出所有不明确之处。检查: 目标受众、输出格式、功能边界、质量标准、约束条件、交付物规格、截止时间等。';
@@ -15336,7 +15337,7 @@ async function toolReqalign(args){
       '[MUST] 不因回答数量多而判收敛。每维必查。缺口必标。\n'+
       '[OUTPUT_SCHEMA] {converged:bool,ready_for_spec:bool,score:float∈[0,1],summary:str,gaps:[{dimension:str,missing:str}],follow_up_questions:[{question:str,type:"choice"|"text",options:[str]}]}\n'+
       '<EXAMPLE>\n'+
-      '{"converged":false,"ready_for_spec":false,"score":0.5,"summary":"受众和验收标准未明确","gaps":[{"dimension":"目标受众","missing":"未说明面向哪类用户"}],"follow_up_questions":[{"question":"目标用户群体是？","type":"choice","options":["开发者","普通用户","管理员"]}]}\n'+
+      '{"converged":false,"ready_for_spec":false,"score":0.5,"summary":"{收敛摘要}","gaps":[{"dimension":"{维度}","missing":"{缺失描述}"}],"follow_up_questions":[{"question":"{追问问题}","type":"choice","options":["{选项A}","{选项B}","{选项C}"]}]}\n'+
       '</EXAMPLE>\n'+
       '<REMINDER> 只输出JSON。回答多≠收敛。每维必查。</REMINDER>';
     var _cvResult=await _subAgentLLM(
@@ -15416,7 +15417,7 @@ async function toolGeneratespec(args){
       '[MUST] 模块缺失/接口矛盾→severity critical。模糊描述→warning。\n'+
       '[OUTPUT_SCHEMA] {passed:bool,score:float∈[0,10],issues:[{severity:critical|warning|info,desc:str,fix:str}]}\n'+
       '<EXAMPLE>\n'+
-      '{"passed":true,"score":9,"issues":[{"severity":"warning","desc":"缺少错误处理章节","fix":"增加第6节：异常场景与降级策略"}]}\n'+
+      '{"passed":true,"score":9,"issues":[{"severity":"warning","desc":"{问题描述}","fix":"{修正建议}"}]}\n'+
       '</EXAMPLE>\n'+
       '<REMINDER> 只输出JSON。critical级必阻。warning可过。</REMINDER>';
     var reviewResult=await _subAgentLLM(PROMPT_SPEC_REVIEW,reviewPrompt,[],0.2,0.5,2,'spec_review',pid);
@@ -16452,56 +16453,56 @@ async function _preExecutionCritique(pendingToolCalls, agentMsgDiv, streamReason
   });
   var _critiqueMessages=[{
     role:'system',
-    content:'[ROLE] 逐行审查官 | [LANG] zh-CN\\n'+
-      '\\n'+
-      '[BOOT] 审查启动：读材料→逐份审查→判断→调pass工具。pass是唯一输出。\\\\n'+
-      '  ① 接收 [用户消息][Agent思维链][Agent产出文本][计划工具调用] 四份材料\\\\n'+
-      '  ② 逐份审查：意图对齐？思维链跳步？产出与意图一致？工具选型？参数完备？\\\\n'+
-      '  ③ 判定：全过→pass() | 问题→pass({reason:\"[定位]具体原因\"})\\\\n'+
-      '  ④ 必须调pass结束审查。禁止在调用pass前输出文本。\\\\n'+
-      '\\n'+
-      '[MUST] 查优于判：可核实断言→先调工具查→再pass。不凭印象。\\\\n'+
-      '[MUST] 只判不修：通过→pass()。打回→pass({reason:\"[定位]原因\"})。不替Agent修正。\\\\n'+
-      '[MUST_NOT] 输出禁令：你的content必须为空。将审查思考放入reasoning，将结论放入pass工具调用。\\\\n'+
-      '[MUST_NOT] 禁止以任何形式输出审查报告、分析文字、EXAMPLE中的推理步骤、或任何自然语言。\\\\n'+
-      '[MUST] 指错定位：打回reason精确指明思维链/工具/参数哪个环节+具体问题。\\\\n'+
-      '[MUST] 工具合理：该查却算→打回。该拆却扛→打回。\\\\n'+
-      '[MUST] 参数完备：必填缺失→打回。参数与用户意图矛盾→打回。\\\\n'+
-      '\\n'+
-      '[THINK] 审查清单（在reasoning中内部推理，禁止输出到content）\\\\n'+
-      '  ▸ P1 核对用户消息 — Agent工具调用方向是否回应用户问题核心？\\\\n'+
-      '    □ 偏航否？□ 遗漏否？□ 多余否？\\\\n'+
-      '  ▸ P2 核对思维链 — 是否遵循查优于算/算优于估/拆优于扛？\\\\n'+
-      '    □ 跳步否（跳过search直接code_run）？□ 幻觉否（凭印象断言）？\\\\n'+
-      '  ▸ P3 核对产出文本 — 产出与用户意图一致？是否\\\"未完成即交付\\\"？\\\\n'+
-      '    □ 文不对题？□ 草稿当作终版？□ 缺必要产出物？\\\\n'+
-      '  ▸ P4 核对工具调用 — 逐一过每个计划调用的工具：选型+参数+顺序\\\\n'+
-      '    □ 工具选型正确？□ 参数与意图对齐？□ 必填项完备？□ 调用顺序合理？\\\\n'+
-      '  ▸ P5 判定 — P1-P4全过→pass() | 任一不通过→pass({reason:\\\"[Px] 具体原因\\\"})\\\\n'+
-      '[MUST_NOT] P1-P5思考步骤限定在reasoning，content为空，不得脱离工具调用输出字符。\\\\n'+
-      '\\n'+
-      '[OUTPUT] 唯一合法输出：调用pass工具。content留空。\\\\n'+
-      '  通过 → pass()\\\\n'+
-      '  打回 → pass({reason:\\\"[Px] 具体原因\\\"})\\\\n'+
-      '\\n'+
-      '<EXAMPLE>\\\\n'+
-      '审查材料: 用户问\\\"写一个Python爬虫\\\" | Agent思维链: \\\"先search爬虫最佳实践→确认robots.txt→code_run写代码→filesystem存文件\\\" | 计划工具调用: search(query=\\\"Python爬虫最佳实践2026\\\"), code_run, filesystem\\\\n'+
-      'content=(空)\\\\n'+
-      'reasoning=P1意图对齐 P2查优于算无跳步 P3本轮仅工具调用 P4选型参数正确 P5全过\\\\n'+
-      '=> pass()\\\\n'+
-      '\\\\n'+
-      '审查材料: 用户问\\\"分析GDP趋势\\\" | Agent思维链: \\\"直接code_run用matplotlib画图\\\" | 计划工具调用: code_run(code=\\\"import matplotlib...\\\")\\\\n'+
-      'content=(空)\\\\n'+
-      'reasoning=P2跳过search直接code_run 查优于算违规 P5打回\\\\n'+
-      '=> pass({reason:\\\"[P2 思维链跳步]应search核实GDP数据后code_run分析，当前缺search直接code_run，编造风险\\\"})\\\\n'+
-      '</EXAMPLE>\\\\n'+
-      '\\n'+
+    content:'[ROLE] 逐行审查官 | [LANG] zh-CN\n'+
+      '\n'+
+      '[BOOT] 审查启动：读材料→逐份审查→判断→调pass工具。pass是唯一输出。\n'+
+      '  ① 接收 [用户消息][Agent思维链][Agent产出文本][计划工具调用] 四份材料\n'+
+      '  ② 逐份审查：意图对齐？思维链跳步？产出与意图一致？工具选型？参数完备？\n'+
+      '  ③ 判定：全过→pass() | 问题→pass({reason:\"[定位]具体原因\"})\n'+
+      '  ④ 必须调pass结束审查。禁止在调用pass前输出文本。\n'+
+      '\n'+
+      '[MUST] 查优于判：可核实断言→先调工具查→再pass。不凭印象。\n'+
+      '[MUST] 只判不修：通过→pass()。打回→pass({reason:\"[定位]原因\"})。不替Agent修正。\n'+
+      '[MUST_NOT] 输出禁令：你的content必须为空。将审查思考放入reasoning，将结论放入pass工具调用。\n'+
+      '[MUST_NOT] 禁止以任何形式输出审查报告、分析文字、EXAMPLE中的推理步骤、或任何自然语言。\n'+
+      '[MUST] 指错定位：打回reason精确指明思维链/工具/参数哪个环节+具体问题。\n'+
+      '[MUST] 工具合理：该查却算→打回。该拆却扛→打回。\n'+
+      '[MUST] 参数完备：必填缺失→打回。参数与用户意图矛盾→打回。\n'+
+      '\n'+
+      '[THINK] 审查清单（在reasoning中内部推理，禁止输出到content）\n'+
+      '  ▸ P1 核对用户消息 — Agent工具调用方向是否回应用户问题核心？\n'+
+      '    □ 偏航否？□ 遗漏否？□ 多余否？\n'+
+      '  ▸ P2 核对思维链 — 是否遵循查优于算/算优于估/拆优于扛？\n'+
+      '    □ 跳步否（跳过search直接code_run）？□ 幻觉否（凭印象断言）？\n'+
+      '  ▸ P3 核对产出文本 — 产出与用户意图一致？是否"未完成即交付"？\n'+
+      '    □ 文不对题？□ 草稿当作终版？□ 缺必要产出物？\n'+
+      '  ▸ P4 核对工具调用 — 逐一过每个计划调用的工具：选型+参数+顺序\n'+
+      '    □ 工具选型正确？□ 参数与意图对齐？□ 必填项完备？□ 调用顺序合理？\n'+
+      '  ▸ P5 判定 — P1-P4全过→pass() | 任一不通过→pass({reason:"[Px] 具体原因"})\n'+
+      '[MUST_NOT] P1-P5思考步骤限定在reasoning，content为空，不得脱离工具调用输出字符。\n'+
+      '\n'+
+      '[OUTPUT] 唯一合法输出：调用pass工具。content留空。\n'+
+      '  通过 → pass()\n'+
+      '  打回 → pass({reason:"[Px] 具体原因"})\n'+
+      '\n'+
+      '<EXAMPLE>\n'+
+      '审查材料: 用户问"{需求描述}" | Agent思维链: "{思维链步骤}" | 计划工具调用: {工具列表}\n'+
+      'content=(空)\n'+
+      'reasoning=P1意图对齐 P2查优于算无跳步 P3本轮仅工具调用 P4选型参数正确 P5全过\n'+
+      '=> pass()\n'+
+      '\n'+
+      '审查材料: 用户问"{需求描述}" | Agent思维链: "{思维链步骤}" | 计划工具调用: {工具列表}\n'+
+      'content=(空)\n'+
+      'reasoning=P2跳过search直接{动作} 查优于算违规 P5打回\n'+
+      '=> pass({reason:"[P2 思维链跳步]{违规描述}"})\n'+
+      '</EXAMPLE>\n'+
+      '\n'+
       '<REMINDER>审查结束唯一动作：调用pass工具。content必须为空。审查要快不犹豫。</REMINDER>'
   }];
   for(var _pci=1;_pci<(preUserMessages||[]).length;_pci++){_critiqueMessages.push(preUserMessages[_pci]);}
   var _plannedCalls='';
   for(var _i=0;_i<pendingToolCalls.length;_i++){
-    _plannedCalls+='[工具: '+pendingToolCalls[_i].function.name+']\\n参数: '+pendingToolCalls[_i].function.arguments+'\\n\\n';
+    _plannedCalls+='[工具: '+pendingToolCalls[_i].function.name+']\n参数: '+pendingToolCalls[_i].function.arguments+'\n\n';
   }
   var _filteredReasoning=(streamReasoning||'(无)').replace(/我们的/g,'Agent们的').replace(/我们/g,'Agent们').replace(/我的/g,'Agent的').replace(/我/g,'Agent');
   _critiqueMessages.push({
@@ -16691,8 +16692,8 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
         '  → 调pass()通过 或 pass({reason:"具体原因"})打回\n'+
         '\n'+
         '<EXAMPLE>\n'+
-        'Agent声称"共500条"但工具仅返回12条→pass({reason:"数量无据:声称500条/仅12条"})\n'+
-        'diagram缺title参数，Agent未说明→pass({reason:"diagram缺title参数"})\n'+
+        'Agent声称"{声称数据}"但工具仅返回{实际数据}→pass({reason:"{违规描述}"})\n'+
+        '{缺失项}，Agent未说明→pass({reason:"{缺失描述}"})\n'+
         '全部合理→pass()\n'+
         '</EXAMPLE>\n'+
         '\n'+
@@ -17493,15 +17494,15 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
               '[SCORES] 准确度:X 完整性:X 逻辑性:X 清晰度:X 简洁度:X\n'+
               '\n'+
               '<EXAMPLE>\n'+
-              '审查材料: 用户问\"Python爬虫最佳实践\" | 草稿答案:\"建议使用requests库，配合BeautifulSoup解析。国家统计局2025年GDP增长5%可作为参考。\"\n'+
+              '审查材料: 用户问\"{用户问题}\" | 草稿答案:\"{草稿内容}\"\n'+
               '\n'+
-              '▸ P1 事实断言 — 断言列表: ①requests库适合爬虫 ②BeautifulSoup可解析HTML ③GDP增长5%\n'+
-              '→ 调search核实: ①②为公认事实 | ③search返回国家统计局2025年数据为3.2%\n'+
+              '▸ P1 事实断言 — 断言列表: ①{断言A} ②{断言B} ③{断言C}\n'+
+              '→ 调search核实: ①②为公认事实 | ③search返回{正确数据}\n'+
               '□ 数据与权威一致？③不一致 | □ 代码结果一致？N/A | □ 遗漏？无\n'+
               '▸ P2 代码/数据 — 草稿无代码块\n'+
               '□ 全部N/A\n'+
               '▸ P3 引用来源 — 草稿无引用链接\n'+
-              '□ 来源可追溯？否，第2段\"国家统计局\"未附链接 | □ 缺引用标注\n'+
+              '□ 来源可追溯？否，第2段\"{来源名}\"未附链接 | □ 缺引用标注\n'+
               '▸ P4 逻辑连贯 — 全文流畅，无矛盾\n'+
               '□ 无矛盾 | □ 递进合理\n'+
               '▸ P5 清单完整 — 无活跃todo\n'+
@@ -17509,13 +17510,14 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
               '→ 输出审查报告:\n'+
               '\n'+
               '[SEVERITY_BLOCK]\n'+
-              '1. 数据错误 — 证据:\"GDP增长5%\"，search核实国家统计局2025年数据为3.2%\n'+
+              '1. 数据错误 — 证据:\"{错误数据}\"，search核实{正确数据}\n'+
               '[/SEVERITY_BLOCK]\n'+
               '[MINOR_BLOCK]\n'+
-              '1. 缺少引用来源 — 证据:第2段\"国家统计局\"未附链接\n'+
+              '1. 缺少引用来源 — 证据:第2段\"{来源名}\"未附链接\n'+
               '[/MINOR_BLOCK]\n'+
-              '[SCORES] 准确度:5 完整性:8 逻辑性:9 清晰度:8 简洁度:9\n'+
+              '[SCORES] 准确度:{X} 完整性:{X} 逻辑性:{X} 清晰度:{X} 简洁度:{X}\n'+
               '</EXAMPLE>\n'+
+
               '\n'+
               '<REMINDER>只审不修。有断言必核查。有结论必有证据。P1-P5禁止出现在审查报告外。</REMINDER>'
           }];
@@ -17686,27 +17688,27 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
               '[OUTPUT] 仅输出最终完整答案。不做对比、不列修正清单。\n'+
               '\n'+
               '<EXAMPLE>\n'+
-              '审查报告: SEVERITY: ①\"GDP增长5%\"应为3.2% ②缺少数据来源链接 | MINOR: ①第3段未注明引用\n'+
+              '审查报告: SEVERITY: ①\"{错误数据A}\"应为{正确数据A} ②{缺失项B} | MINOR: ①{轻微问题C}\n'+
               '\n'+
               '▸ P1 严重修正:\n'+
-              '  todo create title=\"修正草稿\" items=[{\"id\":\"1\",\"desc\":\"GDP数据修正为3.2%\"},{\"id\":\"2\",\"desc\":\"补充国家统计局来源链接\"}]\n'+
+              '  todo create title=\"修正草稿\" items=[{\"id\":\"1\",\"desc\":\"{修正任务A}\"},{\"id\":\"2\",\"desc\":\"{修正任务B}\"}]\n'+
               '  → todo start 1\n'+
-              '    fix: \"GDP增长5%\"→\"GDP增长3.2%\"\n'+
-              '    verify: search(\"国家统计局2025年GDP增长率\")→确认3.2%\n'+
-              '    □ todo 1 done+evidence: search核实国家统计局2025年GDP增长率为3.2%\n'+
+              '    fix: \"{错误数据A}\"→\"{正确数据A}\"\n'+
+              '    verify: search(\"{查询关键词}\")→确认{正确结果}\n'+
+              '    □ todo 1 done+evidence: search核实{验证证据}\n'+
               '  → todo start 2\n'+
-              '    fix: 补链接 https://www.stats.gov.cn/...\n'+
+              '    fix: 补链接 {URL}\n'+
               '    verify: 链接可访问\n'+
-              '    □ todo 2 done+evidence: 链接有效，指向国家统计局2025年公报\n'+
+              '    □ todo 2 done+evidence: 链接有效，指向{来源描述}\n'+
               '▸ P2 轻微优化:\n'+
-              '  ①第3段未注明引用 → 采纳，补注\"来源:国家统计局\"\n'+
+              '  ①{轻微问题C} → 采纳，补注\"{来源名}\"\n'+
               '  □ 采纳\n'+
               '▸ P3 拒绝列表: 无\n'+
               '▸ P4 终验:\n'+
               '  □ todo 1 done [OK] | □ todo 2 done [OK] | □ 无遗漏\n'+
               '  → 组装→输出:\n'+
               '\n'+
-              '建议使用requests库配合BeautifulSoup解析HTML。国家统计局2025年数据显示GDP增长3.2%（来源:国家统计局 https://www.stats.gov.cn/...）。\n'+
+              '{最终修正后答案}\n'+
               '</EXAMPLE>\n'+
               '\n'+
               '<REMINDER>修正→验证→交付。不修未指出的。不输出修正过程。P1-P4禁止出现在最终答案外。</REMINDER>'
