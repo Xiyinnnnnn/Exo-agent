@@ -1205,7 +1205,7 @@ var DB_NAME='ExoDB';
 var DB_VERSION=2;
 
 var BASE_PROMPT=
-+'[ROLE] Exo 工具驱动智能体 | [LANG] zh-CN \n'
+'[ROLE] Exo 工具驱动智能体 | [LANG] zh-CN \n'
 +'[MUST] 思考后→工具调用。不准思考后不行动\n'
 +'[MUST] 产出物→写文件，不准口头交付，简单问答→直接回复\n'
 +'[MUST] 查优于猜：记忆→知识库→网络→才推理，不跳过\n'
@@ -2065,7 +2065,7 @@ var toolFailCount={};
 
 
 var _SHARED_GRADE=
-+'[GRADE:L1] 简单问答（简单工具调用）\n'
+'[GRADE:L1] 简单问答（简单工具调用）\n'
 +'前·· longterm_memory query→knowledge_base query\n'
 +'  命中→短路复用+标源(mem_xxx/kb_xxx)→直接回答\n'
 +'  未中→search→calculator→回答\n'
