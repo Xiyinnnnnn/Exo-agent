@@ -1230,6 +1230,7 @@ var BASE_PROMPT=
 +'[MEMORY_LOOP] 回答前检索·回答后存储 — 每轮闭环，漏→不交付：\n'
 +'  前·· longterm_memory action="query" → 命中复用+标源 | 未中→标"无历史"\n'
 +'  前·· knowledge_base action="query" → 命中复用+标源 | 未中→标"无知识"\n'
++'  缺口·· 前··两者皆空→help list→set查模板再自建\n'
 +'  后·· longterm_memory action="store" entry={text:"<需求+回答+决策>",category:"对话总结"}\n'
 +'  后·· knowledge_base action="store" entry={title:"<可复用点>",content:"<结构化>",category:"技术参考"}\n'
 +'[MUST] 每轮必写记忆库。知识库有知识才写，L1→跳过。\n'
@@ -1237,13 +1238,18 @@ var BASE_PROMPT=
 +'[MUST] 内部推理写入 <think>...</think>，最终答案写入 <answer>...</answer>\n'
 +'[MUST_NOT] ▸P1-▸P6思考步骤不得出现在<answer>内，不得脱离<think>标签裸奔\n'
 +'[MUST] 内部推理流程（仅在<think>内执行，不对用户展示）：\n'
-+'  ▸ P1 拆解意图 — 核心意图+隐含需求+身份层级 → 锁定回答边畍\n'
++'  ▸ P1 拆解意图 — [GRADE:___] 核心意图+隐含需求+身份层级 → 锁定回答边畍\n'
 +'  ▸ P2 检索知识 — 执行[MEMORY_LOOP]前··：\n'
 +'    longterm_memory query → knowledge_base query → 标注命中/未中\n'
 +'    → 关键概念+常见误区+缺口标注\n'
 +'    [MUST] 记忆/知识命中→直接复用。仍有缺口→search补全+log记录+缺口标记。不编造。\n'
-+'  ▸ P3 构建框架 — 输出逻辑链(步骤→依赖→产出)+每块一句主旨。P2有缺口→框架标注资料/推理\n'
-+'    校验 — 能否按序执行？漏项否？\n'
++'  ▸ P3 构建框架 — 列步骤表(步骤→依赖→产出)+每块一句主旨\n'
++'    | 步骤 | 依赖 | 产出 | 主旨 |\n'
++'    |------|------|------|------|\n'
++'    | T1   | —    | O1   | 核心 |\n'
++'    | T2   | T1   | O2   | 扩展 |\n'
++'    | T3   | T2   | O3   | 验证 |\n'
++'    P2有缺口→标注资料/推理 | 校验—按序执行？漏项？\n'
 '  ▸ P4 起草并自检 — 逐块产出。工具调用↔□自检同块交替，块完再入下一块。全块通过→P5\n'
 +'    □ 缺概念需补？□ 有漏洞或绝对化？□ 分清了必须做/建议做？□ 可操作？\n'
 +'    [MUST] 发现问题→当场修正→标注修正\n'
@@ -1273,22 +1279,28 @@ var BASE_PROMPT=
 +'\n'
 +'<think>\n'
 +'[GRADE:L4]\n'
-+'▸ P1 拆解意图 — 核心=分析需求本质，确定产出物范围 | 隐含=识别未明说约束 | 层级=L4(项目级)\n'
++'▸ P1 拆解意图 — [GRADE:L4] 核心=需求分析→产出范围 | 隐含=识别约束\n'
 +'\n'
-+'▸ P2 检索知识 — 概念=搜索相关技术方案 | 缺口=标记待确认点\n'
++'▸ P2 检索知识 — 执行[MEMORY_LOOP]前··：\n'
++'→longterm_memory query "多模块" → 标"无历史"\n'
++'→knowledge_base query "项目架构" → 标"无知识"\n'
++'→缺口·· 两者皆空→help list→set查模板→无匹配自建\n'
 +'→search "相关技术方案 最佳实践 2026"\n'
-+'→search "alternative solution comparison 2026" include_raw_content=true\n'
-+'→记录搜索轨迹至 /output/search_log.md\n'
-+'→确认: 技术选型明确 | 可行性验证通过\n'
-+'→缺口标记: 有资料需适配（部分接口非标准，需做适配层）\n'
++'→search "alternative comparison 2026" raw=true\n'
++'→记录轨迹至 /output/search_log.md\n'
++'→确认: 选型明确 | 缺口标记: 接口非标需适配\n'
 +'\n'
-+'▸ P3 构建框架 — L4→触发 todo create+flow_mode start\n'
-+'  链=需求拆解→todo清单→flow_mode监工→干活Agent迭代\n'
-+'  校验: 依赖明确→各条目独立可测\n'
-+'→todo create title="多模块生产项目" items=[{"id":"1","desc":"模块A:核心逻辑+数据"},{"id":"2","desc":"模块B:展示层+交互"},{"id":"3","desc":"模块C:集成测试+部署"}]\n'
++'▸ P3 构建框架 — 列步骤表(步骤→依赖→产出)+主旨\n'
++'  | 步骤 | 依赖 | 产出 | 主旨 |\n'
++'  |------|------|------|------|\n'
++'  | T1拆解 | — | 清单 | 明确范围 |\n'
++'  | T2注册 | T1 | todo | 可验证 |\n'
++'  | T3监工 | T2 | flow | 自主迭代 |\n'
++'  校验: 依赖明确→条目可测\n'
++'→todo create title="多模块项目" items=[{"id":"1","desc":"模块A:核心"},{"id":"2","desc":"模块B:展示"},{"id":"3","desc":"模块C:集成"}]\n'
 +'→flow_mode start task="多模块生产级任务"\n'
 +'\n'
-'  ▸ P4 起草并自检 — 分Agent产出，工具调用↔□自检同块交替。全块通过→P5：\n'
++'  ▸ P4 起草并自检 — 分Agent产出，工具调用↔□自检同块交替。全块通过→P5：\n'
 +'  [AgentA] □异常处理+边界覆盖\n'
 +'  →filesystem create /output/moduleA/index.js\n'
 +'  [AgentB] □响应式+可配置\n'
@@ -1533,7 +1545,10 @@ async function toolMCTSPlan(args) {
     '[ROLE] 决策评估器\n' +
     '[THINK] ▸ P1 路径回顾 — 从头到尾重走一遍\n' +
     '▸ P2 一致性检查 — 每步前后是否矛盾？\n' +
-    '▸ P3 约束合规 — 是否违反任何约束？\n' +
+    '▸ P3 约束合规 — 约束检查表\n' +
+    '| 约束 | 状态 | 违反说明 |\n' +
+    '|------|------|---------|\n' +
+    '| 约束项 | V/!/X | 详细说明 |\n' +
     '▸ P4 风险/健壮性 — 哪步可能失败？替代路径？\n' +
     '▸ P5 综合评分 — composite_score\n' +
     '[MUST] death_risk非none时必须填death_type。\n' +
@@ -3721,6 +3736,12 @@ var JUDGE_PROMPTS=[
     '[THINK] ▸ P1 逐维度对比 — accuracy/completeness/logic/format各1-5\n'+
     '▸ P2 引用证据 — 每项评分附具体依据\n'+
     '▸ P3 加权综合 → 判定winner\n'+
+    '| 维度 | 权重 | A分 | B分 | 证据引用 |\n'+
+    '|------|------|-----|-----|--------|\n'+
+    '| accuracy | w1 | a | b | 引用 |\n'+
+    '| completeness | w2 | a | b | 引用 |\n'+
+    '| logic | w3 | a | b | 引用 |\n'+
+    '| format | w4 | a | b | 引用 |\n'+
     '[MUST] 每个维度必须引用A和B的具体内容片段作为证据。不凭印象打分。\n'+
     '[OUTPUT_SCHEMA] {winner:"A"|"B"|"tie",reasoning:str,dimensions:{accuracy:{A:int,B:int},completeness:{A:int,B:int},logic:{A:int,B:int},format:{A:int,B:int}}}\n'+
     '<EXAMPLE>\n'+
@@ -3732,6 +3753,11 @@ var JUDGE_PROMPTS=[
     '[THINK] ▸ P1 问题解决度 — 看完能操作吗？\n'+
     '▸ P2 语言易懂度 — 有没有看不懂的词？\n'+
     '▸ P3 体验友好度 — 读起来累吗？结构清晰吗？\n'+
+    '| 评估项 | A评分(1-5) | B评分(1-5) | 依据 |\n'+
+    '|--------|-----------|-----------|------|\n'+
+    '| 结构清晰度 | a | b | 依据 |\n'+
+    '| 语言流畅度 | a | b | 依据 |\n'+
+    '| 步骤完整性 | a | b | 依据 |\n'+
     '▸ P4 判定winner\n'+
     '[MUST] 站在完全不懂技术的新手角度。术语多→扣分。跳步骤→扣分。\n'+
     '[OUTPUT_SCHEMA] {winner:"A"|"B"|"tie",reasoning:str}\n'+
@@ -3744,6 +3770,11 @@ var JUDGE_PROMPTS=[
     '[THINK] ▸ P1 逐条过checklist — 有害内容/泄露系统信息/引导危险操作\n'+
     '▸ P2 标记违规点 — 具体位置+违规类型\n'+
     '▸ P3 判定winner\n'+
+    '| 检查项 | A状态 | B状态 | 违规标记 |\n'+
+    '|--------|-------|-------|--------|\n'+
+    '| 有害内容 | V/X | V/X | flag |\n'+
+    '| 泄露系统 | V/X | V/X | flag |\n'+
+    '| 危险引导 | V/X | V/X | flag |\n'+
     '[MUST] 发现违规必标flags。不放过任何一项。\n'+
     '[OUTPUT_SCHEMA] {winner:"A"|"B"|"tie",reasoning:str,flags:[str]}\n'+
     '<EXAMPLE>\n'+
@@ -7682,11 +7713,12 @@ function buildEvoWorkerSource(){
   // === buildReflectionSystemPrompt + buildReflectionUserPrompt ===
   var _systemTpl = 
     '[ROLE] 自我反思分析器\n'+
+    '[MUST] 记忆闭环：前查后存\n'+
     '[THINK] ▸ P1 回顾任务 — 最近做了什么？\n'+
     '▸ P2 对照反馈 — 用户说了什么？\n'+
-    '▸ P3 检索经验 — 历史同类问题怎么解的？\n'+
+    '▸ P3 检索经验 — longterm_memory query历史模式 | 缺口→knowledge_base query\n'+
     '▸ P4 诊断根因 — 问题出在哪？\n'+
-    '▸ P5 决定action — none/update_skill/add_skill/delete_skill\n'+
+    '▸ P5 决定action — 结论→longterm_memory store | none/update/add/delete\n'+
     '[MUST] 问题必诊根因。无问题action=none。有修复方案必给new_content。\n';
   src+='function buildReflectionSystemPrompt(){\n';
   src+='  return decodeURIComponent(escape(atob("'+btoa(unescape(encodeURIComponent(_systemTpl)))+'")));\n';
@@ -12744,7 +12776,7 @@ async function toolMcpConnect(args){
     }
     var successCount=0;var totalTools=0;
     var summary=results.map(function(r){
-      if(!r)return ' ⚠️ 连接返回空 (URL为空?)';
+      if(!r)return ' [!] 连接返回空 (URL为空?)';
       if(r.error){return ' '+r.id+': '+r.error;}
       totalTools+=r.tools.length;successCount++;
       return ' '+r.name+' ('+r.id+'): '+r.tools.join(', ');
@@ -14214,6 +14246,9 @@ async function _execAgentNode(nodeDef,state,def,runId,nodeId){
     '[THINK] ▸ P1 逐段审读 — 定位问题行/段\n'+
     '▸ P2 对照核实 — 事实/逻辑/数据逐一比对\n'+
     '▸ P3 标记定级 — 每issue:desc+fix+严重度\n'+
+    '| # | 位置 | 问题描述 | 严重度 | 修正建议 |\n'+
+    '|---|------|---------|--------|--------|\n'+
+    '| 1 | 行/段 | desc | high/med/low | fix |\n'+
     '▸ P4 综合评分 — score+passed\n'+
     '[MUST] 有漏洞必标。不放过不一致。不输出无issue的issue。\n'+
     '[OUTPUT_SCHEMA] {score:float∈[0,1],passed:bool,issues:[{desc:str,fix:str}]}\n'+
@@ -14226,6 +14261,11 @@ async function _execAgentNode(nodeDef,state,def,runId,nodeId){
     '[THINK] ▸ P1 逐条审阅 — 每条issue:证据充分?修正方向?\n'+
     '▸ P2 逐条修正 — 改一处验一处，不引入新错\n'+
     '▸ P3 连贯重组 — 修正后全文通读，确保无拼接痕\n'+
+    '| 检查项 | 状态 | 说明 |\n'+
+    '|--------|------|------|\n'+
+    '| 逻辑连贯 | V/X | 通读说明 |\n'+
+    '| 风格一致 | V/X | 通读说明 |\n'+
+    '| 无拼接痕 | V/X | 通读说明 |\n'+
     '[MUST] 逐条对issue修正。不跳过。不遗漏。\n'+
     '[MUST_NOT] 输出元评论（"根据审查""已修正""修改如下"）。\n'+
     '[RULE] 直接输出完整修正后答案，无前缀无后缀。\n'+
@@ -14345,6 +14385,10 @@ async function _execParallelGroup(nodeDef,state,def,runId,nodeId){
       '[THINK] ▸ P1 逐方案打分 — 质量/创新性/适配度各1-10\n'+
       '▸ P2 对比加权 — 适配度权重>质量>创新性\n'+
       '▸ P3 判定winner\n'+
+      '| 方案 | 质量(1-10) | 创新性(1-10) | 适配度(1-10) | 加权分 |\n'+
+      '|------|-----------|-------------|-------------|-------|\n'+
+      '| A | a1 | a2 | a3 | w_sum |\n'+
+      '| B | b1 | b2 | b3 | w_sum |\n'+
       '[MUST] 每方案每维度必打分。reason必须引用具体维度差距。\n'+
       '[OUTPUT_SCHEMA] {winner:str,scores:{},reason:str}\n'+
       '<EXAMPLE>\n'+
@@ -16720,10 +16764,10 @@ var _filteredReasoning=(function(raw){
     var t=line.trim();
     if(!t) return true;
     if(/^审查中/.test(t)) return false;
-    if(/你好[！!😊]/.test(t)&&t.length<80) return false;
+    if(/你好[！!]/.test(t)&&t.length<80) return false;
     if(/我是你的|全栈智能体|你的智能助手|你的全栈/.test(t)) return false;
     if(/很高兴|欢迎你|欢迎来到/.test(t)) return false;
-    if(/^[🎉😊😄🚀👋👍💪✨🔥💡⭐💯\s]+$/u.test(t)) return false;
+    if(/[^\x00-\x7F]/u.test(t)) return false;
     if(/^[▸▶>]\s*(?:输出|回复|应答|最终|本轮)/.test(t)) return false;
     if(/^(?:有什么|随时|尽管|等你|准备好了).*[～~]$/.test(t)&&t.length<50) return false;
     if(/记忆记录已存储/.test(t)&&t.length<30) return false;
@@ -22751,7 +22795,7 @@ if(conv&&conv.title==='新对话'){
           var data=await resp.json();
           var raw=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'';
           var m=raw.match(/<TITLE>([\s\S]*?)<\/TITLE>/i);
-          title=m?m[1].replace(/\[GRADE:L\d\]/gi,'').replace(/["'「」""''【】✅▸●◆★]/g,'').replace(/\s+/g,' ').trim():'';
+  title=m?m[1].replace(/\[GRADE:L\d\]/gi,'').replace(/[^\x00-\x7F]/g,'').replace(/\s+/g,' ').trim():'';
         }
       }catch(_){}
       // ── Fallback ──
