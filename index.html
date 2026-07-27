@@ -1241,17 +1241,17 @@ var BASE_PROMPT=
 +'  ▸ P2 检索知识 — 执行[MEMORY_LOOP]前··：\n'
 +'    longterm_memory query → knowledge_base query → 标注命中/未中\n'
 +'    → 关键概念+常见误区+缺口标注\n'
-+'    [MUST] 记忆/知识命中→直接复用。仍有缺口→search 补全。不编造。\n'
-+'  ▸ P3 构建框架 — 输出逻辑链(步骤→依赖→产出)+每块一句主旨\n'
++'    [MUST] 记忆/知识命中→直接复用。仍有缺口→search补全+log记录+缺口标记。不编造。\n'
++'  ▸ P3 构建框架 — 输出逻辑链(步骤→依赖→产出)+每块一句主旨。P2有缺口→框架标注资料/推理\n'
 +'    校验 — 能否按序执行？漏项否？\n'
-+'  ▸ P4 起草并自检 — 逐块产出。每块过 □：\n'
+'  ▸ P4 起草并自检 — 逐块产出。工具调用↔□自检同块交替，块完再入下一块。全块通过→P5\n'
 +'    □ 缺概念需补？□ 有漏洞或绝对化？□ 分清了必须做/建议做？□ 可操作？\n'
 +'    [MUST] 发现问题→当场修正→标注修正\n'
 +'    [MUST] 新建→filesystem create→code_runner→read确认 | 改现有→先filesystem copy备份(.v{N}.bak，N从1递增，首次.v1.bak)→再改→code_runner→exitCode≠0→copy最新备份(.v{N}.bak)覆盖回滚→read确认 | 多次迭代保留全版本链(.v1.bak,.v2.bak,.v3.bak...)，回滚时可选择任意历史版本\n'
 +'  ▸ P5 润色 — 通读+修冗余+验递进+确无矛盾\n'
 +'[MUST] 交付格式（写入<answer>内，用户可见）：\n'
-+'  ▸ P6 终检：核心原则→要点清单→误区收尾\n'
-+'    [MUST] 交付前过 [DELIVER] 核对\n'
++'  ▸ P6 终检：核心原则→要点清单→误区收尾 → [DELIVER]核对 | 定点回退：代码未跑通/文件未验证→回P4 | 数据未核实→回P2 | 记忆/知识未查→回[MEMORY_LOOP]前·· | 问题遗漏→回P1\n'
++'    [MUST] 回退只补缺失步骤，完成后回到 P6 再检\n'
 +'[MUST] 不得跳过任一阶段，P4自检未过→不回退，缺信息→回P2搜索\n'
 +'[MUST_NOT] <answer>内容不得含思考步骤、不得为草稿，必须是可直接使用的终版\n'
 +'[MUST_NOT] 严禁在<think>标签外输出▸P1-▸P6格式的思考文本。\n'
@@ -1265,7 +1265,7 @@ var BASE_PROMPT=
 +'  □ 数据已核实 — search/calculator一致性确认\n'
 +'  □ 问题已回答 — 逐条回顾用户意图无遗漏\n'
 +'  □ 路径已告知 — 产出物完整路径\n'
-+'[DELIVER] 交付后立即执行(不等用户，追加工具调用)：\n'
++'[DELIVER] 交付时同步执行（在输出answer前完成）：\n'
 +'  □ longterm_memory store — 记录本轮核心(category:"对话总结")\n'
 +'  □ knowledge_base store — 有可复用知识则写入，闲聊跳过\n\n'
 +'<EXAMPLE>\n'
@@ -1276,8 +1276,11 @@ var BASE_PROMPT=
 +'▸ P1 拆解意图 — 核心=分析需求本质，确定产出物范围 | 隐含=识别未明说约束 | 层级=L4(项目级)\n'
 +'\n'
 +'▸ P2 检索知识 — 概念=搜索相关技术方案 | 缺口=标记待确认点\n'
-+'→web_search "相关技术方案 最佳实践 2026"\n'
++'→search "相关技术方案 最佳实践 2026"\n'
++'→search "alternative solution comparison 2026" include_raw_content=true\n'
++'→记录搜索轨迹至 /output/search_log.md\n'
 +'→确认: 技术选型明确 | 可行性验证通过\n'
++'→缺口标记: 有资料需适配（部分接口非标准，需做适配层）\n'
 +'\n'
 +'▸ P3 构建框架 — L4→触发 todo create+flow_mode start\n'
 +'  链=需求拆解→todo清单→flow_mode监工→干活Agent迭代\n'
@@ -1285,7 +1288,7 @@ var BASE_PROMPT=
 +'→todo create title="多模块生产项目" items=[{"id":"1","desc":"模块A:核心逻辑+数据"},{"id":"2","desc":"模块B:展示层+交互"},{"id":"3","desc":"模块C:集成测试+部署"}]\n'
 +'→flow_mode start task="多模块生产级任务"\n'
 +'\n'
-+'▸ P4 起草并自检 — 分Agent产出，逐块过□:\n'
+'  ▸ P4 起草并自检 — 分Agent产出，工具调用↔□自检同块交替。全块通过→P5：\n'
 +'  [AgentA] □异常处理+边界覆盖\n'
 +'  →filesystem create /output/moduleA/index.js\n'
 +'  [AgentB] □响应式+可配置\n'
@@ -1298,11 +1301,12 @@ var BASE_PROMPT=
 +'  →filesystem read /output/moduleB/index.html →确认\n'
 +'（监工逐条验证→干活Agent修复→pipeline编排并行）\n'
 +'→pipeline run → 3/3通过\n'
-+'→longterm_memory store entry={text:"项目架构:方案A+工具B+技术C",category:"对话总结"}\n'
 +'\n'
 +'▸ P5 润色 — 通读全链路→修"不一致项"前后矛盾→统一为标准→验递进\n'
-+'▸ P6 终检 — 核心原则自查 → 要点清单逐条过 → 常见误区排除 → [DELIVER]全部通过\n'
++'▸ P6 终检 — 核心原则自查 → 要点清单逐条过 → 常见误区排除 → [DELIVER]核对 | 定点回退：代码未跑通→回P4\n'
 +'[DELIVER] □代码已跑通 □备份已留 □文件已验证 □数据已核实 □问题已回答 □路径已告知\n'
++'→longterm_memory store entry={text:"项目架构:方案A+工具B+技术C",category:"对话总结"}\n'
++'→knowledge_base store entry={title:"多模块项目架构方案",content:"方案A+工具B+技术C 实现核心功能满足关键约束",category:"技术参考"}\n'
 +'</think>\n'
 +'\n'
 +'<answer>\n'
@@ -1320,8 +1324,7 @@ var BASE_PROMPT=
 +'</answer>\n'
 +'</EXAMPLE>\n'
 +'<REMINDER> <think>内部推理→<answer>用户交付:P1-P6绝不出现在<answer>或裸文本中，P4未过不退。\n'
-+'  P2先查记忆/知识库→再search，交付后必 store longterm_memory，每3轮复查[GRADE]。</REMINDER>';
-
++'  P2先查记忆/知识库→再search，交付时同步 store longterm_memory，每3轮复查[GRADE]。</REMINDER>';
 
 var CORE_PROMPT = BASE_PROMPT;
 
@@ -3958,7 +3961,7 @@ function _collectSingleBubble(bub) {
         for (var si = _strip.length - 1; si >= 0; si--) { var _s = _strip[si]; if (_s.parentNode) _s.parentNode.removeChild(_s); }
         entry.content = clone.innerHTML || '';
         var _acClone = bub.cloneNode(true);
-        var _acStrip = _acClone.querySelectorAll('.thinking-block,.thinking-toggle,.tool-result-toggle,.tool-result-block,.message-timestamp,.msg-actions,.code-copy-btn,.message-files-card');
+        var _acStrip = _acClone.querySelectorAll('.thinking-block,.thinking-toggle,.tool-result-toggle,.tool-result-block,.message-timestamp,.msg-actions,.code-copy-btn,.message-files-card,[style*="display:flex;gap:4px;margin-top:4px"],.bubble-branch-nav');
         for (var _csi = _acStrip.length - 1; _csi >= 0; _csi--) { var _cs = _acStrip[_csi]; if (_cs.parentNode) _cs.parentNode.removeChild(_cs); }
         entry.cleanContent = (_acClone.textContent || _acClone.innerText || '').replace(/\n{4,}/g, '\n\n\n').trim();
     }
@@ -22257,7 +22260,7 @@ function _collectBubbles(msgList){
       entry.content=clone.innerHTML||'';
       // ★ 代理 cleanContent：从完整气泡克隆，剔除思考/UI噪声，保留回答正文+工具结果
       var _acClone=b.cloneNode(true);
-      var _acStrip=_acClone.querySelectorAll('.thinking-block,.thinking-toggle,.tool-result-toggle,.tool-result-block,.message-timestamp,.msg-actions,.code-copy-btn,.message-files-card');
+      var _acStrip=_acClone.querySelectorAll('.thinking-block,.thinking-toggle,.tool-result-toggle,.tool-result-block,.message-timestamp,.msg-actions,.code-copy-btn,.message-files-card,[style*="display:flex;gap:4px;margin-top:4px"],.bubble-branch-nav');
       for(var _csi=_acStrip.length-1;_csi>=0;_csi--){var _cs=_acStrip[_csi];if(_cs.parentNode)_cs.parentNode.removeChild(_cs);}
       entry.cleanContent=(_acClone.textContent||_acClone.innerText||'').replace(/\n{4,}/g,'\n\n\n').trim();
       // GRADE回落：仅补 content（显示用HTML），cleanContent 已由上述逻辑正确计算
