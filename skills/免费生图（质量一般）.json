@@ -1,0 +1,15 @@
+{
+  "id": "62c6d8ed-8849-44de-8f2c-ab5386321ba2",
+  "name": "免费生图",
+  "trigger": "免费生图|Pollinations|生图URL|无需Key|flux生图|免费API生图",
+  "prompt_fragment": "端点 image.pollinations.ai/prompt/{英文prompt}?width=512&height=512&seed=R&model=flux\n免费模型 flux turbo\n规则 英文prompt seed保唯一 HEAD验200 限速15s\n流程 解析意图 构造URL HEAD验200 返回Markdown图片",
+  "description": "Pollinations免费生图 flux/turbo URL直出512×512 无需Key",
+  "version": 8,
+  "origin": "agent",
+  "editable": true,
+  "author": "user",
+  "code_snippet": "",
+  "code_description": "",
+  "code_target_path": "",
+  "updated_at": "2026-07-30T18:36:26.989Z"
+}
