@@ -4420,13 +4420,29 @@ async function _fetchModelCtx(){
 }
 
 var _MODEL_CTX=_cachedModelCtx||_MODEL_CTX_FALLBACK;
+
+// ★ 从 content 中提取纯文本，兼容 string / 多模态数组 [{type:'text',...},{type:'image_url',...}]
+function _getContentText(content){
+  if(typeof content==='string')return content;
+  if(Array.isArray(content)){
+    var parts=[];
+    for(var _gi=0;_gi<content.length;_gi++){
+      var _part=content[_gi];
+      if(_part&&_part.type==='text'&&typeof _part.text==='string')
+        parts.push(_part.text);
+    }
+    return parts.join(' ');
+  }
+  return '';
+}
+
 async function _compressOldMessages(messages,modelMaxTokens){
   // ★ 用每条消息上的 _tokens 标签（API精确分配），回退到字符估算
   var totalEst=0;
   var perMsg=[];
   for(var i=0;i<messages.length;i++){
     var m=messages[i];
-    var _charEst=_estimateTokens((m.content||'')+(m.reasoning_content||''));
+    var _charEst=_estimateTokens(_getContentText(m.content)+(m.reasoning_content||''));
     var est=(m._tokens!==undefined&&m._tokens!==null?m._tokens:_charEst);
     perMsg.push(est);
     totalEst+=est;
@@ -4457,7 +4473,7 @@ async function _compressOldMessages(messages,modelMaxTokens){
     var cm=toCompress[ci];
     if(cm.tool_call_id||cm.name){
       var toolName=cm.name||'';
-      var content=(cm.content||'');
+      var content=_getContentText(cm.content);
       var preview=content.substring(0,300).replace(/\n/g,' ');
       var pathMatch=content.match(/\/[\w\/\.\-\u4e00-\u9fff]+/);
       var pathHint=pathMatch?' | 路径:'+pathMatch[0]:'';
@@ -4473,11 +4489,12 @@ async function _compressOldMessages(messages,modelMaxTokens){
         tcNames.push(tcn+(tca?'('+tca+')':''));
       }
       compressItems.push('[助手工具调用#'+ci+'] '+tcNames.join('; ')+
-        (cm.content?' | '+cm.content.substring(0,200):''));
+        (cm.content?' | '+_getContentText(cm.content).substring(0,200):''));
     }else{
-      var body=(cm.content||'').substring(0,2000);
+      var _txtContent=_getContentText(cm.content);
+      var body=_txtContent.substring(0,2000);
       compressItems.push('['+cm.role+'#'+ci+'] '+body+
-        (cm.content&&cm.content.length>2000?'...[截短'+cm.content.length+'字符]':''));
+        (_txtContent.length>2000?'...[截短'+_txtContent.length+'字符]':''));
     }
   }
   var rawText=compressItems.join('\n---\n');
@@ -4549,13 +4566,13 @@ async function _compressOldMessages(messages,modelMaxTokens){
     // ★ 极端回退：摘要+保留仍超限 → 丢弃最旧消息直到安全
     var _compEst=_estimateTokens(summary);
     for(var k2=0;k2<toKeep.length;k2++){
-      _compEst+=(toKeep[k2]._tokens!==undefined&&toKeep[k2]._tokens!==null ? toKeep[k2]._tokens : _estimateTokens(toKeep[k2].content||''));
+      _compEst+=(toKeep[k2]._tokens!==undefined&&toKeep[k2]._tokens!==null ? toKeep[k2]._tokens : _estimateTokens(_getContentText(toKeep[k2].content)));
     }
     if(_compEst>limit){
       var _dropCount=0;
       while(_compEst>limit&&compressed.length>2){
         var _dropped=compressed.splice(1,1)[0];
-        _compEst-=(_dropped._tokens!==undefined&&_dropped._tokens!==null ? _dropped._tokens : _estimateTokens(_dropped.content||''));
+        _compEst-=(_dropped._tokens!==undefined&&_dropped._tokens!==null ? _dropped._tokens : _estimateTokens(_getContentText(_dropped.content)));
         _dropCount++;
       }
       if(_dropCount>0)debugLogger.warn(' 极端回退: 压缩后仍超限，丢弃最旧'+_dropCount+'条 | est:'+_compEst+'/'+limit);
@@ -9533,8 +9550,21 @@ function sendToTaskWorker(type,params,timeout){
 // ===== 统一消息清理（_mctsLLM / _subAgentLLM / _buildLLMRequest 三条路径共享） =====
 function _safeMessageStr(s){
   if(s===null||s===undefined)return '';
+  // ★ 兼容多模态数组：递归清理text部分，保留image_url/audio等对象结构
+  if(Array.isArray(s)){
+    return s.map(function(part){
+      if(part && part.type==='text' && typeof part.text==='string'){
+        return {type:part.type, text: _cleanStr(part.text)};
+      }
+      return part;  // image_url / audio 等原样保留
+    });
+  }
   if(typeof s!=='string')return String(s);
-  // 过滤 Unicode 非字符、BOM、零宽间隔、行分隔符及 null 字节
+  return _cleanStr(s);
+}
+// ★ 纯字符串清理（从 _safeMessageStr 中抽离，供数组递归复用）
+function _cleanStr(s){
+  if(typeof s!=='string')return '';
   return s
     .replace(/\x00/g,'')
     .replace(/\uFFFE/g,'')
@@ -9590,14 +9620,34 @@ function _buildLLMRequest(messages,tools,stream,source){
     var _estMsgTotal=0;
     for(var _mi=0;_mi<cleanedMessages.length;_mi++){
       var _tok=cleanedMessages[_mi]._tokens;
-      var _charEst=_estimateTokens((cleanedMessages[_mi].content||'')+(cleanedMessages[_mi].reasoning_content||''));
+      var _msgContent9606 = cleanedMessages[_mi].content;
+      var _msgStr9606 = '';
+      if(Array.isArray(_msgContent9606)){
+        for(var __pi9606=0;__pi9606<_msgContent9606.length;__pi9606++){
+          if(_msgContent9606[__pi9606] && _msgContent9606[__pi9606].type==='text' && typeof _msgContent9606[__pi9606].text==='string')
+            _msgStr9606 += _msgContent9606[__pi9606].text;
+        }
+      } else {
+        _msgStr9606 = _msgContent9606||'';
+      }
+      var _charEst=_estimateTokens(_msgStr9606 + (cleanedMessages[_mi].reasoning_content||''));
       // ★ 容错：_tokens 严重偏离字符估算(>3倍)时，用字符估算兜底
       if(_tok!==undefined&&_tok!==null&&_charEst&&_tok>_charEst*3)_tok=_charEst;
       _estMsgTotal+=(_tok!==undefined&&_tok!==null ? _tok : _charEst);
     }
     // ★ 跨轮精炼：N-3轮保留原始内容，N-3轮之前的旧结果降级为引导语句
     for(var _mi2=0;_mi2<cleanedMessages.length;_mi2++){
-       var _cl2=_estimateTokens(cleanedMessages[_mi2].content||'');
+       var _msgContent9623 = cleanedMessages[_mi2].content;
+       var _msgStr9623 = '';
+       if(Array.isArray(_msgContent9623)){
+         for(var __pi9623=0;__pi9623<_msgContent9623.length;__pi9623++){
+           if(_msgContent9623[__pi9623] && _msgContent9623[__pi9623].type==='text' && typeof _msgContent9623[__pi9623].text==='string')
+             _msgStr9623 += _msgContent9623[__pi9623].text;
+         }
+       } else {
+         _msgStr9623 = _msgContent9623||'';
+       }
+       var _cl2=_estimateTokens(_msgStr9623);
        if(_cl2>500000&&(cleanedMessages[_mi2].tool_call_id||cleanedMessages[_mi2].name)){
          var _sentCount=cleanedMessages[_mi2]._sentCount||0;_sentCount++;
         cleanedMessages[_mi2]._sentCount=_sentCount;
@@ -9630,7 +9680,7 @@ function _buildLLMRequest(messages,tools,stream,source){
     }
     for(var __si=0;__si<cleanedMessages.length;__si++){delete cleanedMessages[__si]._sentCount;}
     _estMsgTotal=0;
-    for(var _mii=0;_mii<cleanedMessages.length;_mii++){_estMsgTotal+=(cleanedMessages[_mii]._tokens||_estimateTokens(cleanedMessages[_mii].content||''));}
+    for(var _mii=0;_mii<cleanedMessages.length;_mii++){_estMsgTotal+=(cleanedMessages[_mii]._tokens||_estimateTokens(_getContentText(cleanedMessages[_mii].content)));}
     // ★ 极端丢弃已移除：跨轮精炼已压缩大块工具结果，剩余超限由 API 自行截断
     // ★ 孤立tool清理已由 _validateMessageSequence 统一处理（见第9284行）
     // ★ 自适应max_tokens：感知上下文使用量自动回退，同压缩阈值逻辑
@@ -17977,6 +18027,47 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
     }
     _injectCodeCopyButtons(contentDiv);
 
+    // ★ 扫描 agentContent 中的 Markdown/HTML 图片，自动注册到文件管理器
+    //    匹配 ![alt](url) 和 <img src="url">
+    if(agentContent && typeof agentContent==='string'){
+      var _respImgUrls=[];
+      var _mdRe=/!\[.*?\]\((https?:\/\/[^\s)]+)\)/g;
+      var _m;
+      while((_m=_mdRe.exec(agentContent))!==null) _respImgUrls.push(_m[1]);
+      var _htmlRe=/<img[^>]+src=["'](https?:\/\/[^"']+)["'][^>]*>/g;
+      while((_m=_htmlRe.exec(agentContent))!==null) _respImgUrls.push(_m[1]);
+      if(_respImgUrls.length>0){
+        var _uniqueImgUrls=[];
+        for(var _ui=0;_ui<_respImgUrls.length;_ui++){
+          if(_uniqueImgUrls.indexOf(_respImgUrls[_ui])===-1) _uniqueImgUrls.push(_respImgUrls[_ui]);
+        }
+        for(var _ui=0;_ui<_uniqueImgUrls.length;_ui++){
+          (function(_url,_seq){
+            fetch(_url)
+              .then(function(resp){
+                if(!resp.ok)throw new Error('HTTP '+resp.status);
+                return resp.blob();
+              })
+              .then(function(blob){
+                var _ext='png';
+                var _ct=blob.type;
+                if(_ct.indexOf('jpeg')!==-1)_ext='jpg';
+                else if(_ct.indexOf('gif')!==-1)_ext='gif';
+                else if(_ct.indexOf('webp')!==-1)_ext='webp';
+                else if(_ct.indexOf('svg')!==-1)_ext='svg';
+                var _fn='response_img_'+Date.now()+'_'+_seq+'.'+_ext;
+                registerGeneratedFile(blob,_fn,_ct);
+                debugLogger.info(' 已注册模型回复图片: '+_fn);
+              })
+              .catch(function(e){
+                debugLogger.warn(' 注册模型回复图片失败: '+_url.substring(0,60)+' - '+e.message);
+              });
+          })(_uniqueImgUrls[_ui],_ui);
+        }
+      }
+    }
+
+
     // ★ 立即重启 SVG 动画：body3.innerHTML 替换触发的回流会杀死 CSS animation
     // ★ 立即重启动画，但只处理 有 <style> 子元素 的 wrapper（流式期间已注入的）
     //    另外清除所有不带 <style> 的同类 wrapper（重复渲染/空壳，即"不会动的svg框"）
@@ -18800,7 +18891,7 @@ function buildSupervisorStatusCard(session, mainCtx, convId){
     for(var mi=0;mi<mainCtx.messages.length;mi++){
       var m=mainCtx.messages[mi];
       if(m._tokens&&m._tokens>0)mainTokenCount+=m._tokens;
-      else mainTokenCount+=_estimateTokens((m.content||'')+(m.reasoning_content||''));
+      else mainTokenCount+=_estimateTokens(_getContentText(m.content)+(m.reasoning_content||''));
     }
   }
 
@@ -19385,7 +19476,7 @@ function addUserMessage(text){
   msgDiv.className='message user';
   var contentDiv=document.createElement('div');
   contentDiv.className='message-content';
-  contentDiv.textContent=text;
+  contentDiv.textContent=typeof text==='string'?text:(Array.isArray(text)?_getContentText(text):String(text));
   msgDiv.appendChild(contentDiv);
   var tsDiv=document.createElement('div');
   tsDiv.className='message-timestamp';
@@ -21615,7 +21706,7 @@ function initEventBindings(){
       if(nm.role==='user')addUserMessage(nm.content);
       else{
         var ndiv=document.createElement('div');ndiv.className='message agent';
-        ndiv.innerHTML=sanitizeArtifactHTML(nm.content||'');
+        ndiv.innerHTML=sanitizeArtifactHTML(typeof nm.content==='string'?nm.content:_getContentText(nm.content));
         var ncd=ndiv.querySelector('.message-content');
         if(ncd){
           var nbody=ncd.querySelector('.msg-body');
@@ -22184,11 +22275,11 @@ async function switchConversation(convId,forceSwitch){
           var m=branchItems[mi];
           if(m.role==='user'){
             if(_flowBuf){_finishFlowWrap(_flowBuf,msgList);_flowBuf=null;}
-            var _div=document.createElement('div');_div.className='message user';_div.innerHTML='<div class="message-content" data-tokens="'+(m._tokens||'')+'">'+sanitizeArtifactHTML(m.content||'')+'</div>';var _tsD=document.createElement('div');_tsD.className='message-timestamp';_tsD.setAttribute('data-ts',m.createdAt||Date.now());_tsD.textContent=_timeAgo(m.createdAt||Date.now());_div.appendChild(_tsD);_addMsgActions(_div,true);msgList.appendChild(_div);
+            var _div=document.createElement('div');_div.className='message user';_div.innerHTML='<div class="message-content" data-tokens="'+(m._tokens||'')+'">'+sanitizeArtifactHTML(typeof m.content==='string'?m.content:_getContentText(m.content))+'</div>';var _tsD=document.createElement('div');_tsD.className='message-timestamp';_tsD.setAttribute('data-ts',m.createdAt||Date.now());_tsD.textContent=_timeAgo(m.createdAt||Date.now());_div.appendChild(_tsD);_addMsgActions(_div,true);msgList.appendChild(_div);
           }else if(m.role==='assistant'||m.role==='agent'){
             var div=document.createElement('div');
             div.className='message agent';
-            div.innerHTML=sanitizeArtifactHTML(m.content||'');
+            div.innerHTML=sanitizeArtifactHTML(typeof m.content==='string'?m.content:_getContentText(m.content));
             var _oldTs=div.querySelector('.message-timestamp');
             if(_oldTs){_oldTs.setAttribute('data-ts',m.createdAt||Date.now());_oldTs.textContent=_timeAgo(m.createdAt||Date.now());}
             else{var _tsN=document.createElement('div');_tsN.className='message-timestamp';_tsN.setAttribute('data-ts',m.createdAt||Date.now());_tsN.textContent=_timeAgo(m.createdAt||Date.now());div.appendChild(_tsN);}
