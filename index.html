@@ -19396,38 +19396,55 @@ function getTriggeredSkillFragments(userText){
 
   // 工具关键词触发推荐（仅命中时注入）
   var TOOL_KEYWORDS={
-    'chart':['图表','柱状图','折线图','饼图','可视化','chart','图形','绘图','趋势图'],
-    'diagram':['流程图','时序图','状态图','甘特图','类图','mermaid','架构图'],
-    'table_generator':['表格','导出csv','导出xlsx','生成表格','数据表'],
-    'word_generator':['word','docx','文档导出','生成文档'],
-    'pdf_generate':['生成pdf','导出pdf','pdf报告'],
-    'sql_db':['sql','数据库','查询语句','建表','sqlite'],
-    'geo_search':['附近','周边','餐厅','咖啡','地图搜索','POI'],
-    'geo_geocode':['地址转坐标','经纬度','地理编码','定位'],
-    'send_email':['发邮件','发送邮件','邮件'],
-    'archive':['压缩','解压','zip','打包'],
-    'speech_tts':['朗读','语音','tts','文字转语音'],
-    'speech_stt':['语音识别','录音','stt'],
-    'calendar':['日程','日历','提醒','定时'],
-    'read_image':['读图','看图','图片理解','视觉分析','图片内容'],
-    'pipeline':['流水线','多步骤','自动化流程','子agent','编排'],
-    'svg_animator':['svg','动画','矢量图'],
-    'convert_format':['格式转换','json转csv','yaml转换'],
-    'custom_api_call':['api调用','http请求','接口'],
-    'browser_notify':['桌面通知','弹窗提醒'],
-    'world_validator':['仿真','模拟','离散事件','世界验证'],
-    'mcp_connect':['mcp','连接服务器']
+    'chart':['图表','柱状图','折线图','饼图','可视化','chart','图形','绘图','趋势图','echarts','柱形图','环形图','散点图','雷达图','热力图','漏斗图','仪表盘','桑基图','数据可视化'],
+    'diagram':['流程图','时序图','状态图','甘特图','类图','mermaid','架构图','uml','泳道图','思维导图','甘特'],
+    'table_generator':['表格','导出csv','导出xlsx','生成表格','数据表','csv导出','xlsx导出','表格下载','excel表格','表格生成'],
+    'word_generator':['word','docx','文档导出','生成文档','word文档','生成word','doc文档'],
+    'pdf_generate':['生成pdf','导出pdf','pdf报告','pdf导出','生成报告','转pdf','pdf文件','pdf'],
+    'sql_db':['sql','数据库','查询语句','建表','sqlite','增删改查','数据查询','select','数据库操作'],
+    'geo_search':['附近','周边','餐厅','咖啡','地图搜索','POI','美食','饭店','周边搜索','地点搜索','地图'],
+    'geo_geocode':['地址转坐标','经纬度','地理编码','地址定位','坐标转换','地址解析','查坐标'],
+    'send_email':['发邮件','发送邮件','邮件','发信','邮件发送','smtp','写信'],
+    'archive':['压缩','解压','zip','打包','压缩包','解压文件','rar','打包文件','压缩文件'],
+    'speech_tts':['朗读','tts','文字转语音','语音播放','发声','语音播报'],
+    'speech_stt':['语音识别','录音','stt','语音转文字','听写','识别语音'],
+    'read_image':['读图','看图','图片理解','视觉分析','图片内容','识别图片','图片识别','分析图片','看图片'],
+    'pipeline':['流水线','多步骤','自动化流程','子agent','编排','dag','工作流','任务编排','多agent'],
+    'svg_animator':['svg','动画','矢量图','svg动画','矢量动画'],
+    'convert_format':['格式转换','json转csv','yaml转换','转换格式','csv转json','格式互转','转换文件','markdown转html','转成csv','转成json','转成xlsx'],
+    'custom_api_call':['api调用','http请求','接口','api','请求接口','调用接口','http','https','接口调试','webhook'],
+    'browser_notify':['桌面通知','弹窗提醒','通知','消息通知','系统通知'],
+    'world_validator':['仿真','模拟','离散事件','世界验证','仿真模拟','实体仿真','状态机','建模'],
+    'mcp_connect':['mcp','连接服务器','mcp服务器','连接mcp'],
+    'mcts_plan':['规划','多步规划','决策树','方案选择','mcts','路径规划','策略搜索'],
+    'geo_ip':['ip定位','ip查询','我的位置','网络定位','ip地址'],
+    'user_function_call':['外部函数','调用函数','js函数','注册函数','自定义函数'],
+    'reqalign':['需求对齐','对齐需求','需求确认','需求澄清','需求分析'],
+    'generatespec':['开发文档','规格说明','spec','specification','需求文档','设计文档','文档生成'],
+    'flow_mode':['深度工作','心流','自主迭代','无人值守','自动完成','长时间任务'],
+    'vis_network':['关系图谱','网络图','知识图谱','节点图','拓扑图','关联图']
   };
   var convId=currentConversationId;
   var toolRecs=[];
+  var _ut=userText.toLowerCase(); // 小写化只做一次(内层循环复用)
   var allToolKeys=Object.keys(TOOL_KEYWORDS);
   for(var ti=0;ti<allToolKeys.length;ti++){
     var tname=allToolKeys[ti];
     if(CORE_TOOL_NAMES.indexOf(tname)>=0)continue;
+    if(TOOL_REGISTRY[tname]&&TOOL_REGISTRY[tname].disabled)continue; // 手动关闭权限的工具不推荐
     if(_isToolActive(convId,tname))continue;
     var kws=TOOL_KEYWORDS[tname];
     for(var ki=0;ki<kws.length;ki++){
-      if(userText.toLowerCase().indexOf(kws[ki].toLowerCase())>=0){
+      var kw=kws[ki].toLowerCase();
+      var hit;
+      if(/^[a-zA-Z0-9]{1,4}$/.test(kw)){
+        // 短英文别名(如word/api/spec)加词边界，防止子串误触发(keywords/rapid/respect)
+        var kwEsc=kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+        hit=(new RegExp('(^|[^a-zA-Z0-9])'+kwEsc+'([^a-zA-Z0-9]|$)')).test(_ut);
+      }else{
+        hit=_ut.indexOf(kw)>=0;
+      }
+      if(hit){
         toolRecs.push('`'+tname+'`');
         break;
       }
