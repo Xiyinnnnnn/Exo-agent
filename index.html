@@ -9706,7 +9706,6 @@ function _buildLLMRequest(messages,tools,stream,source){
     // ★ Debug dump: 保存请求体到全局变量
     if(typeof window!=='undefined'){
       window.__lastReqBody=body;window.__lastReqBodyStr=JSON.stringify(body);
-      try{require('fs').writeFileSync(process.cwd()+'/request_body_last.json',JSON.stringify({time:Date.now(),messages:body.messages.map(function(m){return {role:m.role,tokens:m._tokens,contentLen:(m.content||'').length};})}));}catch(_){}
     }
     return {baseUrl:baseUrl,apiKey:apiKey,body:body};
 }
@@ -13019,7 +13018,6 @@ async function toolSendEmail(args){
     try{
       var resp=await fetch(relayUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:smtpHost,port:smtpPort,user:smtpUser,pass:smtpPass,to:args.to,subject:args.subject||'',body:body,plainBody:plainBody,cc:args.cc||'',isHtml:args.body_type==='markdown'}),signal:AbortSignal.timeout(20000)});
       if(resp.ok)return ' 邮件已发送至 '+args.to;
-      if(resp.ok)return ' 邮件已发送至 '+args.to;
       return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 中继发送失败 (HTTP '+resp.status+')\n[SUGGEST] 检查 SMTP 配置或稍后重试';
     }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 中继发送失败: '+e.message+'\n[SUGGEST] 检查网络连接或改用默认邮件客户端';}
   }
@@ -15775,7 +15773,7 @@ function _doNotify(title,body,icon,tag,requireInteraction){
 var _geoPermission='prompt';
 
 function _updateGeoPermStatus(){
-  if(!('permissions' in navigator)){
+  if('permissions' in navigator){
     navigator.permissions.query({name:'geolocation'}).then(function(ps){
       _geoPermission=ps.state;
       _renderGeoPermStatus();
@@ -17030,8 +17028,6 @@ async function processUserMessage(userText,taskId){
     //    统一从气泡构建，确保一致性。
     // ★ 消息序列校验：丢弃加载/缓存中损坏的压缩上下文
     messages=_validateMessageSequence(messages);
-    // ★ Debug: 保存构建后的messages快照（校验后、压缩前）
-    try{require('fs').writeFileSync(process.cwd()+'/messages_dump_before_compress.json',JSON.stringify({time:Date.now(),count:messages.length,preTotal:(typeof _preTotal!=='undefined'?_preTotal:0),messages:messages.map(function(m){return {role:m.role,contentLen:(m.content||'').length,hasToolCalls:!!(m.tool_calls&&m.tool_calls.length),toolCallIds:m.tool_calls?m.tool_calls.map(function(t){return t.id+'/'+(t.function?t.function.name:'')}):null,isInjected:!!m._injected,tokens:m._tokens};})}));}catch(_){}
   }catch(e){debugLogger.warn('上下文构建异常: '+e.message);}
   // 长对话自动压缩（由压缩阈值滑条控制，与上下文条数无关）
   // ★ 预检：基于 API 返回的 _tokens（精确），回退到字符估算，叠加本轮注入开销
@@ -17200,7 +17196,6 @@ async function processUserMessage(userText,taskId){
       // ★ Debug dump: 保存 messages 概览
       if(typeof window!=='undefined'){
         window.__lastMessages=messages.map(function(m){return {role:m.role,tokens:m._tokens,contentLen:(m.content||'').length,tool_calls:!!m.tool_calls,tool_call_id:m.tool_call_id};});
-        try{require('fs').writeFileSync(process.cwd()+'/request_body_messages.json',JSON.stringify({time:Date.now(),messages:window.__lastMessages}));}catch(_){}
       }
       var finishReason=await streamChatCompletion(messages, // 【修复】接收 finish_reason
         activeTools,
@@ -19105,7 +19100,6 @@ function _recalcStats(todos){
     else if(s==='failed')stats.failed++;
     else stats.todo++;
   }
-   if(!todos||!todos.active)return{ok:false,error:'无活跃清单，请先 todo create'};
    todos.stats=stats;
 }
 
@@ -20646,6 +20640,8 @@ function initEventBindings(){
       settingsDrawer.setAttribute('aria-hidden','false');settingsDrawer.removeAttribute('inert');
       renderKBList();
       renderMemList();
+      // R5: 打开面板即启动列表轮询（关闭时在 closeSettings 停止）
+      _startWorldListTimer();_startPipelineListTimer();
       // ★ 文件管理面板已展开则自动刷新（覆盖关闭面板→对话→再打开面板的场景）
       var _filesSection = document.querySelector('.section-header[data-section="files"]');
       if(_filesSection) {
@@ -20665,6 +20661,8 @@ function initEventBindings(){
     if(overlay){overlay.classList.remove('show');
       setTimeout(function(){overlay.style.display='none';},300);}
     settingsDrawer.setAttribute('aria-hidden','true');settingsDrawer.setAttribute('inert','');
+    // R5: 关闭面板即停止列表轮询
+    _stopWorldListTimer();_stopPipelineListTimer();
   }
 
   // 保存设置
@@ -21316,7 +21314,10 @@ function initEventBindings(){
   });}
 
   setTimeout(function(){renderWorldList();},2000);
-  setInterval(function(){renderWorldList();},15000);
+  // R5: 面板关闭时停止轮询，避免隐藏面板空转（原裸 setInterval 移除）
+  var _worldListTimer=null;
+  function _startWorldListTimer(){if(_worldListTimer)return;_worldListTimer=setInterval(function(){renderWorldList();},15000);}
+  function _stopWorldListTimer(){if(_worldListTimer){clearInterval(_worldListTimer);_worldListTimer=null;}}
 
 
   // ===== 流水线列表管理 =====
@@ -21365,7 +21366,10 @@ function initEventBindings(){
     })();
   }
   setTimeout(function(){renderPipelineList();},1800);
-  setInterval(function(){renderPipelineList();},10000);
+  // R5: 面板关闭时停止轮询，避免隐藏面板空转（原裸 setInterval 移除）
+  var _pipelineListTimer=null;
+  function _startPipelineListTimer(){if(_pipelineListTimer)return;_pipelineListTimer=setInterval(function(){renderPipelineList();},10000);}
+  function _stopPipelineListTimer(){if(_pipelineListTimer){clearInterval(_pipelineListTimer);_pipelineListTimer=null;}}
 
   // ===== 手动创建流水线表单 =====
   var btnPipeAdd=document.getElementById('btnPipeAdd');
@@ -21770,7 +21774,6 @@ function initEventBindings(){
     bd._branches[newBid]={items:prefixItems,parentId:pid,forkPoint:fp};
     bd._currentBranchId=newBid;
     // 新分支items已通过 prefixItems 保存到新分支记录中
-    if(bd._branchOrder.indexOf(newBid)<0)bd._branchOrder.push(newBid);
     if(bd._branchOrder.indexOf(newBid)<0)bd._branchOrder.push(newBid);
     var db=await getDB();
     var tx=db.transaction('messages','readwrite');
