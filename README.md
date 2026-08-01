@@ -571,11 +571,11 @@ counterbalance排列：随机交换A/B标签，LLM评委不知道哪个是旧版
 3. 设置 → API配置 → 填入 DeepSeek API Key
 4. 开始对话
 
-5. （可选）一键下载官方技能包：把下面这段代码发给 Exo，它会通过代码执行器联网、自动发现本仓库 `skills/` 目录并下载全部技能到 `/skills/`，之后可用 `skill_manager set` 激活：
+5. （可选）一键下载官方技能包：把下面这段代码发给 Exo，它会通过代码执行器联网、自动发现本仓库 `skills/` 目录并下载全部技能到 `/sandbox/`，随后按脚本注释的步骤 3/4 处理：
 
 ```js
 // 联网自动下载 Exo-agent 官方技能包 v2
-var REPO='Xiyinnnnnn/Exo-agent', DIR='/skills', CONC=4;
+var REPO='Xiyinnnnnn/Exo-agent', DIR='/sandbox', CONC=4;
 async function list(p){var r=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+p,{headers:{'User-Agent':'exo-agent'}});if(!r.ok)throw Error('API '+r.status);return r.json();}
 var files=[];
 async function walk(p){var items=await list(p);for(var it of items) it.type==='dir'?await walk(it.path):it.download_url&&files.push(it);}
@@ -595,7 +595,8 @@ for(var i=0;i<files.length;i+=CONC){
 // —— 下载完成后，Agent 须按以下步骤处理 ——
 // 1. 核对返回的 n/files.length：若全部成功（n===files.length），继续；否则单独重试失败项（fail 数组中有路径）
 // 2. 验证文件有效性：逐个读取并确认非空、且能被 JSON.parse 解析（技能包均为 .json 格式），解析失败的文件删除重下
-// 3. 手动移动文件到技能目录：脚本运行在沙箱时，下载文件实际落在沙箱路径，须用 filesystem copy/move 逐个移到 /skills/（目标已存在同名文件则先比对内容再覆盖）
+// 3. Agent 手动将 /sandbox/ 下的技能文件移动到 /skills/ 文件夹
+// 4. 告知用户下载完成，并让用户触发手动反思流程（设置 → 技能管理 → 手动反思）
 ```
 
 **无需安装任何东西。纯浏览器运行。**
@@ -672,11 +673,11 @@ See the [Chinese section](#chinese) for the full architecture diagram (Mermaid).
 3. Settings → API Config → enter your DeepSeek API Key
 4. Start chatting
 
-5. (Optional) One-click official skill pack: send the code below to Exo — it will go online via the code executor, auto-discover the `skills/` directory of this repo, download all skills to `/skills/`, then activate them with `skill_manager set`:
+5. (Optional) One-click official skill pack: send the code below to Exo — it will go online via the code executor, auto-discover the `skills/` directory of this repo, and download all skills to `/sandbox/`. Then follow steps 3/4 in the script comments:
 
 ```js
 // Auto-download the official Exo-agent skill pack v2
-var REPO='Xiyinnnnnn/Exo-agent', DIR='/skills', CONC=4;
+var REPO='Xiyinnnnnn/Exo-agent', DIR='/sandbox', CONC=4;
 async function list(p){var r=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+p,{headers:{'User-Agent':'exo-agent'}});if(!r.ok)throw Error('API '+r.status);return r.json();}
 var files=[];
 async function walk(p){var items=await list(p);for(var it of items) it.type==='dir'?await walk(it.path):it.download_url&&files.push(it);}
@@ -693,10 +694,10 @@ for(var i=0;i<files.length;i+=CONC){
   }));
 }
 'Downloaded '+n+'/'+files.length+' skills'+(fail.length?'\nFailed: '+fail.join(', '):'')
-// —— After download, the Agent MUST follow these steps ——
 // 1. Verify the returned n/files.length: if all succeeded (n===files.length), continue; otherwise re-download the failed items individually (paths are in the fail array)
 // 2. Validate file integrity: read each file and confirm it is non-empty and parseable by JSON.parse (all skill files are .json). Delete and re-download any file that fails to parse
-// 3. Move files to the skills directory manually: when the script runs in the sandbox, the files actually land in the sandbox path — use filesystem copy/move to relocate each file to /skills/ (if a file with the same name already exists, compare contents first, then overwrite)
+// 3. The Agent manually moves the downloaded skill files from /sandbox/ into the /skills/ folder
+// 4. Tell the user the download is complete and ask them to trigger the manual reflection flow (Settings → Skill Management → Manual Reflection)
 ```
 
 **No installation required. Runs purely in the browser.**
