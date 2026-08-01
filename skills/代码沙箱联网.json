@@ -1,0 +1,12 @@
+{
+  "id": "sandbox_networking_001",
+  "name": "代码沙箱联网",
+  "description": "JS/Python 沙箱联网能力速查：fetch CORS自动代理降级、http便捷API、Python pyfetch桥接、内置模块与CDN清单",
+  "trigger": "沙箱联网 | 沙箱网络 | code_runner联网 | 网络请求 | CORS | pyfetch | requests桥接 | http.get | fetch失败 | 联网下载",
+  "version": 1,
+  "author": "user",
+  "origin": "user",
+  "editable": true,
+  "category": "工具增强",
+  "prompt_fragment": "[ROLE] 沙箱联网向导 | [TRIGGER] 沙箱联网|沙箱网络|code_runner联网|网络请求|CORS|pyfetch|http.get|fetch失败\n\n[CONTEXT]\ncode_runner JS沙箱=Worker + new Function 包装（非Node）；Python沙箱=Pyodide 0.25.0。\n两沙箱均已内置网络层，无需任何配置即可联网。\n\n[JS沙箱]\n○ fetch(url, opts) — 全局可用，自动CORS代理降级：直连失败→corsproxy.io→allorigins\n  · 走代理的响应带 viaProxy=true 标记\n  · 超时用 AbortController 或 opts.signal\n○ http 便捷对象（net 为 http 别名）：\n  · http.get(url, opts)\n  · http.post(url, body, opts)   ← body 直接传，不自动 JSON.stringify\n  · http.put(url, body, opts)\n  · http.delete(url, opts)\n  · http.patch(url, body, opts)\n  · http.request(url, opts)\n○ fetchText(url, opts) → Promise<text>；fetchJSON(url, opts) → Promise<已解析JSON>\n○ require 内置模块：fs / path / os / url / querystring / crypto / util / assert\n○ require CDN 包：lodash / dayjs / marked / qs（importScripts 加载，首次可能慢）\n○ require('http'/'https') 被禁用（抛错引导）→ 改用 fetch 或 http 对象\n\n[PYTHON沙箱]\n○ http_get(url, **kw) / http_post(url, **kw) / http_put / http_delete — pyfetch 桥接，顶层 await 调用\n  · 参数：json= 自动序列化并设 Content-Type；data= 原始 body；headers= 字典\n  · 响应对象：.status / .ok / .headers / await .text() / await .json()\n○ import requests 可用（模块桥接）：requests.get/post/put/delete 需 await\n○ urllib.request 在 WASM 下不可用 → 一律用上述 API\n\n[MUST]\n○ 浏览器沙箱直连受 CORS 限制，代理降级是自动的；确需手动代理时拼接：https://corsproxy.io/?url=<encodeURIComponent(url)>\n○ 大响应（>100KB）注意 token 开销，只取关键字段或先截断再处理\n○ 每次请求设置超时（AbortController），避免挂起\n○ Python 脚本由 async 包装，可直接顶层 await http_get()；JS 同样支持顶层 await\n○ 网络错误优先怀疑：目标无 CORS 头 / URL 编码（中文需 encodeURIComponent）/ 代理超时\n\n[EXAMPLE]\nJS: const data=await fetchJSON('https://api.github.com/repos/x/y');  // 自动降级，无需关心CORS\nJS: const r=await http.post('https://httpbin.org/post', JSON.stringify({a:1}), {headers:{'Content-Type':'application/json'}});\nPY: resp=await http_get('https://httpbin.org/get'); data=await resp.json()\nPY: import requests; resp=await requests.get('https://httpbin.org/get')\n\n[DELIVER]\n☑ 优先 fetch/http 便捷 API，不手动拼代理\n☑ 大响应已截断/提炼，token 开销可控\n☑ 所有请求带超时\n☑ 中文 URL 已 encodeURIComponent"
+}
