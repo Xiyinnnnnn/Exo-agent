@@ -2039,6 +2039,319 @@ var TOOL_REGISTRY={
     parameters:{type:'object',properties:{nodes:{type:'array',items:{type:'object',properties:{id:{type:'string'},label:{type:'string'},color:{type:'string'}}}},edges:{type:'array',items:{type:'object',properties:{from:{type:'string'},to:{type:'string'},label:{type:'string'}}}},options:{type:'object',properties:{height:{type:'string',default:'400px'}}}},required:['nodes','edges']}}
 };
 
+// ================================================================
+// ★ 别名册兜底匹配（工具名 / 字段名 / action值 三级）
+// 匹配优先级：精确 → 别名册 → 归一化(去分隔符小写) → 编辑距离≤2
+// 安全原则：合法字段/合法action 永远优先于别名与模糊匹配，绝不误改
+// 作用：模型用错工具名/字段名/action值时本地自动修复，省 API 轮次
+// ================================================================
+var TOOL_ALIAS_TABLE={
+  'filesystem':['fs','file','files','file_ops','fileop','文件','文件系统','文件操作','文件管理'],
+  'code_runner':['code','run_code','runner','exec_code','execute_code','代码','执行代码','跑代码','运行代码','代码执行'],
+  'search':['web_search','internet_search','tavily','websearch','搜索','网络搜索','搜','网搜'],
+  'calculator':['calc','math','calculate','maths','计算','计算器','数学','算'],
+  'fuzzy_search':['fuzzy','fuzzysearch','grep','模糊搜索','搜文件','文件搜索','内容搜索'],
+  'semantic_memory':['sem_mem','semantic','hist_memory','历史对话','语义记忆','历史记忆'],
+  'longterm_memory':['memory','mem','longterm','long_term_memory','longtermMemory','private_notes','notes','记忆','长期记忆','私人笔记','笔记'],
+  'knowledge_base':['kb','knowledge','知识库','知识'],
+  'skill_manager':['skill','skills','skill_mgr','技能','技能管理'],
+  'calendar':['cal','schedule_cal','日程','日历','提醒'],
+  'precise_time':['time','clock','now_time','时间','精确时间','当前时间'],
+  'todo':['todos','task','task_list','todolist','待办','清单','任务','任务清单','目标清单'],
+  'help':['tool_help','docs','help_doc','帮助','工具文档','文档'],
+  'chart':['echarts','图表','图'],
+  'diagram':['mermaid','流程图','图表2'],
+  'svg_animator':['svg','animator','svg_animate','动画','svg动画'],
+  'table_generator':['table','table_gen','表格','表格生成'],
+  'word_generator':['docx','word','word_doc','文档生成','word文档'],
+  'pdf_generate':['pdf','pdf_gen','生成pdf','pdf生成'],
+  'custom_api_call':['api','http','api_call','http_call','接口','接口调用','http请求'],
+  'mcp_connect':['mcp','mcp_server','连接mcp'],
+  'user_function_call':['function_call','user_func','userfunction','函数调用','外部函数'],
+  'convert_format':['convert','format_convert','convertor','转换','格式转换'],
+  'geo_search':['poi','pois','nearby','附近搜索','周边搜索','poi搜索'],
+  'geo_geocode':['geocode','geo_code','地址转坐标','地理编码'],
+  'geo_ip':['ip','ip_locate','iplocate','ip定位','ip查询'],
+  'send_email':['email','mail','sendmail','邮件','发邮件','发送邮件'],
+  'sql_db':['sql','database','sqlite','db','数据库','sql查询'],
+  'browser_notify':['notify','notification','desktop_notify','通知','桌面通知','浏览器通知'],
+  'archive':['zip','unzip','compress_file','压缩','解压','压缩包'],
+  'speech_tts':['tts','speak','语音','朗读','语音合成'],
+  'speech_stt':['stt','asr','语音识别','听写'],
+  'read_image':['image','vision','readimg','读图','看图','图片识别'],
+  'mcts_plan':['mcts','plan','mcts_planner','规划','多步规划'],
+  'pipeline':['dag','pipeline_dag','流水线','dag流水线'],
+  'reqalign':['align','req_align','需求对齐','需求确认'],
+  'generatespec':['spec','spec_gen','开发文档','文档生成器','规格文档'],
+  'world_validator':['world','simulator','world_sim','仿真','模拟','离散仿真'],
+  'vis_network':['graph','network','vis','图谱','关系图谱','关系图'],
+  'flow_mode':['flow','flowmode','心流','心流模式','深度工作'],
+  'flow_context_new':['new_context','flow_new','新上下文','干活上下文'],
+  'flow_deliver':['deliver','flow_deliver','交付','心流交付']
+};
+
+// ---------- ② 字段名别名册（common=通用；perTool=按工具覆盖优先） ----------
+var PARAM_KEY_ALIASES={
+  common:{
+    'query':['q','keyword','keywords','关键词','搜索词','搜索内容'],
+    'path':['filepath','file_path','fp','dir','dir_path','directory','路径','文件路径','文件'],
+    'content':['文本','内容','markdown_content','正文内容'],
+    'title':['标题','名称'],
+    'action':['op','operation','操作','动作'],
+    'limit':['数量','条数'],
+    'mode':['方式','类型模式'],
+    'filename':['file_name','文件名','图片名'],
+    'id':['ID','标识'],
+    'code':['源码','代码']
+  },
+  perTool:{
+    'code_runner':{'code':['script','source','代码','源码'],'path':['file','filepath','脚本路径'],'language':['lang','语言']},
+    'filesystem':{'path':['file','filepath','文件路径','文件'],'content':['数据','文本'],'new_name':['rename_to','新名','新名字'],'new_path':['dest','目标路径','目标'],'line':['行号','start_line'],'endLine':['end_line','结束行']},
+    'search':{'query':['q','keyword','关键词'],'max_results':['limit','数量'],'include_raw_content':['raw','抓原文','include_raw']},
+    'fuzzy_search':{'query':['q','keyword','关键词'],'mode':['搜索方式'],'path':['目录','搜索目录'],'file':['限定文件'],'limit':['数量']},
+    'longterm_memory':{'query':['q','搜索'],'entry':['记录','条目'],'entries':['记录们','多条'],'id':['记录id'],'limit':['数量']},
+    'knowledge_base':{'query':['q','搜索'],'entry':['记录','条目'],'entries':['记录们','多条'],'id':['记录id'],'limit':['数量']},
+    'calendar':{'start':['开始','开始时间'],'end':['结束','结束时间'],'recurrence':['重复','周期'],'reminder_minutes':['提醒','提前提醒'],'title':['事件名'],'query':['q']},
+    'sql_db':{'sql':['query','语句','sql语句'],'table':['表','表名'],'action':['操作'],'columns':['列','字段定义'],'filename':['文件名']},
+    'send_email':{'to':['收件人','邮箱'],'subject':['主题'],'body':['内容','正文'],'body_type':['格式'],'attachments':['附件']},
+    'geo_search':{'lat':['latitude','纬度'],'lng':['lon','longitude','经度'],'radius':['半径'],'category':['类别'],'limit':['数量']},
+    'geo_geocode':{'address':['地址','地点']},
+    'todo':{'item_id':['id','条目id'],'title':['标题'],'items':['条目列表'],'item_ids':['顺序'],'todo_id':['清单id']},
+    'help':{'query':['q'],'id':['工具名'],'limit':['数量']},
+    'custom_api_call':{'endpoint':['url','接口地址','地址'],'method':['请求方式'],'headers':['请求头'],'body':['请求体','数据'],'timeout':['超时']},
+    'precise_time':{'target_time':['目标时间'],'from_tz':['源时区'],'to_tz':['目标时区'],'time_str':['时间字符串'],'label':['标签']},
+    'mcp_connect':{'id':['服务器id'],'url':['服务器地址'],'args':['参数']},
+    'archive':{'target_path':['目标路径','压缩路径'],'files':['文件列表'],'output_path':['输出路径'],'password':['密码']},
+    'pipeline':{'dag':['图','拓扑'],'acceptance_metrics':['验收指标'],'pipeline_id':['流水线id'],'run_id':['运行id'],'decision':['决策']},
+    'world_validator':{'world_id':['世界id','仿真id'],'entity_id':['实体id'],'max_ticks':['最大步数'],'tick_limit':['步数上限'],'export_format':['导出格式'],'def':['定义'],'def_text':['定义文本']},
+    'mcts_plan':{'problem':['问题','任务'],'goal':['目标'],'constraints':['约束','限制'],'mode':['模式']},
+    'chart':{'type':['图表类型'],'title':['标题'],'data':['数据'],'options':['配置']},
+    'diagram':{'diagram_type':['type','图表类型'],'code':['mermaid代码','语法']},
+    'svg_animator':{'svg_code':['svg','代码','svg代码'],'animation_type':['type','动画类型'],'duration':['时长']},
+    'table_generator':{'headers':['表头','列名'],'rows':['行','数据行'],'download_format':['下载格式']},
+    'word_generator':{'content':['markdown','正文'],'filename':['文件名']},
+    'pdf_generate':{'content':['markdown','正文'],'format':['格式'],'filename':['文件名'],'pageSize':['纸张','页面大小']},
+    'convert_format':{'input_path':['输入文件','源文件'],'output_path':['输出文件','目标文件'],'from_format':['源格式'],'to_format':['目标格式'],'options':['配置']},
+    'browser_notify':{'title':['标题'],'body':['内容','消息'],'icon':['图标'],'tag':['标签'],'delay':['延迟'],'requireInteraction':['常驻']},
+    'speech_tts':{'text':['内容','文本'],'lang':['语言'],'rate':['语速'],'pitch':['音调']},
+    'speech_stt':{'lang':['语言'],'max_seconds':['时长'],'stt_endpoint':['识别接口']},
+    'read_image':{'filename':['图片','图片名','文件']},
+    'reqalign':{'user_request':['需求','用户需求'],'questions':['问题'],'user_answers':['答案'],'project_id':['项目id']},
+    'generatespec':{'spec_content':['规格','文档内容'],'review_instructions':['评审要求'],'project_id':['项目id']},
+    'vis_network':{'nodes':['节点'],'edges':['边','连线'],'options':['配置']},
+    'user_function_call':{'function_id':['函数id','函数名'],'params':['参数']},
+    'skill_manager':{'query':['q','搜索'],'id':['技能id'],'limit':['数量']},
+    'semantic_memory':{'query':['q','搜索'],'limit':['数量']},
+    'flow_mode':{'task':['任务','任务描述']},
+    'flow_context_new':{'summary':['摘要','前情'],'first_task':['任务','首任务']},
+    'flow_deliver':{'summary':['摘要','总结']}
+  }
+};
+
+// ---------- ③ action 值别名册（按工具） ----------
+var ACTION_VALUE_ALIASES={
+  'filesystem':{'list':['ls','dir','目录','查看目录','列出'],'read':['cat','open','打开','读取','读'],'create':['write','new','新建','创建','写'],'update':['modify','改','修改','更新'],'delete':['rm','del','remove','删','删除'],'rename':['ren','重命名'],'move':['mv','移动'],'copy':['cp','复制'],'append':['加','追加'],'insert':['插入'],'delete_lines':['删行','删除行'],'replace_lines':['替换','替换行'],'tree':['目录树','树']},
+  'longterm_memory':{'query':['q','search','搜','查询'],'store':['save','add','存','保存','写入'],'list':['ls','列','列出'],'get':['读','查看'],'delete':['del','rm','remove','删','删除'],'update':['modify','改','更新'],'batch_delete':['批量删','batch_del']},
+  'knowledge_base':{'query':['q','search','搜','查询'],'store':['save','add','存','保存','写入'],'list':['ls','列','列出'],'get':['读','查看'],'delete':['del','rm','remove','删','删除'],'update':['modify','改','更新'],'batch_delete':['批量删','batch_del']},
+  'calendar':{'list':['ls','列出','查看'],'schedule':['add','new','新建','创建','添加','安排'],'delete':['del','remove','删','删除'],'search':['搜','查找'],'export':['导出'],'wake_status':['唤醒状态'],'enable_wake':['开启唤醒'],'disable_wake':['关闭唤醒']},
+  'sql_db':{'query':['select','查','查询'],'exec':['execute','执行'],'schema':['结构','表结构'],'create_table':['建表'],'drop_table':['删表'],'export':['导出'],'import':['导入']},
+  'archive':{'compress':['压缩','zip','打包'],'extract':['解压','unzip','释放'],'list':['ls','列出']},
+  'speech_tts':{'speak':['说','朗读','播报'],'stop':['停','停止'],'list_voices':['声音','音色']},
+  'speech_stt':{'record':['录音','开始'],'stop':['停','停止'],'recognize':['识别']},
+  'todo':{'create':['new','新建','建'],'start':['开始'],'done':['完成','完'],'fail':['失败','受阻'],'add':['加','追加'],'reorder':['排序'],'list':['ls','查看']},
+  'help':{'query':['search','搜'],'list':['ls','全部'],'set':['load','载入','激活'],'get':['查'],'unset':['卸载']},
+  'precise_time':{'now':['现在','当前'],'ntp':['校时'],'timezone':['时区'],'countdown':['倒计时'],'timer':['计时']},
+  'pipeline':{'create':['new','新建'],'run':['执行','运行'],'status':['状态'],'get_report':['报告'],'decide':['决策'],'deliver':['交付'],'list':['ls'],'delete':['del','删'],'checkpoint':['检查点'],'restore':['恢复'],'pause':['暂停'],'resume':['继续'],'stop':['停止'],'update':['改'],'overwrite':['覆盖']},
+  'reqalign':{'analyze':['分析'],'submit_questions':['提问','提交问题'],'check_convergence':['收敛','检查收敛'],'generate_confirmation':['确认'],'lock':['锁定'],'status':['状态']},
+  'generatespec':{'generate':['生成'],'review':['评审'],'fix':['修复'],'finalize':['定稿','锁定'],'status':['状态']},
+  'world_validator':{'define':['定义'],'load':['加载'],'step':['步进'],'run':['运行'],'transition':['转换'],'status':['状态'],'delete':['删'],'export':['导出'],'diff':['对比'],'edit':['编辑'],'reset':['重置'],'history':['历史'],'list':['ls']},
+  'skill_manager':{'query':['search','搜'],'list':['ls','全部'],'set':['load','激活'],'reset':['卸载全部']},
+  'flow_mode':{'start':['启动','开始']}
+};
+
+// ---------- 归一化：去分隔符 + 小写（camelCase→snake 亦可归一） ----------
+function normalizeToken(s){
+  if(s===null||s===undefined)return '';
+  return String(s).replace(/[_\-\s\.]/g,'').toLowerCase();
+}
+
+// ---------- 编辑距离（独立实现，供字段/工具名/action 模糊匹配使用） ----------
+function _levDist(a,b){
+  if(a===b)return 0;
+  var la=a.length,lb=b.length;
+  if(la===0)return lb;if(lb===0)return la;
+  var prev=new Array(lb+1),cur=new Array(lb+1),i,j;
+  for(j=0;j<=lb;j++)prev[j]=j;
+  for(i=1;i<=la;i++){
+    cur[0]=i;
+    for(j=1;j<=lb;j++){
+      var cost=a.charCodeAt(i-1)===b.charCodeAt(j-1)?0:1;
+      cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+cost);
+    }
+    var tmp=prev;prev=cur;cur=tmp;
+  }
+  return prev[lb];
+}
+
+// ---------- 工具名解析：精确→别名→归一化→编辑距离 ----------
+function resolveToolName(raw, registry){
+  if(!raw)return {name:raw,fixed:false,method:'none'};
+  if(registry[raw])return {name:raw,fixed:false,method:'exact'};
+  var norm=normalizeToken(raw);
+  var canon=Object.keys(registry);
+  for(var ti=0;ti<canon.length;ti++){
+    var aliases=TOOL_ALIAS_TABLE[canon[ti]];
+    if(!aliases)continue;
+    for(var ai=0;ai<aliases.length;ai++){
+      if(aliases[ai]===raw||normalizeToken(aliases[ai])===norm){
+        return {name:canon[ti],fixed:true,method:'alias'};
+      }
+    }
+  }
+  for(var ci=0;ci<canon.length;ci++){
+    if(normalizeToken(canon[ci])===norm)return {name:canon[ci],fixed:true,method:'normalize'};
+  }
+  var bestD=99,best=null,best2=99;
+  for(var di=0;di<canon.length;di++){
+    var d=_levDist(norm,normalizeToken(canon[di]));
+    if(d<bestD){best2=bestD;bestD=d;best=canon[di];}
+    else if(d<best2){best2=d;}
+  }
+  if(best&&(bestD<=1||(bestD===2&&best2>=3)))return {name:best,fixed:true,method:'levenshtein',dist:bestD};
+  return {name:raw,fixed:false,method:'none'};
+}
+
+// ---------- 工具名候选建议（TOOL_NOT_FOUND 时给出 top3） ----------
+function suggestToolCandidates(raw, registry, maxDist){
+  var norm=normalizeToken(raw);
+  var cands=[];
+  var canon=Object.keys(registry);
+  for(var i=0;i<canon.length;i++){
+    var d=_levDist(norm,normalizeToken(canon[i]));
+    if(d<=maxDist)cands.push({name:canon[i],dist:d});
+  }
+  cands.sort(function(a,b){return a.dist-b.dist;});
+  return cands.slice(0,3).map(function(c){return c.name;});
+}
+
+// ---------- 字段名解析：合法优先→perTool别名→common别名→归一化→编辑距离 ----------
+function resolveParamKey(toolName, key, registry){
+  if(!key)return null;
+  var td=registry[toolName];
+  var props=td&&td.parameters&&td.parameters.properties?td.parameters.properties:{};
+  var canonKeys=Object.keys(props);
+  var normKey=normalizeToken(key);
+  // ① 原样合法字段 → 不动
+  for(var i=0;i<canonKeys.length;i++){
+    if(canonKeys[i]===key)return null;
+  }
+  // ①.5 归一化相等但原样不同（大小写/分隔符变体）→ 修复为规范名
+  for(var i2=0;i2<canonKeys.length;i2++){
+    if(normalizeToken(canonKeys[i2])===normKey)return {key:canonKeys[i2],method:'normalize'};
+  }
+  // ② perTool 别名
+  var pt=PARAM_KEY_ALIASES.perTool[toolName];
+  if(pt){
+    for(var pk in pt){
+      var plist=pt[pk];
+      for(var pj=0;pj<plist.length;pj++){
+        if(plist[pj]===key||normalizeToken(plist[pj])===normKey)return {key:pk,method:'alias'};
+      }
+    }
+  }
+  // ③ common 别名
+  for(var ck in PARAM_KEY_ALIASES.common){
+    var clist=PARAM_KEY_ALIASES.common[ck];
+    for(var cj=0;cj<clist.length;cj++){
+      if(clist[cj]===key||normalizeToken(clist[cj])===normKey)return {key:ck,method:'common_alias'};
+    }
+  }
+  // ④ 编辑距离≤2（仅 ASCII 键：中文参数名走别名/归一化，避免与短英文字段误匹配）
+  var isAscii=/^[\x00-\x7F]+$/.test(normKey);
+  if(isAscii){
+    var bestD=99,best=null,best2=99;
+    for(var di=0;di<canonKeys.length;di++){
+      var d=_levDist(normKey,normalizeToken(canonKeys[di]));
+      if(d<bestD){best2=bestD;bestD=d;best=canonKeys[di];}
+      else if(d<best2){best2=d;}
+    }
+    if(best&&(bestD<=1||(bestD===2&&best2>=3)))return {key:best,method:'levenshtein',dist:bestD};
+  }
+  return null;
+}
+
+// ---------- action 值解析：合法→别名→归一化enum→编辑距离 ----------
+function resolveActionValue(toolName, action, registry){
+  if(action===undefined||action===null||action==='')return null;
+  var td=registry[toolName];
+  var enumList=td&&td.parameters&&td.parameters.properties&&td.parameters.properties.action
+    ?td.parameters.properties.action.enum:null;
+  var normAct=normalizeToken(action);
+  // ① 原样合法 → 不动
+  if(enumList){
+    for(var i=0;i<enumList.length;i++){
+      if(enumList[i]===action)return null;
+    }
+  }
+  // ①.5 归一化相等但原样不同（大小写/分隔符变体）→ 修复为规范值
+  if(enumList){
+    for(var i2=0;i2<enumList.length;i2++){
+      if(normalizeToken(enumList[i2])===normAct)return {value:enumList[i2],method:'normalize'};
+    }
+  }
+  // ② 工具专属 action 别名
+  var at=ACTION_VALUE_ALIASES[toolName];
+  if(at){
+    for(var ak in at){
+      var alist=at[ak];
+      for(var aj=0;aj<alist.length;aj++){
+        if(alist[aj]===action||normalizeToken(alist[aj])===normAct)return {value:ak,method:'alias'};
+      }
+    }
+  }
+  // ③ 编辑距离≤2（仅 ASCII 值：中文 action 走别名/归一化，避免与短英文 enum 误匹配）
+  var isAscii2=/^[\x00-\x7F]+$/.test(normAct);
+  if(enumList&&enumList.length>0&&isAscii2){
+    var bestD=99,best=null,best2=99;
+    for(var ei=0;ei<enumList.length;ei++){
+      var d=_levDist(normAct,normalizeToken(enumList[ei]));
+      if(d<bestD){best2=bestD;bestD=d;best=enumList[ei];}
+      else if(d<best2){best2=d;}
+    }
+    if(best&&(bestD<=1||(bestD===2&&best2>=3)))return {value:best,method:'levenshtein',dist:bestD};
+  }
+  return null;
+}
+
+// ---------- 统一入口：工具名+字段名+action值 三级兜底 ----------
+// 返回 {name, args, fixes[]}  fixes 形如 '工具名 fs→filesystem' / '参数 file→path' / 'action del→delete'
+function normalizeToolInvocation(toolName, args, registry){
+  var fixes=[];
+  var r1=resolveToolName(toolName,registry);
+  var finalName=r1.name;
+  if(r1.fixed)fixes.push('工具名 '+toolName+'→'+r1.name);
+  var finalArgs=args||{};
+  if(args&&typeof args==='object'&&!Array.isArray(args)){
+    finalArgs={};
+    for(var k in args){
+      if(!Object.prototype.hasOwnProperty.call(args,k))continue;
+      var rk=resolveParamKey(finalName,k,registry);
+      if(rk){if(finalArgs.hasOwnProperty(rk.key)){fixes.push('参数 '+k+'→'+rk.key+' 忽略(键已存在)');}else{finalArgs[rk.key]=args[k];fixes.push('参数 '+k+'→'+rk.key);}}
+      else finalArgs[k]=args[k];
+    }
+    // action 值兜底（需在字段名兜底之后，用修正后的 action 键）
+    var actKey=null;
+    for(var k2 in finalArgs){
+      if(normalizeToken(k2)==='action'){actKey=k2;break;}
+    }
+    if(actKey){
+      var rv=resolveActionValue(finalName,finalArgs[actKey],registry);
+      if(rv){fixes.push('action '+finalArgs[actKey]+'→'+rv.value);finalArgs[actKey]=rv.value;}
+    }
+  }
+  return {name:finalName,args:finalArgs,fixes:fixes};
+}
+
 // 工具参数校验Schema（必填参数校验）
 var TOOL_PARAM_SCHEMA={
   'search':{required:['query']},
@@ -5211,53 +5524,6 @@ function cosineSimilarity(vecA,vecB){
   for(var i=0;i<vecA.length;i++){dotProduct+=vecA[i]*vecB[i];normA+=vecA[i]*vecA[i];normB+=vecB[i]*vecB[i];}
   if(normA===0||normB===0)return 0;
   return dotProduct/(Math.sqrt(normA)*Math.sqrt(normB));
-}
-
-// Levenshtein 编辑距离（参数名模糊匹配用）
-function levenshteinDistance(a,b){
-  var al=a.length,bl=b.length;
-  var matrix=[];
-  for(var i=0;i<=bl;i++)matrix[i]=[i];
-  for(var j=0;j<=al;j++)matrix[0][j]=j;
-  for(var i=1;i<=bl;i++){
-    for(var j=1;j<=al;j++){
-      if(b.charAt(i-1)===a.charAt(j-1))matrix[i][j]=matrix[i-1][j-1];
-      else matrix[i][j]=Math.min(matrix[i-1][j-1]+1,Math.min(matrix[i][j-1]+1,matrix[i-1][j]+1));
-    }
-  }
-  return matrix[bl][al];
-}
-
-// 参数名模糊匹配：检测未知参数名，推荐最接近的正确参数名
-function fuzzyMatchParamNames(toolName,args){
-  if(!args||typeof args!=='object')return null;
-  var _knownParams=getToolParamNames(toolName);
-  if(!_knownParams||_knownParams.length===0)return null;
-  var suggestions={};
-  var actualKeys=Object.keys(args);
-  for(var ai=0;ai<actualKeys.length;ai++){
-    var key=actualKeys[ai];
-    var isValid=false;
-    for(var pi=0;pi<_knownParams.length;pi++){
-      if(key===_knownParams[pi]){isValid=true;break;}
-    }
-    if(isValid)continue;
-    // 编辑距离匹配
-    var bestDist=99,bestMatch=null;
-    for(var pi=0;pi<_knownParams.length;pi++){
-      var dist=levenshteinDistance(key,_knownParams[pi]);
-      if(dist<bestDist){bestDist=dist;bestMatch=_knownParams[pi];}
-    }
-    if(bestMatch&&bestDist<=2)suggestions[key]=bestMatch;
-  }
-  return Object.keys(suggestions).length>0?suggestions:null;
-}
-
-// 获取工具参数名列表（从TOOL_REGISTRY提取）
-function getToolParamNames(toolName){
-  var td=TOOL_REGISTRY[toolName];
-  if(!td||!td.parameters||!td.parameters.properties)return null;
-  return Object.keys(td.parameters.properties);
 }
 
 // CJK双字词 + 英文单词 混合拆分（用于两层语义搜索的第二层）
@@ -12029,19 +12295,25 @@ function validateToolParams(toolName,args){
 
 async function executeTool(toolCall,artifacts){
   var toolName=toolCall.function.name;
+  // ★ 工具名本地兜底：别名/归一化/编辑距离（零API消耗）
+  var _resolved=resolveToolName(toolName,TOOL_REGISTRY);
+  var _nameFix=_resolved.fixed?('工具名 '+toolName+'→'+_resolved.name):null;
+  if(_resolved.fixed)toolName=_resolved.name;
   var toolDef=TOOL_REGISTRY[toolName];
-  if(!toolDef)return {role:'tool',tool_call_id:toolCall.id,content:'---tool:unknown err 0ms 0ch unknown---\n[ERR_CODE] TOOL_NOT_FOUND\n[PARAM] toolName\n[VALUE] '+toolName+'\n[MESSAGE] 未知工具: '+toolName+'\n[SUGGEST] 使用 help action="query" query="'+toolName+'" 搜索正确工具名'};
+  if(!toolDef){
+    var _cands=suggestToolCandidates(toolName,TOOL_REGISTRY,4);
+    var _sug=_cands.length>0?'你是否想用: '+_cands.join(', ')+'？请用 help action="query" query="'+toolName+'" 确认':'使用 help action="query" query="'+toolName+'" 搜索正确工具名';
+    return {role:'tool',tool_call_id:toolCall.id,content:'---tool:unknown err 0ms 0ch unknown---\n[ERR_CODE] TOOL_NOT_FOUND\n[PARAM] toolName\n[VALUE] '+toolName+'\n[MESSAGE] 未知工具: '+toolName+'\n[SUGGEST] '+_sug};
+  }
   if(toolDef.disabled)return {role:'tool',tool_call_id:toolCall.id,content:'---tool:'+toolName+' err 0ms 0ch unknown---\n[ERR_CODE] TOOL_DISABLED\n[MESSAGE] 工具已禁用: '+toolName+'\n[SUGGEST] 在设置中启用此工具'};
   var _t0=Date.now();
   try{
     var args=parseToolCallArguments(toolCall);
-    // 参数名模糊匹配检查
-    var _paramFixes=fuzzyMatchParamNames(toolName,args);
-    if(_paramFixes&&Object.keys(_paramFixes).length>0){
-      var _fixList=Object.keys(_paramFixes).map(function(k){return k+'\u2192'+_paramFixes[k];}).join(', ');
-      return {role:'tool',tool_call_id:toolCall.id,content:'---tool:'+toolName+' err 0ms 0ch param_error---\n[ERR_CODE] PARAM_NAME_TYPOS\n[PARAM] '+_fixList+'\n[MESSAGE] 参数名拼写错误\n[SUGGEST] 你传入的参数名有误，请使用正确的参数名: '+_fixList+'\n[DOC] help "'+toolName+'"'};
-    }
-    // 参数必填校验
+    // ★ 别名册三级兜底：工具名/字段名/action值 本地自动修复（零API消耗，替代原报错逻辑）
+    var _norm=normalizeToolInvocation(toolName,args,TOOL_REGISTRY);
+    if(_norm.name!==toolName){toolName=_norm.name;toolDef=TOOL_REGISTRY[toolName];}
+    args=_norm.args;
+    var _fixes=_norm.fixes;
     var _validationResult=validateToolParams(toolName,args);
     if(_validationResult){
       return {role:'tool',tool_call_id:toolCall.id,content:'---tool:'+toolName+' err 0ms 0ch param_error---\n[ERR_CODE] '+_validationResult.code+'\n[PARAM] '+_validationResult.param+'\n[EXPECTED] '+_validationResult.expected+'\n[RECEIVED] '+_validationResult.received+'\n[MESSAGE] '+_validationResult.message+'\n[SUGGEST] '+_validationResult.suggest+'\n[DOC] help "'+toolName+'"'};
@@ -12097,7 +12369,10 @@ async function executeTool(toolCall,artifacts){
   }
 
   var header='---tool:'+toolName+' '+status+' '+_elapsed+'ms '+payload.length+'ch '+typeHint+'---';
-  return {role:'tool',tool_call_id:toolCall.id,content:header+'\n'+payload};
+  var _fixAll=(typeof _fixes!=='undefined')?_fixes.slice(0):[];
+  if(_nameFix)_fixAll.unshift(_nameFix);
+  var _fixNote=_fixAll.length>0?'[AUTO_FIX] 自动修正: '+_fixAll.join('; ')+'\n':'';
+  return {role:'tool',tool_call_id:toolCall.id,content:header+'\n'+_fixNote+payload};
 }
 
 
