@@ -596,7 +596,6 @@ for(var i=0;i<files.length;i+=CONC){
 // 1. 核对返回的 n/files.length：若全部成功（n===files.length），继续；否则单独重试失败项（fail 数组中有路径）
 // 2. 验证文件有效性：逐个读取并确认非空、且能被 JSON.parse 解析（技能包均为 .json 格式），解析失败的文件删除重下
 // 3. 手动移动文件到技能目录：脚本运行在沙箱时，下载文件实际落在沙箱路径，须用 filesystem copy/move 逐个移到 /skills/（目标已存在同名文件则先比对内容再覆盖）
-// 4. 确认 /skills/ 下文件齐全后，用 skill_manager query 检查可发现性，再用 skill_manager set 激活，最后告知用户已就绪
 ```
 
 **无需安装任何东西。纯浏览器运行。**
@@ -698,7 +697,6 @@ for(var i=0;i<files.length;i+=CONC){
 // 1. Verify the returned n/files.length: if all succeeded (n===files.length), continue; otherwise re-download the failed items individually (paths are in the fail array)
 // 2. Validate file integrity: read each file and confirm it is non-empty and parseable by JSON.parse (all skill files are .json). Delete and re-download any file that fails to parse
 // 3. Move files to the skills directory manually: when the script runs in the sandbox, the files actually land in the sandbox path — use filesystem copy/move to relocate each file to /skills/ (if a file with the same name already exists, compare contents first, then overwrite)
-// 4. Once /skills/ is complete, check discoverability with skill_manager query, then activate with skill_manager set, and finally tell the user it's ready
 ```
 
 **No installation required. Runs purely in the browser.**
