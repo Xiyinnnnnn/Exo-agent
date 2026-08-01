@@ -8570,6 +8570,7 @@ function buildTaskWorkerSource(){
   src+='async function executeCode(params){\n';
   src+='  var language=params.language,code=params.code,timeout=params.timeout||10000;\n';
   src+='  var fsSnapshot=params.fs_snapshot||{};\n';
+  src+='  var sandboxDir=params.sandbox_dir||"/sandbox/";\n';
   src+='\n';
   src+='  if(language==="javascript"){\n';
   src+='    var _vfs=new Map();\n';
@@ -8650,13 +8651,60 @@ function buildTaskWorkerSource(){
   src+='    }\n';
   src+='    var pyOut="";pyodide.setStdout({batched:function(t){pyOut+=String(t)+"\\n"}});\n';
   src+='    var result=await Promise.race([pyodide.runPythonAsync(_pyNetPatch+"\\n"+code),new Promise(function(_,reject){return setTimeout(function(){reject(new Error("Python执行超时"))},timeout)})]);\n';
+  src+='    // ★ 收集Python写入的变更：chdir到sandboxDir + 扫描用户文件区(sandboxDir递归+快照目录+/tmp)，diff快照\n';
   src+='    var _pyChanges=[];\n';
-  src+='    for(var _fp3 in fsSnapshot){\n';
-  src+='      if(fsSnapshot[_fp3].content==="__DIR__")continue;\n';
+  src+='    // ★ 归一化 sandboxDir（主线程传入带尾部斜杠，拼接会出双斜杠路径）\n';
+  src+='    sandboxDir=sandboxDir.replace(/\\/+$/,"")||"/";\n';
+  src+='    try{pyodide.FS.chdir(sandboxDir);}catch(_e6){}\n';
+  src+='    var _pyNow={};\n';
+  src+='    // 递归扫描 sandboxDir（相对路径写入的文件都在这里）\n';
+  src+='    (function _pyScanDir(_dir){\n';
   src+='      try{\n';
-  src+='        var _pyNew=pyodide.FS.readFile(_fp3,{encoding:"utf8"});\n';
-  src+='        if(_pyNew!==fsSnapshot[_fp3].content)_pyChanges.push({type:"write",path:_fp3,content:_pyNew});\n';
-  src+='      }catch(_e2){_pyChanges.push({type:"delete",path:_fp3});}\n';
+  src+='        var _entries=pyodide.FS.readdir(_dir);\n';
+  src+='        for(var _pi=0;_pi<_entries.length;_pi++){\n';
+  src+='          var _en=_entries[_pi];\n';
+  src+='          if(_en==="."||_en==="..")continue;\n';
+  src+='          var _full=_dir==="/"?("/"+_en):(_dir+"/"+_en);\n';
+  src+='          try{\n';
+  src+='            var _st=pyodide.FS.stat(_full);\n';
+  src+='            if(pyodide.FS.isDir(_st.mode)){_pyScanDir(_full);}\n';
+  src+='            else if(pyodide.FS.isFile(_st.mode)){try{_pyNow[_full]=pyodide.FS.readFile(_full,{encoding:"utf8"});}catch(_e7){}}\n';
+  src+='          }catch(_e8){}\n';
+  src+='        }\n';
+  src+='      }catch(_e9){}\n';
+  src+='    })(sandboxDir);\n';
+  src+='    // 快照目录 + /tmp：只扫直接文件（防 Pyodide 系统目录 /lib /usr 等爆炸）\n';
+  src+='    var _scanDirs={"/tmp":1};\n';
+  src+='    for(var _fsd in fsSnapshot){\n';
+  src+='      if(fsSnapshot[_fsd].content==="__DIR__"){_scanDirs[_fsd.replace(/\\/+$/,"")||"/"]=1;continue;}\n';
+  src+='      var _fd=_fsd.substring(0,_fsd.lastIndexOf("/"));\n';
+  src+='      if(!_fd)_fd="/";\n';
+  src+='      _scanDirs[_fd]=1;\n';
+  src+='    }\n';
+  src+='    for(var _pd in _scanDirs){\n';
+  src+='      if(_pd===sandboxDir)continue;\n';
+  src+='      try{\n';
+  src+='        var _pe=pyodide.FS.readdir(_pd);\n';
+  src+='        for(var _pj=0;_pj<_pe.length;_pj++){\n';
+  src+='          var _pe2=_pe[_pj];\n';
+  src+='          if(_pe2==="."||_pe2==="..")continue;\n';
+  src+='          var _pf=_pd==="/"?("/"+_pe2):(_pd+"/"+_pe2);\n';
+  src+='          try{\n';
+  src+='            var _ps=pyodide.FS.stat(_pf);\n';
+  src+='            if(pyodide.FS.isFile(_ps.mode)){try{_pyNow[_pf]=pyodide.FS.readFile(_pf,{encoding:"utf8"});}catch(_ea){}}\n';
+  src+='          }catch(_eb){}\n';
+  src+='        }\n';
+  src+='      }catch(_ec){}\n';
+  src+='    }\n';
+  src+='    // diff 快照：新建+修改 → write；快照有但已消失 → delete\n';
+  src+='    for(var _pn in _pyNow){\n';
+  src+='      var _po=fsSnapshot[_pn];\n';
+  src+='      if(!_po){_pyChanges.push({type:"write",path:_pn,content:_pyNow[_pn]});}\n';
+  src+='      else if(_po.content!=="__DIR__"&&_po.content!==_pyNow[_pn]){_pyChanges.push({type:"write",path:_pn,content:_pyNow[_pn]});}\n';
+  src+='    }\n';
+  src+='    for(var _op2 in fsSnapshot){\n';
+  src+='      if(fsSnapshot[_op2].content==="__DIR__")continue;\n';
+  src+='      if(!(_op2 in _pyNow))_pyChanges.push({type:"delete",path:_op2});\n';
   src+='    }\n';
   src+='    return {result:pyOut+(result!==undefined&&result!==null?String(result):""),fs_changes:_pyChanges};\n';
   src+='  }\n';
@@ -10869,11 +10917,11 @@ async function toolCodeRunner(args){
   var output=runResp.data;
   var fsChanges=runResp.fs_changes||(output&&output.fs_changes)||[];
   var resultText=(output&&output.result!==undefined&&output.result!==null)?output.result:(typeof output==='string'?output:JSON.stringify(output));
-  var writeCount=0,skipCount=0;
+  var writeCount=0,skipCount=0,skippedPaths=[];
   for(var ci=0;ci<fsChanges.length;ci++){
     var change=fsChanges[ci];
     var perm=getCodeRunPermission(change.path);
-    if(perm!=='readwrite'){skipCount++;continue;}
+    if(perm!=='readwrite'){skipCount++;skippedPaths.push({path:change.path,perm:perm});continue;}
     try{
       if(change.type==='write'||change.type==='create'){
         await createFile(change.path,change.content||'');
@@ -10891,7 +10939,11 @@ async function toolCodeRunner(args){
 
   var metaNote='[文件: '+path+']';
   if(writeCount>0)metaNote+='\n[文件系统回写: '+writeCount+'个文件]';
-  if(skipCount>0)metaNote+='\n[文件系统跳过(只读): '+skipCount+'个文件]';
+  if(skipCount>0){
+    var permHint={none:'不可访问(系统目录)',read:'只读(仅可读)'};
+    var deniedLines=skippedPaths.map(function(s,i){return '  '+(i+1)+'. '+s.path+' — 权限: '+(permHint[s.perm]||s.perm);});
+    metaNote+='\n\n[ERR_CODE] FS_PERMISSION_DENIED\n[PARAM] path\n[COUNT] '+skipCount+'\n[MESSAGE] 沙箱代码尝试写入只读/无权限路径，已阻止：\n'+deniedLines.join('\n')+'\n[SUGGEST] 沙箱仅可写 /downloads/ /sandbox/ /tmp/；/uploads/ 只读，/config/ /memory/ /pipelines/ /trash/ 不可见。请修改代码写入可写目录(推荐 /downloads/)，再用 filesystem read 验证落盘。';
+  }
   return resultText+'\n'+metaNote;
 }
 
@@ -20817,6 +20869,94 @@ async function clearModelCache(){
 // 第33部分：数据导入导出
 // ================================================================
 
+
+// ── 备份 ZIP 打包/解包（零依赖：CompressionStream + 手写标准zip容器）──
+// 导出的 .zip 是标准 zip 格式（PK魔数+CRC32+中央目录），任何解压软件可打开；
+// 导入时兼容三种：标准zip / 旧版纯JSON备份
+var _crc32Table=null;
+function _crc32(bytes){
+  if(!_crc32Table){
+    _crc32Table=[];
+    for(var i=0;i<256;i++){
+      var c=i;
+      for(var k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);
+      _crc32Table[i]=c>>>0;
+    }
+  }
+  var crc=0xFFFFFFFF;
+  for(var j=0;j<bytes.length;j++)crc=((crc>>>8)^_crc32Table[(crc^bytes[j])&0xFF])>>>0;
+  return (crc^0xFFFFFFFF)>>>0;
+}
+
+// 构造标准 zip（单文件，DEFLATE 压缩）
+async function _makeZipBlob(filename,jsonStr){
+  if(typeof CompressionStream==='undefined')throw new Error('浏览器不支持CompressionStream');
+  var enc=new TextEncoder();
+  var raw=enc.encode(jsonStr);
+  var cs=new CompressionStream('deflate-raw');
+  var stream=new Blob([raw]).stream().pipeThrough(cs);
+  var deflated=new Uint8Array(await new Response(stream).arrayBuffer());
+  var crc=_crc32(raw);
+  var name=enc.encode(filename);
+  var fnLen=name.length;
+  function put32(arr,off,v){arr[off]=v&0xFF;arr[off+1]=(v>>8)&0xFF;arr[off+2]=(v>>16)&0xFF;arr[off+3]=(v>>24)&0xFF;}
+  function put16(arr,off,v){arr[off]=v&0xFF;arr[off+1]=(v>>8)&0xFF;}
+  // Local File Header (30B)
+  var lfh=new Uint8Array(30);
+  lfh[0]=0x50;lfh[1]=0x4B;lfh[2]=0x03;lfh[3]=0x04; // PK\x03\x04
+  put16(lfh,4,20);   // version needed
+  put16(lfh,8,8);    // method: deflate
+  put32(lfh,14,crc); // crc32
+  put32(lfh,18,deflated.length); // compressed size
+  put32(lfh,22,raw.length);      // uncompressed size
+  put16(lfh,26,fnLen);           // filename length
+  // Central Directory (46B) — 注意字段偏移：method@10, crc@16, size@20/24, fnLen@28
+  var cd=new Uint8Array(46);
+  cd[0]=0x50;cd[1]=0x4B;cd[2]=0x01;cd[3]=0x02; // PK\x01\x02
+  put16(cd,4,20);   // version made by
+  put16(cd,6,20);   // version needed
+  put16(cd,10,8);   // method: deflate
+  put32(cd,16,crc);
+  put32(cd,20,deflated.length);
+  put32(cd,24,raw.length);
+  put16(cd,28,fnLen);
+  put32(cd,42,0);   // local header offset
+  // End of Central Directory (22B)
+  var eocd=new Uint8Array(22);
+  eocd[0]=0x50;eocd[1]=0x4B;eocd[2]=0x05;eocd[3]=0x06; // PK\x05\x06
+  put16(eocd,8,1);  // total entries
+  put16(eocd,10,1);
+  put16(eocd,12,46+fnLen); // cd size
+  put32(eocd,16,30+fnLen+deflated.length); // cd offset
+  // 组装
+  var total=30+fnLen+deflated.length+(46+fnLen)+22;
+  var out=new Uint8Array(total),pos=0;
+  out.set(lfh,pos);pos+=30;
+  out.set(name,pos);pos+=fnLen;
+  out.set(deflated,pos);pos+=deflated.length;
+  out.set(cd,pos);pos+=46;
+  out.set(name,pos);pos+=fnLen;
+  out.set(eocd,pos);
+  return new Blob([out],{type:'application/zip'});
+}
+
+// 从 zip Blob 提取首个文件内容（解析 local header + deflate-raw 解压）
+async function _extractZipJson(blob){
+  var buf=new Uint8Array(await blob.arrayBuffer());
+  if(buf.length<30||buf[0]!==0x50||buf[1]!==0x4B||buf[2]!==0x03||buf[3]!==0x04)return null;
+  var fnLen=buf[26]|(buf[27]<<8);
+  var extraLen=buf[28]|(buf[29]<<8);
+  var compLen=(buf[18]|(buf[19]<<8)|(buf[20]<<16)|(buf[21]<<24))>>>0;
+  var dataStart=30+fnLen+extraLen;
+  if(dataStart+compLen>buf.length)throw new Error('zip 数据长度异常');
+  var compData=buf.slice(dataStart,dataStart+compLen);
+  if(typeof DecompressionStream==='undefined')throw new Error('浏览器不支持DecompressionStream');
+  var ds=new DecompressionStream('deflate-raw');
+  var stream=new Blob([compData]).stream().pipeThrough(ds);
+  var out=new Uint8Array(await new Response(stream).arrayBuffer());
+  return new TextDecoder().decode(out);
+}
+
 async function exportAllData(includeKeys){
   try{
     showToast('正在导出数据...','info');
@@ -20845,8 +20985,18 @@ async function exportAllData(includeKeys){
         exportData.files[f.path]=f.content;
       }
     }
-    triggerDownload(JSON.stringify(exportData,null,2),'evoagent_backup_'+new Date().toISOString().slice(0,10)+'.json','application/json');
-    showToast('数据导出成功 ','success');
+    // ★ zip 压缩导出（零依赖标准zip，任何解压软件可开）；失败自动回退纯JSON
+    var _bkDate=new Date().toISOString().slice(0,10);
+    var _bkJson=JSON.stringify(exportData);
+    try{
+      var _zipBlob=await _makeZipBlob('evoagent_backup.json',_bkJson);
+      triggerDownload(_zipBlob,'evoagent_backup_'+_bkDate+'.zip','application/zip');
+      showToast('数据导出成功(已压缩: '+Math.round((1-_zipBlob.size/_bkJson.length)*100)+'%)','success');
+    }catch(_ze){
+      debugLogger.warn('zip压缩失败，回退纯JSON: '+_ze.message);
+      triggerDownload(_bkJson,'evoagent_backup_'+_bkDate+'.json','application/json');
+      showToast('数据导出成功(未压缩，浏览器不支持压缩)','success');
+    }
   }catch(e){
     showToast('导出失败: '+e.message,'error');
   }
@@ -21508,9 +21658,22 @@ function initEventBindings(){
     btnImport.addEventListener('click',function(){hiddenFileImport.click();});
     hiddenFileImport.addEventListener('change',function(){
       if(this.files&&this.files[0]){
-        var reader=new FileReader();
-        reader.onload=function(e){importAllData(e.target.result);};
-        reader.readAsText(this.files[0]);
+        (async function(_file){
+          try{
+            var _txt=null;
+            var _head=new Uint8Array(await _file.slice(0,4).arrayBuffer());
+            if(_head.length>=4&&_head[0]===0x50&&_head[1]===0x4B&&_head[2]===0x03&&_head[3]===0x04){
+              // 标准zip备份 → 解压取JSON
+              _txt=await _extractZipJson(_file);
+            }else{
+              // 旧版纯JSON备份 → 直接读文本
+              _txt=await _file.text();
+            }
+            await importAllData(_txt);
+          }catch(_ie){
+            showToast('导入文件解析失败: '+(_ie.message||_ie),'error');
+          }
+        })(this.files[0]);
         this.value='';
       }
     });
