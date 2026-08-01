@@ -1957,7 +1957,7 @@ var TOOL_REGISTRY={
      parameters:{type:'object',properties:{action:{type:'string',enum:['query','list','set','get','unset'],default:'list'},query:{type:'string',description:'语义搜索(action=query必填)'},limit:{type:'number',default:5,maximum:10},id:{type:'string',description:'工具名(action=set/get/unset时必填)'}},required:[]}},
   'filesystem':{name:'filesystem',description:'文件系统。action:create/read/update/delete/list/tree/append/insert/delete_lines/replace_lines/rename/copy/move。行操作从大到小。代码执行用code_runner。',executor:'main_thread',
     parameters:{type:'object',properties:{action:{type:'string',enum:['create','read','update','delete','list','tree','append','insert','delete_lines','replace_lines','rename','move','copy']},path:{type:'string',description:'路径。上传文件在/uploads/'},content:{type:'string',description:'内容。replace_lines/insert的content按\\n拆分'},line:{type:'number',description:'行号(1-based)'},endLine:{type:'number',description:'结束行(含),0=末尾'},maxLines:{type:'number',default:1000,maximum:1000},mode:{type:'string',enum:['auto','chunked','full'],default:'auto'},full_max_bytes:{type:'number',default:65536},new_name:{type:'string',description:'新文件名(rename用)'},new_path:{type:'string',description:'目标路径(move/copy必填)'},overwrite:{type:'boolean',default:false},safe:{type:'boolean',default:true},depth:{type:'number'}},required:['action','path']}},
-  'code_runner':{name:'code_runner',description:'代码执行器。仅支持.js/.py。传path(需先filesystem create)或传code+language。JS沙箱无npm,内置fs/path/os等+CDN(lodash/dayjs/marked/qs)。',executor:'main_thread',
+  'code_runner':{name:'code_runner',description:'代码执行器。仅支持.js/.py。传path(需先filesystem create)或传code+language。JS沙箱无npm,内置fs/path/os等+CDN(lodash/dayjs/marked/qs)。fetch自动CORS代理降级+http便捷API。Python内置http_get/http_post+requests桥接(pyfetch)。',executor:'main_thread',
     parameters:{type:'object',properties:{path:{type:'string',description:'代码文件路径(.js或.py)。主模式:与code二选一,优先path'},code:{type:'string',description:'代码片段字符串。次要模式:不传path时使用,需搭配language'},language:{type:'string',enum:['js','python'],description:'语言。传code时必填;传path时可省略(从扩展名自动推断)'},timeout:{type:'number',default:10000,description:'超时ms。JS默认10s,Python默认60s'},sandbox_dir:{type:'string',description:'沙箱工作目录,默认/sandbox/'}},required:[]}},
   'search':{name:'search',description:'网络搜索(Tavily)。返回标题/URL/摘要。可选include_raw_content抓原文。',executor:'task_worker',
     parameters:{type:'object',properties:{query:{type:'string',description:'搜索关键词'},max_results:{type:'number',default:5,maximum:10},search_depth:{type:'string',enum:['basic','advanced'],default:'advanced'},include_raw_content:{type:'boolean',default:false},include_domains:{type:'array',items:{type:'string'}},exclude_domains:{type:'array',items:{type:'string'}}},required:['query']}},
@@ -2581,7 +2581,8 @@ chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / 
 - 轻量沙箱引擎，基于 `+"`"+`new Function()`+"`"+` 执行，非 Node.js 运行时
 - 内置模块: fs/path/os/url/querystring/crypto/util/assert
 - CDN 可用: `+"`"+`require('lodash')`+"`"+` / `+"`"+`require('dayjs')`+"`"+` / `+"`"+`require('marked')`+"`"+` / `+"`"+`require('qs')`+"`"+`
-- 不支持: npm 任意包、http/https 模块（请用 fetch()）、child_process、Buffer
+- 不支持: npm 任意包、child_process、Buffer
+- ✅ 网络: `+"`"+`fetch(url)`+"`"+` 自动CORS代理降级(直连失败→corsproxy.io→allorigins)；`+"`"+`http.get/post/put/delete`+"`"+`、`+"`"+`fetchText/fetchJSON`+"`"+` 便捷函数；`+"`"+`net`+"`"+` 为 http 别名；`+"`"+`require('http')`+"`"+` 请用 fetch/http 替代
 - 支持顶级 await（async IIFE 包装），但 setTimeout/Promise 回调需在 timeout 内完成
 - 需要完整 npm 生态请使用 Python (Pyodide) 沙箱
 
@@ -2618,6 +2619,7 @@ chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / 
 ### 注意事项
 - 仅支持 .js 和 .py，其他语言不支持
 - Python首次运行需加载Pyodide WASM(约6MB),耗时5-15秒,后续秒开
+- ✅ Python 网络: 内置 `+"`"+`http_get/http_post/http_put/http_delete`+"`"+`（基于 pyfetch 桥接，顶层 await 调用）；`+"`"+`import requests`+"`"+` 也可用（get/post/put/delete 需 await）；`+"`"+`urllib.request`+"`"+` 在 WASM 下不可用
 - [MUST] 改前备份 → 修改已有文件先 filesystem copy 备份(.bak) → code_runner → 失败则 copy 备份覆盖回滚`,
 
   'search':`## search — 网络搜索
@@ -4639,7 +4641,7 @@ function _estimateTokens(str){
     if((c>=0x4e00&&c<=0x9fff)||(c>=0x3400&&c<=0x4dbf)||(c>=0xf900&&c<=0xfaff)){cn++;}
     else if(c>=0x20&&c<=0x7e){en++;}
   }
-  return Math.ceil(cn*0.6+en*0.3);
+  return Math.ceil(cn*0.75+en*0.35);
 }
 
 // ★ 从 HTTP 400 错误文本中提取请求体总 token 数
@@ -4782,14 +4784,36 @@ async function _compressOldMessages(messages,modelMaxTokens){
     if(messages.length<=2)return null;
   }
 
-  // ★ 保留1轮完整对话（约最后5条消息），精炼后tool结果已大幅压缩，保留更多轮次无额外KV收益
+  // ★ 轮次感知保留：优先保留"最后一个真实 user 消息"及其后的完整工作流
+  //   上一轮 agent 干活的 N 个工具轮次（assistant.tool_calls ↔ tool 结果）完整保留不切断
+  //   只有该轮次本身超限时才退化为保留最后 2 个工具轮次
   var keepCount = Math.min(5, messages.length - 1);
-  // 确保保留链完整：如果最后一条是tool，往前找assistant
-  for(var _kc=messages.length-1;_kc>=messages.length-keepCount && _kc>1;_kc--){
-    if(messages[_kc].role==='tool' && messages[_kc-1] && messages[_kc-1].role!=='assistant'){
-      keepCount = Math.min(keepCount+1, messages.length-1);
+  var _lastRealUserIdx=-1;
+  for(var _kru=messages.length-1;_kru>=1;_kru--){
+    var _kruMsg=messages[_kru];
+    if(_kruMsg.role==='user'&&!_kruMsg._injected){_lastRealUserIdx=_kru;break;}
+  }
+  if(_lastRealUserIdx>=1){
+    keepCount = messages.length - _lastRealUserIdx;
+    // 上限保护：保留区超窗口35% → 退化为保留最后2个完整工具轮次
+    var _keepEst=0;
+    for(var _kpe=_lastRealUserIdx;_kpe<messages.length;_kpe++){
+      _keepEst+=(messages[_kpe]._tokens!==undefined&&messages[_kpe]._tokens!==null?messages[_kpe]._tokens:_estimateTokens(_getContentText(messages[_kpe].content)+(messages[_kpe].reasoning_content||'')));
+    }
+    if(_keepEst>_MODEL_CTX*0.35){
+      for(var _kr=messages.length-1;_kr>=1;_kr--){
+        if(messages[_kr].role==='assistant'&&messages[_kr].tool_calls){
+          keepCount=messages.length-_kr;
+          break;
+        }
+      }
     }
   }
+  // 保留链完整性兜底：保留区以孤立 tool 开头时向前扩展（tool 必须紧跟其 assistant 调用者）
+  while(keepCount>1&&keepCount<messages.length&&messages[messages.length-keepCount].role==='tool'&&messages[messages.length-keepCount-1]&&messages[messages.length-keepCount-1].role!=='assistant'){
+    keepCount++;
+  }
+  if(keepCount>messages.length-1)keepCount=messages.length-1;
   var toCompress=messages.slice(0,messages.length-keepCount);
   var toKeep=messages.slice(messages.length-keepCount);
 
@@ -4919,6 +4943,44 @@ async function _compressOldMessages(messages,modelMaxTokens){
     compressed._estTokens = _compEst;
     return compressed;
   }catch(e){debugLogger.warn('压缩失败: '+e.message);return null;}
+
+// ★ 降级压缩：LLM摘要失败时的确定性兜底 —— 按"真实 user 轮次"整体丢弃最旧消息
+//   不依赖LLM，必定成功（消息有限）。返回 true 表示已丢弃；false 表示无可丢弃
+function _dropOldestByUserRound(messages){
+  if(!messages||messages.length<=3)return false;
+  // 收集真实 user 索引（排除 _injected 技能推荐等；从0开始——messages可能不含system，index0即首个user）
+  var userIdx=[];
+  for(var i=0;i<messages.length;i++){
+    if(messages[i].role==='user'&&!messages[i]._injected)userIdx.push(i);
+  }
+  if(userIdx.length===0)return false;
+  // 多 user 轮次 → 丢弃第一个 user 轮次（含其全部工具调用），保留最近工作流
+  if(userIdx.length>=2){
+    var dropEnd=userIdx[1];
+    // 边界：丢弃后剩余必须 ≥2 条（至少 1 user + 1 回复）
+    if(dropEnd>=messages.length-1)dropEnd=messages.length-1;
+    var droppedN=dropEnd-userIdx[0];
+    messages.splice(userIdx[0],droppedN);
+    debugLogger.warn(' 降级压缩: 丢弃最旧user轮次 '+droppedN+' 条 → 剩 '+messages.length+' 条');
+    return true;
+  }
+  // 仅 1 个 user 轮次（当前工作流）→ 退化为保留最后2个工具轮次：丢弃更早的 assistant.tool_calls 及 tool 结果
+  var lastKeep=-1,r2=0;
+  for(var j=messages.length-1;j>userIdx[0];j--){
+    if(messages[j].role==='assistant'&&messages[j].tool_calls){
+      r2++;
+      if(r2>=2){lastKeep=j;break;}
+    }
+  }
+  if(lastKeep>userIdx[0]+1){
+    var dropped2=lastKeep-(userIdx[0]+1);
+    messages.splice(userIdx[0]+1,dropped2);
+    debugLogger.warn(' 降级压缩: 当前轮次过长，丢弃最旧工具结果 '+dropped2+' 条 → 保留最后2个工具轮次');
+    return true;
+  }
+  return false;
+}
+
 }
 
 // ★ 用API返回的精确 prompt_tokens 按字符比例分配，给每条消息打上 _tokens 标签
@@ -8323,6 +8385,85 @@ function buildTaskWorkerSource(){
   src+='var pyodide=null;\n';
   src+='var embedder=null;\n';
   src+='var modelLoading=false;\n';
+	// === 网络层：fetch 自动CORS代理降级 + http 便捷API（js沙箱用）===
+	src+='var _workerFetch=async function(url,opts){\n';
+	src+='  opts=opts||{};\n';
+	src+='  var lastErr=null;\n';
+	src+='  try{return await self.fetch(url,opts);}catch(e){lastErr=e;}\n';
+	src+='  var method=(opts.method||"GET").toUpperCase();\n';
+	src+='  var proxies=["https://corsproxy.io/?url=","https://api.allorigins.win/raw?url="];\n';
+	src+='  for(var pi=0;pi<proxies.length;pi++){\n';
+	src+='    try{\n';
+	src+='      var proxyUrl=proxies[pi]+encodeURIComponent(url);\n';
+	src+='      var pOpts={method:opts.method,headers:opts.headers,signal:opts.signal,redirect:opts.redirect,credentials:opts.credentials};\n';
+	src+='      if(opts.body!==undefined&&method!=="GET"&&method!=="HEAD")pOpts.body=opts.body;\n';
+	src+='      var r=await self.fetch(proxyUrl,pOpts);\n';
+	src+='      try{Object.defineProperty(r,"viaProxy",{value:true,configurable:true});}catch(e3){}\n';
+	src+='      return r;\n';
+	src+='    }catch(e2){lastErr=e2;}\n';
+	src+='  }\n';
+	src+='  throw new Error("网络请求失败(直连+CORS代理均失败): "+(lastErr?lastErr.message:"")+" URL: "+url+"。若目标无CORS头，可手动拼接代理: https://corsproxy.io/?url="+encodeURIComponent(url));\n';
+	src+='};\n';
+	src+='var _workerHttp={\n';
+	src+='  get:function(url,opts){opts=opts||{};opts.method="GET";return _workerFetch(url,opts);},\n';
+	src+='  post:function(url,body,opts){opts=opts||{};opts.method="POST";if(body!==undefined)opts.body=body;return _workerFetch(url,opts);},\n';
+	src+='  put:function(url,body,opts){opts=opts||{};opts.method="PUT";if(body!==undefined)opts.body=body;return _workerFetch(url,opts);},\n';
+	src+='  delete:function(url,opts){opts=opts||{};opts.method="DELETE";return _workerFetch(url,opts);},\n';
+	src+='  patch:function(url,body,opts){opts=opts||{};opts.method="PATCH";if(body!==undefined)opts.body=body;return _workerFetch(url,opts);},\n';
+	src+='  request:function(url,opts){return _workerFetch(url,opts);}\n';
+	src+='};\n';
+	src+='\n';
+	// === Python 网络兼容层补丁（Pyodide: urllib不可用, requests未安装, 统一桥接pyfetch）===
+	src+='var _pyNetLines=[\n';
+	src+='  "import sys as _sys, types as _types, json as _json",\n';
+	src+='  "from pyodide.http import pyfetch as _pyfetch",\n';
+	src+='  "class _NetResp:",\n';
+	src+='  "    def __init__(self, r):",\n';
+	src+='  "        self.status = r.status",\n';
+	src+='  "        self.ok = r.ok",\n';
+	src+='  "        self._r = r",\n';
+	src+='  "        self._t = None",\n';
+	src+='  "        self._j = None",\n';
+	src+='  "    async def text(self):",\n';
+	src+='  "        if self._t is None: self._t = await self._r.text()",\n';
+	src+='  "        return self._t",\n';
+	src+='  "    async def json(self):",\n';
+	src+='  "        if self._j is None: self._j = _json.loads(await self.text())",\n';
+	src+='  "        return self._j",\n';
+	src+='  "    @property",\n';
+	src+='  "    def headers(self):",\n';
+	src+='  "        try: return dict(self._r.headers)",\n';
+	src+='  "        except Exception: return {}",\n';
+	src+='  "    def __repr__(self):",\n';
+	src+='  "        return \'<NetResp status=%s ok=%s>\' % (self.status, self.ok)",\n';
+	src+='  "async def _net_req(url, method=\\"GET\\", json=None, data=None, headers=None, **kw):",\n';
+	src+='  "    if headers is None: headers = {}",\n';
+	src+='  "    body = None",\n';
+	src+='  "    if json is not None:",\n';
+	src+='  "        body = _json.dumps(json)",\n';
+	src+='  "        headers.setdefault(\\"Content-Type\\", \\"application/json\\")",\n';
+	src+='  "    elif data is not None:",\n';
+	src+='  "        body = data",\n';
+	src+='  "    r = await _pyfetch(url, method=method, body=body, headers=headers, **kw)",\n';
+	src+='  "    return _NetResp(r)",\n';
+	src+='  "async def http_get(url, **kw): return await _net_req(url, method=\\"GET\\", **kw)",\n';
+	src+='  "async def http_post(url, **kw): return await _net_req(url, method=\\"POST\\", **kw)",\n';
+	src+='  "async def http_put(url, **kw): return await _net_req(url, method=\\"PUT\\", **kw)",\n';
+	src+='  "async def http_delete(url, **kw): return await _net_req(url, method=\\"DELETE\\", **kw)",\n';
+	src+='  "import builtins as _builtins",\n';
+	src+='  "_builtins.http_get = http_get",\n';
+	src+='  "_builtins.http_post = http_post",\n';
+	src+='  "_builtins.http_put = http_put",\n';
+	src+='  "_builtins.http_delete = http_delete",\n';
+	src+='  "_req_mod = _types.ModuleType(\\"requests\\")",\n';
+	src+='  "_req_mod.get = http_get",\n';
+	src+='  "_req_mod.post = http_post",\n';
+	src+='  "_req_mod.put = http_put",\n';
+	src+='  "_req_mod.delete = http_delete",\n';
+	src+='  "_req_mod.http_get = http_get",\n';
+	src+='  "_sys.modules[\\"requests\\"] = _req_mod"\n';
+	src+='];\n';
+	src+='var _pyNetPatch=_pyNetLines.join("\\n");\n';
 	// 【重构】importScripts优先 + Blob-import降级，彻底移除eval依赖
 	src+='var _scriptCache={};\n';
 	src+='(async function _preloadCDNs(){\n';
@@ -8459,7 +8600,7 @@ function buildTaskWorkerSource(){
   src+='        if(m==="url")return _rc[m]={parse:function(s,p){try{var u=new URL(s);var o={protocol:u.protocol,slashes:true,auth:null,host:u.host,port:u.port,hostname:u.hostname,hash:u.hash,search:u.search,pathname:u.pathname,path:u.pathname+u.search,href:u.href};if(p){o.query={};u.searchParams.forEach(function(v,k){o.query[k]=v})}return o}catch(e){var i=s.indexOf("://");return{protocol:i>=0?s.slice(0,i+1):"",slashes:i>=0,pathname:s,path:s,href:s}}},format:function(o){var p=o.protocol||"";var h=o.host||(o.hostname||"");if(o.port)h+=":"+o.port;if(h&&p&&!p.endsWith("//"))p+="//";return p+h+(o.pathname||"")+(o.search||"")+(o.hash||"")},resolve:function(f,t){try{return new URL(t,f).href}catch(e){return t}}};\n';
   src+='        if(m==="querystring")return _rc[m]={parse:function(s,sep,eq,opt){sep=sep||"&";eq=eq||"=";var o={};if(!s)return o;s.split(sep).forEach(function(p){var i=p.indexOf(eq);var k=i>=0?decodeURIComponent(p.slice(0,i)):decodeURIComponent(p);var v=i>=0?decodeURIComponent(p.slice(i+1)):"";if(opt&&opt.decodeURIComponent){k=opt.decodeURIComponent(k);v=opt.decodeURIComponent(v)}o[k]=v});return o},stringify:function(o,sep,eq,opt){sep=sep||"&";eq=eq||"=";var a=[];var enc=opt&&opt.encodeURIComponent?opt.encodeURIComponent:encodeURIComponent;for(var k in o){if(o.hasOwnProperty(k))a.push(enc(k)+eq+enc(String(o[k])))}return a.join(sep)},escape:encodeURIComponent,unescape:decodeURIComponent};\n';
   src+='        if(m==="crypto")return _rc[m]={randomBytes:function(n){var b=new Uint8Array(n);self.crypto.getRandomValues(b);return b},randomUUID:function(){return self.crypto.randomUUID()},getHashes:function(){return["sha1","sha256","sha384","sha512"]},createHash:function(algo){var _algo=algo==="sha1"?"SHA-1":algo==="sha256"?"SHA-256":algo==="sha384"?"SHA-384":algo==="sha512"?"SHA-512":algo;var _buf=[];var _h={update:function(d){if(typeof d==="string"){_buf.push(d)}else{for(var i=0;i<d.length;i++)_buf.push(String.fromCharCode(d[i]))}return _h},digest:function(fmt){throw new Error("crypto.createHash(\'"+algo+"\').digest()在浏览器沙箱中不支持同步。请使用 crypto.subtle.digest() 或 Python沙箱执行加密操作。")}};return _h},subtle:self.crypto.subtle};\n';
-  src+='        if(m==="http"||m==="https")return _rc[m]={request:function(o,cb){throw new Error("http/https 模块在浏览器沙箱中不可用，请使用 fetch(url, options) 替代")},get:function(u,cb){throw new Error("http.get() 不可用，请使用 fetch() 替代")},METHODS:["GET","POST","PUT","DELETE","PATCH","HEAD"]};\n';
+  src+='        if(m==="http"||m==="https")return _rc[m]={request:function(o,cb){throw new Error("http/https 模块在浏览器沙箱中不可用，请使用全局 fetch() 或 http.get()/http.post()（自动CORS代理）")},get:function(u,cb){throw new Error("http.get() 不可用，请使用 http.get(url)（自动CORS代理）")},METHODS:["GET","POST","PUT","DELETE","PATCH","HEAD"]};\n';
   src+='        if(m.charAt(0)==="."){var _rp=m;if(_rp.indexOf("./")===0)_rp=_rp.slice(2);else if(_rp.indexOf("../")===0){_rp=_rp.slice(3)}var _candidates=[];_vfs.forEach(function(_v,_k){if(_v!=="__DIR__"&&_k.indexOf(_rp)===_k.length-_rp.length)_candidates.push(_k)});for(var _ci=0;_ci<_candidates.length;_ci++){var _tp=_candidates[_ci];var _msrc=_vfs.get(_tp);var _m={exports:{}};var _mdir="";var _si=_tp.lastIndexOf("/");if(_si>=0)_mdir=_tp.substring(0,_si);var _mf=new Function("module","exports","require","__dirname","__filename","console","api",_msrc);var _mr=function(x){if(x.charAt(0)==="."){if(x.indexOf("./")===0)x=_mdir+"/"+x.slice(2);else if(x.indexOf("../")===0){var _d=_mdir;while(x.indexOf("../")===0){x=x.slice(3);var _li=_d.lastIndexOf("/");_d=_li>=0?_d.substring(0,_li):""}x=_d?(_d+"/"+x):x}}return api.require(x)};_mf(_m,_m.exports,_mr,_mdir,_tp,api.console,api);return _rc[m]=_m.exports}throw new Error("模块未找到: "+m+" (沙箱VFS候选: "+JSON.stringify(_candidates)+")")}\n';
   src+='        var _map={lodash:{url:"https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js",g:"_"},dayjs:{url:"https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js",g:"dayjs"},marked:{url:"https://cdn.jsdelivr.net/npm/marked/marked.min.js",g:"marked"},qs:{url:"https://cdn.jsdelivr.net/npm/qs/dist/qs.js",g:"Qs"}};\n';
   src+='        var _e=_map[m];\n';
@@ -8468,11 +8609,16 @@ function buildTaskWorkerSource(){
   src+='        for(var _i2=0;_i2<_urls.length;_i2++){try{importScripts(_urls[_i2]);if(self[m])return _rc[m]=self[m];var _nl=m.toLowerCase();for(var _k in self){if(_k.toLowerCase()===_nl)return _rc[m]=self[_k]}}catch(e){}}\n';
   src+='        throw new Error("require(\'"+m+"\') 浏览器沙箱不支持。\\n已内置: fs/path/os/url/querystring/crypto/util/assert\\nhttp/https 请使用 fetch() 替代\\nCDN支持: lodash/dayjs/marked/qs\\n其他npm包请使用Python执行。");\n';
   src+='      },\n';
-  src+='      setTimeout:self.setTimeout\n';
+  src+='      setTimeout:self.setTimeout,\n';
+      src+='      fetch:_workerFetch,\n';
+      src+='      fetchText:async function(url,opts){var r=await _workerFetch(url,opts);return r.text();},\n';
+      src+='      fetchJSON:async function(url,opts){var r=await _workerFetch(url,opts);return r.json();},\n';
+      src+='      http:_workerHttp,\n';
+      src+='      net:_workerHttp,\n';
   src+='    };\n';
   src+='    var _result=await Promise.race([\n';
   src+='      (async function(){\n';
-  src+='        var fn=new Function("api","var require=api.require;var console=api.console;return (async function(){"+code+"})()");\n';
+  src+='        var fn=new Function("api","var require=api.require;var console=api.console;var fetch=api.fetch;var http=api.http;var net=api.net;return (async function(){"+code+"})()");\n';
   src+='        var ret=await fn(api);\n';
   src+='        await new Promise(function(r){setTimeout(r,0)});\n';
   src+='        return ret;\n';
@@ -8503,7 +8649,7 @@ function buildTaskWorkerSource(){
   src+='      pyodide.FS.writeFile(_fp2,_entry.content);\n';
   src+='    }\n';
   src+='    var pyOut="";pyodide.setStdout({batched:function(t){pyOut+=String(t)+"\\n"}});\n';
-  src+='    var result=await Promise.race([pyodide.runPythonAsync(code),new Promise(function(_,reject){return setTimeout(function(){reject(new Error("Python执行超时"))},timeout)})]);\n';
+  src+='    var result=await Promise.race([pyodide.runPythonAsync(_pyNetPatch+"\\n"+code),new Promise(function(_,reject){return setTimeout(function(){reject(new Error("Python执行超时"))},timeout)})]);\n';
   src+='    var _pyChanges=[];\n';
   src+='    for(var _fp3 in fsSnapshot){\n';
   src+='      if(fsSnapshot[_fp3].content==="__DIR__")continue;\n';
@@ -9964,9 +10110,18 @@ function _buildLLMRequest(messages,tools,stream,source){
     // ★ 孤立tool清理已由 _validateMessageSequence 统一处理（见第9284行）
     // ★ 自适应max_tokens：感知上下文使用量自动回退，同压缩阈值逻辑
     //   上下文压力大时自动缩小max_tokens，总用量不超模型上限，防止API静默截断
+    //   估算包含: messages + tools定义(JSON Schema) + headroom(8000,覆盖分词偏差)
     var _ctxCap = typeof _MODEL_CTX !== 'undefined' ? _MODEL_CTX : _MODEL_MAX;
-    var _safeHeadroom = 1000;
-    var _availOutput = Math.max(16384, _ctxCap - _estMsgTotal - _safeHeadroom);
+    var _safeHeadroom = 8000;
+    var _toolsEst=0;
+    if(tools&&tools.length>0){
+      for(var _ti=0;_ti<tools.length;_ti++){
+        var _t=tools[_ti];
+        if(!_t)continue;
+        _toolsEst+=_estimateTokens((_t.name||'')+(_t.description||''))+_estimateTokens(JSON.stringify(_t.parameters||{}));
+      }
+    }
+    var _availOutput = Math.max(16384, _ctxCap - _estMsgTotal - _toolsEst - _safeHeadroom);
     var effectiveMaxTokens = Math.min(settings.max_tokens || 384000, _availOutput);
     if(tools&&tools.length>0)effectiveMaxTokens=Math.max(effectiveMaxTokens,16384);
     var body={model:model,messages:cleanedMessages,max_tokens:effectiveMaxTokens,temperature:settings.temperature||0.6,stream:!!stream};
@@ -10071,7 +10226,7 @@ async function callLLM(messages,tools,stream,source){
         if(_clActualCtx<_clCtx*0.9){
           debugLogger.warn('callLLM 回退 max_token 重试,用满上下文窗口: actualCtx='+_clActualCtx+' ctx='+_clCtx);
           var req2=_buildLLMRequest(messages,tools,stream,source);
-          req2.body.max_tokens=_clCtx-_clActualCtx;
+          req2.body.max_tokens=Math.max(1,_clCtx-_clActualCtx-2000);
           var response2=await fetch(req2.baseUrl,{
             method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req2.apiKey},
             body:JSON.stringify(req2.body)
@@ -10099,6 +10254,13 @@ async function callLLM(messages,tools,stream,source){
       if(_clCompressed){
         messages.length=0;
         Array.prototype.push.apply(messages,_clCompressed);
+      }else{
+        // ★ 压缩失败 → 降级为按user轮次整体丢弃最旧消息（确定性成功，不依赖LLM）
+        debugLogger.warn('callLLM 压缩失败，降级为丢弃最旧user轮次...');
+        var _clDropped=_dropOldestByUserRound(messages);
+        if(!_clDropped){
+          throw new Error('上下文压缩失败且无可丢弃的旧消息(400 context length exceeded)。请手动压缩上下文或新建对话。');
+        }
       }
       var req3=_buildLLMRequest(messages,tools,stream,source);
       var response3=await fetch(req3.baseUrl,{
@@ -10131,6 +10293,8 @@ async function callLLM(messages,tools,stream,source){
 async function streamChatCompletion(messages,tools,onChunk,source){
   source=source||'user';
   var attempt=0;
+  var _maxTokenRolledBack=false;
+  var _stCompressFailCount=0;
 
   // ★ 可中断延迟：等待期间每200ms检查暂停标志 → 暂停按钮即时响应
   async function _interruptibleSleep(ms, cs){
@@ -10153,7 +10317,6 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       await _interruptibleSleep(delay, cs);
     }
     attempt++;
-    var _maxTokenRolledBack=false;
 
     var req=_buildLLMRequest(messages,tools,true,source);
     var response;
@@ -10207,8 +10370,8 @@ async function streamChatCompletion(messages,tools,onChunk,source){
           // 实际上下文 < 模型最大窗口×0.9 → 回退max_tokens重试（仅一次）
           if(!_maxTokenRolledBack&&_stActualCtx<_stCtx*0.9){
             _maxTokenRolledBack=true;
-            debugLogger.warn('streamChatCompletion 回退 max_token 重试,用满上下文窗口: actualCtx='+_stActualCtx+' ctx='+_stCtx);
-            req.body.max_tokens=_stCtx-_stActualCtx;
+            debugLogger.warn('streamChatCompletion 回退 max_token 重试(留2K headroom): actualCtx='+_stActualCtx+' ctx='+_stCtx);
+            req.body.max_tokens=Math.max(1,_stCtx-_stActualCtx-2000);
             continue;
           }
           debugLogger.warn('streamChatCompletion 实际上下文已达上限或已回退过，直接压缩: actualCtx='+_stActualCtx+' ctx='+_stCtx);
@@ -10221,6 +10384,16 @@ async function streamChatCompletion(messages,tools,onChunk,source){
         if(_stCompressed){
           messages.length=0;
           Array.prototype.push.apply(messages,_stCompressed);
+          _stCompressFailCount=0;
+        }else{
+          // ★ 压缩失败（LLM摘要瞬时失败）→ 不throw，降级为按user轮次整体丢弃最旧消息（确定性成功）
+          //   仅当无可丢弃时才抛错，防止无限重试死循环
+          _stCompressFailCount++;
+          debugLogger.warn('streamChatCompletion 压缩失败(第'+_stCompressFailCount+'次)，降级为丢弃最旧user轮次...');
+          var _stDropped=_dropOldestByUserRound(messages);
+          if(!_stDropped){
+            throw new Error('上下文压缩失败且无可丢弃的旧消息(400 context length exceeded)。请手动压缩上下文或新建对话。');
+          }
         }
         response=null;
         break;
