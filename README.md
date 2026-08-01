@@ -574,12 +574,24 @@ counterbalance排列：随机交换A/B标签，LLM评委不知道哪个是旧版
 5. （可选）一键下载官方技能包：把下面这段代码发给 Exo，它会通过代码执行器联网、自动发现本仓库 `skills/` 目录并下载全部技能到 `/skills/`，之后可用 `skill_manager set` 激活：
 
 ```js
-// 联网自动下载 Exo-agent 官方技能包（发现→下载→保存到 /skills/）
-var t=await fetch('https://r.jina.ai/https://github.com/Xiyinnnnnn/Exo-agent/tree/main/skills').then(r=>r.text());
-var files=[],m,re=/blob\/main\/skills\/([^")\s]+)/g;while((m=re.exec(t))){var f=decodeURIComponent(m[1]);if(files.indexOf(f)<0)files.push(f);}
-var fsr=require('fs'),n=0;
-for(var i=0;i<files.length;i++){var r=await fetch('https://raw.githubusercontent.com/Xiyinnnnnn/Exo-agent/main/skills/'+encodeURIComponent(files[i]));if(r.ok){fsr.writeFileSync('/skills/'+files[i],await r.text());n++;}}
-'已下载 '+n+' 个技能: '+files.join(', ')
+// 联网自动下载 Exo-agent 官方技能包 v2（GitHub API 列目录 + 并发下载，比 v1 快约千倍）
+var REPO='Xiyinnnnnn/Exo-agent', DIR='/skills', CONC=4;
+async function list(p){var r=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+p,{headers:{'User-Agent':'exo-agent'}});if(!r.ok)throw Error('API '+r.status);return r.json();}
+var files=[];
+async function walk(p){var items=await list(p);for(var it of items) it.type==='dir'?await walk(it.path):it.download_url&&files.push(it);}
+await walk('skills');
+var n=0,fail=[];
+for(var i=0;i<files.length;i+=CONC){
+  await Promise.all(files.slice(i,i+CONC).map(async f=>{
+    try{
+      var r=await fetch(f.download_url);if(!r.ok)throw Error('HTTP '+r.status);
+      var txt=await r.text();if(!txt.length)throw Error('empty body');
+      var fsr=require('fs');fsr.mkdirSync(DIR,{recursive:true});
+      fsr.writeFileSync(DIR+'/'+f.name,txt);n++;console.log('OK '+f.name+' ('+txt.length+'B)');
+    }catch(e){fail.push(f.path+': '+e.message)}
+  }));
+}
+'已下载 '+n+'/'+files.length+' 个技能'+(fail.length?'\n失败: '+fail.join(', '):'')
 ```
 
 **无需安装任何东西。纯浏览器运行。**
@@ -659,12 +671,24 @@ See the [Chinese section](#chinese) for the full architecture diagram (Mermaid).
 5. (Optional) One-click official skill pack: send the code below to Exo — it will go online via the code executor, auto-discover the `skills/` directory of this repo, download all skills to `/skills/`, then activate them with `skill_manager set`:
 
 ```js
-// Auto-download the official Exo-agent skill pack (discover→download→save to /skills/)
-var t=await fetch('https://r.jina.ai/https://github.com/Xiyinnnnnn/Exo-agent/tree/main/skills').then(r=>r.text());
-var files=[],m,re=/blob\/main\/skills\/([^")\s]+)/g;while((m=re.exec(t))){var f=decodeURIComponent(m[1]);if(files.indexOf(f)<0)files.push(f);}
-var fsr=require('fs'),n=0;
-for(var i=0;i<files.length;i++){var r=await fetch('https://raw.githubusercontent.com/Xiyinnnnnn/Exo-agent/main/skills/'+encodeURIComponent(files[i]));if(r.ok){fsr.writeFileSync('/skills/'+files[i],await r.text());n++;}}
-'Downloaded '+n+' skills: '+files.join(', ')
+// Auto-download the official Exo-agent skill pack v2 (GitHub API listing + concurrent download, ~1000x faster than v1)
+var REPO='Xiyinnnnnn/Exo-agent', DIR='/skills', CONC=4;
+async function list(p){var r=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+p,{headers:{'User-Agent':'exo-agent'}});if(!r.ok)throw Error('API '+r.status);return r.json();}
+var files=[];
+async function walk(p){var items=await list(p);for(var it of items) it.type==='dir'?await walk(it.path):it.download_url&&files.push(it);}
+await walk('skills');
+var n=0,fail=[];
+for(var i=0;i<files.length;i+=CONC){
+  await Promise.all(files.slice(i,i+CONC).map(async f=>{
+    try{
+      var r=await fetch(f.download_url);if(!r.ok)throw Error('HTTP '+r.status);
+      var txt=await r.text();if(!txt.length)throw Error('empty body');
+      var fsr=require('fs');fsr.mkdirSync(DIR,{recursive:true});
+      fsr.writeFileSync(DIR+'/'+f.name,txt);n++;console.log('OK '+f.name+' ('+txt.length+'B)');
+    }catch(e){fail.push(f.path+': '+e.message)}
+  }));
+}
+'Downloaded '+n+'/'+files.length+' skills'+(fail.length?'\nFailed: '+fail.join(', '):'')
 ```
 
 **No installation required. Runs purely in the browser.**
