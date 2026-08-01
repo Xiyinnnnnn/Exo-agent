@@ -571,6 +571,17 @@ counterbalance排列：随机交换A/B标签，LLM评委不知道哪个是旧版
 3. 设置 → API配置 → 填入 DeepSeek API Key
 4. 开始对话
 
+5. （可选）一键下载官方技能包：把下面这段代码发给 Exo，它会通过代码执行器联网、自动发现本仓库 `skills/` 目录并下载全部技能到 `/skills/`，之后可用 `skill_manager set` 激活：
+
+```js
+// 联网自动下载 Exo-agent 官方技能包（发现→下载→保存到 /skills/）
+var t=await fetch('https://r.jina.ai/https://github.com/Xiyinnnnnn/Exo-agent/tree/main/skills').then(r=>r.text());
+var files=[],m,re=/blob\/main\/skills\/([^")\s]+)/g;while((m=re.exec(t))){var f=decodeURIComponent(m[1]);if(files.indexOf(f)<0)files.push(f);}
+var fsr=require('fs'),n=0;
+for(var i=0;i<files.length;i++){var r=await fetch('https://raw.githubusercontent.com/Xiyinnnnnn/Exo-agent/main/skills/'+encodeURIComponent(files[i]));if(r.ok){fsr.writeFileSync('/skills/'+files[i],await r.text());n++;}}
+'已下载 '+n+' 个技能: '+files.join(', ')
+```
+
 **无需安装任何东西。纯浏览器运行。**
 
 ---
@@ -644,6 +655,17 @@ See the [Chinese section](#chinese) for the full architecture diagram (Mermaid).
 2. Open it (or serve with `python -m http.server`)
 3. Settings → API Config → enter your DeepSeek API Key
 4. Start chatting
+
+5. (Optional) One-click official skill pack: send the code below to Exo — it will go online via the code executor, auto-discover the `skills/` directory of this repo, download all skills to `/skills/`, then activate them with `skill_manager set`:
+
+```js
+// Auto-download the official Exo-agent skill pack (discover→download→save to /skills/)
+var t=await fetch('https://r.jina.ai/https://github.com/Xiyinnnnnn/Exo-agent/tree/main/skills').then(r=>r.text());
+var files=[],m,re=/blob\/main\/skills\/([^")\s]+)/g;while((m=re.exec(t))){var f=decodeURIComponent(m[1]);if(files.indexOf(f)<0)files.push(f);}
+var fsr=require('fs'),n=0;
+for(var i=0;i<files.length;i++){var r=await fetch('https://raw.githubusercontent.com/Xiyinnnnnn/Exo-agent/main/skills/'+encodeURIComponent(files[i]));if(r.ok){fsr.writeFileSync('/skills/'+files[i],await r.text());n++;}}
+'Downloaded '+n+' skills: '+files.join(', ')
+```
 
 **No installation required. Runs purely in the browser.**
 
