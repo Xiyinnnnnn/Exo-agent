@@ -574,7 +574,7 @@ counterbalance排列：随机交换A/B标签，LLM评委不知道哪个是旧版
 5. （可选）一键下载官方技能包：把下面这段代码发给 Exo，它会通过代码执行器联网、自动发现本仓库 `skills/` 目录并下载全部技能到 `/skills/`，之后可用 `skill_manager set` 激活：
 
 ```js
-// 联网自动下载 Exo-agent 官方技能包 v2（GitHub API 列目录 + 并发下载，比 v1 快约千倍）
+// 联网自动下载 Exo-agent 官方技能包 v2
 var REPO='Xiyinnnnnn/Exo-agent', DIR='/skills', CONC=4;
 async function list(p){var r=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+p,{headers:{'User-Agent':'exo-agent'}});if(!r.ok)throw Error('API '+r.status);return r.json();}
 var files=[];
@@ -592,6 +592,11 @@ for(var i=0;i<files.length;i+=CONC){
   }));
 }
 '已下载 '+n+'/'+files.length+' 个技能'+(fail.length?'\n失败: '+fail.join(', '):'')
+// —— 下载完成后，Agent 须按以下步骤处理 ——
+// 1. 核对返回的 n/files.length：若全部成功（n===files.length），继续；否则单独重试失败项（fail 数组中有路径）
+// 2. 验证文件有效性：逐个读取并确认非空、且能被 JSON.parse 解析（技能包均为 .json 格式），解析失败的文件删除重下
+// 3. 手动移动文件到技能目录：脚本运行在沙箱时，下载文件实际落在沙箱路径，须用 filesystem copy/move 逐个移到 /skills/（目标已存在同名文件则先比对内容再覆盖）
+// 4. 确认 /skills/ 下文件齐全后，用 skill_manager query 检查可发现性，再用 skill_manager set 激活，最后告知用户已就绪
 ```
 
 **无需安装任何东西。纯浏览器运行。**
@@ -671,7 +676,7 @@ See the [Chinese section](#chinese) for the full architecture diagram (Mermaid).
 5. (Optional) One-click official skill pack: send the code below to Exo — it will go online via the code executor, auto-discover the `skills/` directory of this repo, download all skills to `/skills/`, then activate them with `skill_manager set`:
 
 ```js
-// Auto-download the official Exo-agent skill pack v2 (GitHub API listing + concurrent download, ~1000x faster than v1)
+// Auto-download the official Exo-agent skill pack v2
 var REPO='Xiyinnnnnn/Exo-agent', DIR='/skills', CONC=4;
 async function list(p){var r=await fetch('https://api.github.com/repos/'+REPO+'/contents/'+p,{headers:{'User-Agent':'exo-agent'}});if(!r.ok)throw Error('API '+r.status);return r.json();}
 var files=[];
@@ -689,6 +694,11 @@ for(var i=0;i<files.length;i+=CONC){
   }));
 }
 'Downloaded '+n+'/'+files.length+' skills'+(fail.length?'\nFailed: '+fail.join(', '):'')
+// —— After download, the Agent MUST follow these steps ——
+// 1. Verify the returned n/files.length: if all succeeded (n===files.length), continue; otherwise re-download the failed items individually (paths are in the fail array)
+// 2. Validate file integrity: read each file and confirm it is non-empty and parseable by JSON.parse (all skill files are .json). Delete and re-download any file that fails to parse
+// 3. Move files to the skills directory manually: when the script runs in the sandbox, the files actually land in the sandbox path — use filesystem copy/move to relocate each file to /skills/ (if a file with the same name already exists, compare contents first, then overwrite)
+// 4. Once /skills/ is complete, check discoverability with skill_manager query, then activate with skill_manager set, and finally tell the user it's ready
 ```
 
 **No installation required. Runs purely in the browser.**
