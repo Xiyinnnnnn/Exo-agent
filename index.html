@@ -4476,7 +4476,9 @@ async function _triggerManualCompression(){
   if(cs&&cs.isProcessing){showToast('正在处理中，无法压缩','warning');return;}
   var _bd=_getBranchData(convId);
   var _br=_bd._branches[_bd._currentBranchId];
-  var msgs=_br&&_br.items;
+  // ★ [F2/v2.9] 压缩输入优先用 fullMessages（含完整 tool/tool_calls 配对）；items 无工具记录会丢配对（P0-2）
+  var _srcFM0=_br&&_br.fullMessages;
+  var msgs=_srcFM0&&_srcFM0.length?_srcFM0.filter(function(_mF2){return _mF2.role!=='system';}):(_br&&_br.items);
   if(!msgs||msgs.length<3){showToast('对话太短(<3条)，无需压缩','info');return;}
   _compressingLock=true;
   var container=document.getElementById('toastContainer');
@@ -4492,19 +4494,30 @@ async function _triggerManualCompression(){
      var compressed=await _compressOldMessages(msgs,0);
      clearInterval(dotTimer);
      if(compressed){
-       // ★ 物理丢弃旧消息，对齐自动压缩模式 (见 _autoCompressThreshold)
-       var _origLen=msgs.length;
-       var _newMsgs=[msgs[0]];      // 保留 system prompt
-       for(var _mi=0;_mi<compressed.length;_mi++){
-         _newMsgs.push(compressed[_mi]);
-       }
-       msgs.length=0;
-       Array.prototype.push.apply(msgs,_newMsgs);
+       // ★ [P4/v2.8] UI 历史(items)不裁剪；仅重建 fullMessages（API 上下文压缩）
+       //   items 保持完整气泡 → UI 历史不丢；fullMessages=system+压缩输出 → 恢复后预检不再触发重复压缩
+       var _bdP=_getBranchData(convId);
+       var _brP=_bdP._branches[_bdP._currentBranchId];
+       var _srcFull2=_brP&&_brP.fullMessages?(_brP.fullMessages.slice()):null;
+       var _newFull2=[];
+       if(_srcFull2&&_srcFull2.length&&_srcFull2[0]&&_srcFull2[0].role==='system')_newFull2.push(_srcFull2[0]);
+       for(var _miP=0;_miP<compressed.length;_miP++)_newFull2.push(compressed[_miP]);
+       if(_brP)_brP.fullMessages=_newFull2;
+       // ★ [F3/v2.9] 压缩标记：恢复端据此跳过 items 比对（防"压缩+删除"绕过条数检测）
+       if(_brP)_brP._lastCompressedAt=Date.now();
+       // ★ [F2/v2.9] 立即落库（原实现仅改内存引用，依赖异步兜底可能滞后丢失）
+       try{
+         var _dbC=await getDB();
+         var _txC=_dbC.transaction('messages','readwrite');
+         var _stC=_txC.objectStore('messages');
+         _stC.put({id:convId,branches:_bdP._branches,currentBranchId:_bdP._currentBranchId,branchOrder:_bdP._branchOrder,updatedAt:Date.now()});
+         await new Promise(function(res,rej){_txC.oncomplete=res;_txC.onerror=rej;});
+       }catch(_eC){debugLogger.warn('手动压缩落库失败: '+_eC.message);}
        _updateTokenAccumulator(convId, null, msgs);
        _updateToolbarTokenDisplay();
        _saveTokenCounts();
        toast.className='toast success';
-       toast.textContent='上下文已成功压缩 → '+compressed.length+' 条活跃消息（清除 '+(_origLen-compressed.length)+' 条旧消息）';
+       toast.textContent='上下文已成功压缩 → '+compressed.length+' 条活跃消息（UI 历史保留）';
     }else{
       toast.className='toast info';
       toast.textContent='当前上下文无需压缩';
@@ -4870,10 +4883,10 @@ async function _compressOldMessages(messages,modelMaxTokens){
       if(toKeep[k]._sentCount)_clean._sentCount=toKeep[k]._sentCount;
       compressed.push(_clean);
     }
-    // ★ 归档注入：以 user 角色追加到保留消息之后（非当前指令，仅供查看）
+    // ★ [F6/v2.9] 历史背景注入：标题由程序拼接（AI 仅生成正文），以 user 角色追加到保留消息之后（非当前指令，仅供查看）
     var _sumText=summary.trim();
     if(_sumText){
-      compressed.push({role:'user',content:'[系统归档] '+_sumText,_injected:true});
+      compressed.push({role:'user',content:'[历史背景] '+_sumText,_injected:true});
     }
 
     // ★ 极端回退：摘要+保留仍超限 → 丢弃最旧消息直到安全
@@ -17272,30 +17285,168 @@ async function processUserMessage(userText,taskId){
       req.onsuccess=function(){res(req.result);};
       req.onerror=function(){rej(req.error);};
     });
+    // ★ [P5c/v2.8] 优先读 localStorage 同步快照（beforeunload 兜底），updatedAt 取新；用后即删
+    try{
+      var _snapRaw=localStorage.getItem('exo_fullmsg_snap_'+currentConversationId);
+      if(_snapRaw){
+        var _snap=JSON.parse(_snapRaw);
+        if(_snap&&_snap.branches&&(!stored||!stored.updatedAt||_snap.updatedAt>=stored.updatedAt))stored=_snap;
+        localStorage.removeItem('exo_fullmsg_snap_'+currentConversationId);
+      }
+    }catch(_e){}
     // ★ 兼容分支格式：优先从当前分支取 items，回退到旧 items
     var storedItems=null;
+    var storedFull=null;
     if(stored&&stored.branches&&stored.currentBranchId){
       var curBr=stored.branches[stored.currentBranchId];
       if(curBr&&curBr.items)storedItems=curBr.items;
+      // ★ [P3/v2.8] fullMessages 骨架：API 上下文快照（含 system/tool/tool_calls/_injected）
+      if(curBr&&curBr.fullMessages&&curBr.fullMessages.length)storedFull=curBr.fullMessages;
     }
     if(!storedItems&&stored&&stored.items)storedItems=stored.items;
-    if(window._flowWakeupMessages){} // 跳过IndexedDB合并
+    if(window._flowWakeupMessages){ /* 跳过IndexedDB合并（flow 唤醒轮，17259 已置 null，此分支为显式保护） */ }
+    else if(storedFull){
+      // ★ [P3/v2.8] 骨架优先：fullMessages 提供完整 API 上下文（token 级还原）
+      //   规则：items 定"用户所见"（编辑/删除权威）；fullMessages 补 tool/tool_calls 结构
+      //   - system：快照与当前动态 system 一致→用快照（token 固定）；不等→用当前（切 agent/跨天语义正确）
+      //   - _injected/tool：骨架原样保留（无独立气泡，不可由 items 修正）
+      //   - user/assistant：与 items 按 role 序列对齐（处理删除）；user 内容归一化比对（编辑检测）
+      //     assistant 内容不可比（items=markdown渲染文本 vs 骨架=原始markdown）→ 数量对齐，编辑由回调同步兜底
+      //   - _sentCount 统一置 0：每轮 ++ 恒为 1 → 跨轮精炼不触发 → 旧上下文原始内容永久保留
+      var _normFn=function(s){return String(s).replace(/\r\n/g,'\n').replace(/\n{4,}/g,'\n\n\n').trim();};
+      var skeleton=[];
+      for(var _si3=0;_si3<storedFull.length;_si3++){
+        var _sfm=storedFull[_si3];
+        var _sm={};
+        for(var _sk3 in _sfm){if(_sfm.hasOwnProperty(_sk3))_sm[_sk3]=_sfm[_sk3];}
+        if(_sm._sentCount!==undefined)_sm._sentCount=0;
+        skeleton.push(_sm);
+      }
+      // system 处理：快照与当前动态 system 一致→用快照（固定）；不等→用当前（语义正确）
+      if(skeleton.length&&skeleton[0]&&skeleton[0].role==='system'){
+        if(skeleton[0].content===systemPrompt){messages=[skeleton[0]];}
+        else{messages=[{role:'system',content:systemPrompt}];}
+        skeleton.shift();
+      }
+
+      // ★ [P3-fix/v2.8] 压缩检测：items 非注入条数 > 骨架条数 → 压缩发生过（items=完整历史）→ 骨架权威，跳过比对
+      //   （压缩场景下 items 与骨架内容必然不同，比对会误判为"编辑"导致旧消息回流；编辑/删除已由回调同步 fullMessages 兜底）
+      var _cntItems=0,_cntSkel=0;
+      if(storedItems){
+        for(var _ci3=0;_ci3<storedItems.length;_ci3++){
+          var _ciRole=storedItems[_ci3].role||'';
+          if(_ciRole==='user'||_ciRole==='assistant'||_ciRole==='agent')_cntItems++;
+        }
+      }
+      for(var _cs3=0;_cs3<skeleton.length;_cs3++){
+        var _csM=skeleton[_cs3];
+        if((_csM.role==='user'||_csM.role==='assistant')&&!_csM._injected)_cntSkel++;
+      }
+      // items 比对修正（items 权威：编辑/删除以用户所见为准；仅当未发生压缩时执行）
+      // ★ [F3/v2.9] 追加 _lastCompressedAt 检测：压缩后即使 items 条数回落（压缩+删除），仍走骨架原样，防旧消息回流
+      if(storedItems&&storedItems.length>0&&_cntItems<=_cntSkel&&!(stored&&stored.branches&&stored.branches[stored.currentBranchId]&&stored.branches[stored.currentBranchId]._lastCompressedAt)){
+        var _si4=0; // items 游标
+        for(var _sj3=0;_sj3<skeleton.length;_sj3++){
+          var _skm=skeleton[_sj3];
+          if(_skm.role==='tool'||_skm._injected){messages.push(_skm);continue;}
+          // 在 items 中找下一个同 role 条目（role 序列对齐，处理删除）
+          var _matched=false;
+          while(_si4<storedItems.length){
+            var _itm=storedItems[_si4];
+            var _itRole=_itm.role||((_itm.role==='agent'||_itm.role==='assistant')?'assistant':(_itm.role==='user'?'user':'assistant'));
+            _si4++;
+            if(_itRole!==_skm.role)continue; // role 不匹配→跳过（编辑/删除导致错位）
+            _matched=true;
+            if(_skm.role==='user'){
+              // user 内容归一化比对：items=textContent，骨架=原文；不等→编辑，items 权威
+              if(_normFn(_itm.cleanContent||_itm.content||'')===_normFn(_skm.content||'')){messages.push(_skm);}
+              else{
+                var _um={role:'user',content:_itm.cleanContent||_itm.content||''};
+                if(_skm._tokens!==undefined)_um._tokens=_skm._tokens;
+                messages.push(_um);
+              }
+            }else{
+              // assistant：数量对齐即可（内容以骨架为准；编辑由回调同步 fullMessages 兜底）
+              messages.push(_skm);
+            }
+            break;
+          }
+          // !_matched → items 无对应条目（用户已删除）→ 骨架消息丢弃；其后孤立 tool 由 _validateMessageSequence 清理
+        }
+      }else{
+        // 无 items（旧数据/分支未收集）或压缩后（items=完整历史）→ 骨架原样
+        Array.prototype.push.apply(messages,skeleton);
+      }
+    }
     else if(storedItems&&storedItems.length>0){
       var recentItems=storedItems.slice();
       for(var ri=0;ri<recentItems.length;ri++){
         var item=recentItems[ri];
-	var role=item.role||((item.role==='agent'||item.role==='assistant')?'assistant':(item.role==='user'?'user':'assistant'));
-	var content=item.cleanContent||item.content||'';
-	var msg={role:role,content:content};
-	if(item.tool_call_id){msg.tool_call_id=item.tool_call_id;msg._sentCount=999;}
-	if(item.name){msg.name=item.name;if(!item.tool_call_id)msg._sentCount=999;}
-	if(item.tool_calls)msg.tool_calls=item.tool_calls;
-	if(item._tokens!==undefined)msg._tokens=item._tokens;
-	if(item._injected)msg._injected=item._injected;
-	messages.push(msg);
-
+        var role=item.role||((item.role==='agent'||item.role==='assistant')?'assistant':(item.role==='user'?'user':'assistant'));
+        var content=item.cleanContent||item.content||'';
+        var msg={role:role,content:content};
+        if(item.tool_call_id){msg.tool_call_id=item.tool_call_id;msg._sentCount=999;}
+        if(item.name){msg.name=item.name;if(!item.tool_call_id)msg._sentCount=999;}
+        if(item.tool_calls)msg.tool_calls=item.tool_calls;
+        if(item._tokens!==undefined)msg._tokens=item._tokens;
+        if(item._injected)msg._injected=item._injected;
+        messages.push(msg);
       }
     }
+    // ★ [F3fix3/v2.9] 删除 stale：按 role+序号精确剔除（多次删除累积数组；压缩后早期删除序号超界→无操作；消费后清除）
+    // ★ [R3/v3.0] 骨架定位修正：stale.seq 为 items 同role序号 → 在 items 中定位非注入位置 pos → 骨架序号=pos-(items非注入-骨架非注入)
+    try{
+      var _curBrS=stored&&stored.branches&&stored.branches[stored.currentBranchId];
+      if(_curBrS&&_curBrS._delStale&&storedItems&&storedItems.length){
+        var _arrS=_curBrS._delStaleArr||[];
+        if(_arrS.length){
+          var _niS=0,_nmS=0;
+          for(var _c1S=0;_c1S<storedItems.length;_c1S++){var _rC1S=storedItems[_c1S].role||'assistant';if(_rC1S==='agent')_rC1S='assistant';if(_rC1S==='user'||_rC1S==='assistant')_niS++;}
+          for(var _c2S=0;_c2S<messages.length;_c2S++){var _mC2S=messages[_c2S];if((_mC2S.role==='user'||_mC2S.role==='assistant')&&!_mC2S._injected)_nmS++;}
+          var _offS=_niS-_nmS;if(_offS<0)_offS=0;
+          for(var _aiS=0;_aiS<_arrS.length;_aiS++){
+            var _recS=_arrS[_aiS];
+            if(!_recS||(_recS.role!=='user'&&_recS.role!=='assistant'))continue;
+            // items 中定位：第 seq 个同 role 的非注入位置
+            var _posS=-1,_roleSeenS=0,_niPosS=0;
+            for(var _tS=0;_tS<storedItems.length;_tS++){
+              var _rTS=storedItems[_tS].role||'assistant'; if(_rTS==='agent')_rTS='assistant';
+              if(_rTS==='user'||_rTS==='assistant'){
+                if(_rTS===_recS.role){ if(_roleSeenS===_recS.seq){_posS=_niPosS;break;} _roleSeenS++; }
+                _niPosS++;
+              }
+            }
+            if(_posS<0)continue;
+            var _wantS=_posS-_offS; // 骨架非注入序号
+            if(_wantS<0||_wantS>=_nmS)continue; // 被压缩进摘要，API 上下文已无此消息 → 无操作
+            var _seenR=0,_rmIdx=-1;
+            for(var _miR=0;_miR<messages.length;_miR++){
+              var _mR=messages[_miR];
+              if((_mR.role==='user'||_mR.role==='assistant')&&!_mR._injected){
+                if(_seenR===_wantS){_rmIdx=_miR;break;}
+                _seenR++;
+              }
+            }
+            if(_rmIdx>=0){
+              var _msgsS2=[];
+              for(var _miS2=0;_miS2<messages.length;_miS2++){
+                if(_miS2===_rmIdx){
+                  // 若剔除的是 assistant → 连带其后连续 tool 响应
+                  if(messages[_miS2]&&messages[_miS2].role==='assistant'){
+                    while(_miS2+1<messages.length&&messages[_miS2+1].role==='tool')_miS2++;
+                  }
+                  continue;
+                }
+                _msgsS2.push(messages[_miS2]);
+              }
+              messages=_msgsS2;
+            }
+          }
+        }
+        delete _curBrS._delStale;
+        delete _curBrS._delStaleArr;
+      }
+    }catch(_eS2){}
 
 // ★ [已废弃] _persistentMessages 缓存覆盖 — 主循环直接从气泡构建
     //    分支系统在 _forkAtForkPoint 中删除持久缓存，所以不会命中此分支。
@@ -17351,6 +17502,8 @@ async function processUserMessage(userText,taskId){
         }
         messages.length = 0;
         Array.prototype.push.apply(messages, _newMessages);
+        // ★ [F3/v2.9] 压缩标记：恢复端据此跳过 items 比对（防"压缩+删除"绕过条数检测误入比对分支）
+        try{var _bdA=_getBranchData(currentConversationId);var _brA=_bdA._branches[_bdA._currentBranchId];if(_brA)_brA._lastCompressedAt=Date.now();}catch(_eA){}
         
 
         _updateTokenAccumulator(currentConversationId, null, messages);
@@ -17379,7 +17532,7 @@ async function processUserMessage(userText,taskId){
   if(triggered.length > 0){
     messages.push({
       role: 'user',
-      content: '【技能推荐】' + triggered.join(' ') + '\\n（以上推荐仅供参考，非必选）',
+      content: '[技能推荐] ' + triggered.join(' ') + '\\n（以上推荐仅供参考，非必选）',
       _injected: true
     });
     debugLogger.info('技能推荐: '+triggered.length+'个未激活技能触发词匹配（已注入上下文中）');
@@ -18566,12 +18719,29 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
     _updateToolbarTokenDisplay();
     _saveTokenCounts();
     // ★ 同步 messages 到 branch data（异步持久化，配合 beforeunload 增加 IndexedDB 落地概率）
+    // ★ [P1/v2.8] 双轨持久化：items=UI渲染数据(气泡)；fullMessages=API上下文快照(含system/tool/tool_calls/_injected)，token级还原
     try{
       var _bd2=_getBranchData(currentConversationId);
       var _items2=messages.filter(function(m){return true;});
       if(_bd2&&_bd2._branches&&_bd2._currentBranchId&&_items2&&_items2.length){
         _bd2._branches[_bd2._currentBranchId].items=_items2.slice();
-        (async function(){
+        // ★ [P1] fullMessages 全量深拷贝（含 system/tool/注入），排除内部字段 _sentCount（恢复时置0，防止跨轮精炼改写）
+        var _full2=[];
+        for(var _fm2=0;_fm2<messages.length;_fm2++){
+          var _fm=messages[_fm2];
+          var _fc={role:_fm.role};
+          if(_fm.content!==undefined&&_fm.content!==null)_fc.content=_fm.content;
+          if(_fm.tool_calls)_fc.tool_calls=_fm.tool_calls;
+          if(_fm.tool_call_id)_fc.tool_call_id=_fm.tool_call_id;
+          if(_fm.name)_fc.name=_fm.name;
+          if(_fm._tokens!==undefined)_fc._tokens=_fm._tokens;
+          if(_fm._injected!==undefined)_fc._injected=_fm._injected;
+          if(_fm.reasoning_content)_fc.reasoning_content=_fm.reasoning_content;
+          _full2.push(_fc);
+        }
+        _bd2._branches[_bd2._currentBranchId].fullMessages=_full2;
+        // ★ [P5a] 主链路 await：发送完成返回前 items+fullMessages 必已落库（事务<10ms，消除"发送完成即刷新"丢失窗口）
+        await (async function(){
           try{
             var _db2=await getDB();
             var _tx2=_db2.transaction('messages','readwrite');
@@ -19822,7 +19992,55 @@ function handleMessageDelete(msgDiv) {
   }
   // 普通模式：删除单条消息
   if (!window.confirm('确定删除这条消息？')) return;
-  if (msgDiv.parentNode) msgDiv.parentNode.removeChild(msgDiv);
+  var _delIdx=-1;
+  if (msgDiv.parentNode){
+    var _delBubs=Array.from(msgDiv.parentNode.querySelectorAll('.message.user,.message.agent'));
+    _delIdx=_delBubs.indexOf(msgDiv);
+    msgDiv.parentNode.removeChild(msgDiv);
+  }
+  // ★ [P3-Y/v2.8] 删除同步 fullMessages（UI 视觉零改动）；压缩场景合并算法跳过 items 比对，必须由回调同步兜底
+  // ★ [R3/v3.0] 骨架定位修正：骨架非注入=items非注入后缀 → 骨架序号=气泡索引-(items数-骨架非注入数)
+  //   消除压缩后索引错位误伤（原按气泡索引直接命中会删错消息）；stale 记录移到 for 外（原在循环内重复 push）
+  try{
+    var _bdD=_getBranchData(currentConversationId);
+    var _brD=_bdD._branches[_bdD._currentBranchId];
+    if(_delIdx>=0&&_brD&&_brD.fullMessages&&_brD.fullMessages.length){
+      var _itemsD2=_brD.items||[];
+      var _niD=_itemsD2.length; // items 全为 user/agent 气泡，索引即非注入序号
+      var _nfD=0;
+      for(var _c2D=0;_c2D<_brD.fullMessages.length;_c2D++){var _mC2=_brD.fullMessages[_c2D];if((_mC2.role==='user'||_mC2.role==='assistant')&&!_mC2._injected)_nfD++;}
+      var _wantD=_delIdx-(_niD-_nfD); // 目标在骨架中的非注入序号（<0=被压缩→stale兜底）
+      var _foundD2=false;
+      if(_wantD>=0&&_wantD<_nfD){
+        var _seenD2=0;
+        for(var _miD2=0;_miD2<_brD.fullMessages.length;_miD2++){
+          var _mD2=_brD.fullMessages[_miD2];
+          if(_mD2.role==='system'||_mD2.role==='tool'||_mD2._injected)continue;
+          if(_seenD2===_wantD){
+            _brD.fullMessages.splice(_miD2,1);
+            while(_miD2<_brD.fullMessages.length&&_brD.fullMessages[_miD2].role==='tool')_brD.fullMessages.splice(_miD2,1);
+            _foundD2=true;
+            break;
+          }
+          _seenD2++;
+        }
+      }
+      // ★ [F3fix3/v2.9] 骨架中无对应消息（被压缩）→ 记 stale（恢复端按 items 位置映射剔除兜底）
+      // ★ [R3/v3.0] for 外单次记录（原在循环内每个非tool消息重复push相同记录→恢复端重复剔除误删）
+      if(!_foundD2){
+        if(!_brD._delStaleArr)_brD._delStaleArr=[];
+        var _tgtRoleD=msgDiv.classList.contains('user')?'user':'assistant';
+        var _seqD2=0;
+        for(var _qD=0;_qD<_delIdx&&_qD<_itemsD2.length;_qD++){
+          var _rQ=_itemsD2[_qD].role||'assistant';
+          if(_rQ==='agent')_rQ='assistant';
+          if(_rQ===_tgtRoleD)_seqD2++;
+        }
+        _brD._delStaleArr.push({role:_tgtRoleD,seq:_seqD2});
+        _brD._delStale=true;
+      }
+    }
+  }catch(_eD){}
   _saveBranchMessages(currentConversationId).catch(function(){});
   showToast('消息已删除','success');
 }
@@ -22062,8 +22280,47 @@ function initEventBindings(){
     // 新分支items = prefix(0..fp)
     // ★ [FIX] 重新生成时(autoSendText)排除fp处消息，避免processUserMessage重复push导致"用户问了两次"
     var prefixItems=bd._branches[curId].items.slice(0,autoSendText?fp:fp+1);
+    // ★ [P2/v2.8] fork 时同步复制旧分支 fullMessages 前缀（按非 system/tool 消息数截断，与 prefixItems 语义一致），
+    //   保证 fork 即发场景新分支 API 上下文含完整 tool 记录；逐字段浅拷贝避免分支间共享对象引用
+    var _srcFull=bd._branches[curId].fullMessages;
+    var _newFull=null;
+    if(_srcFull&&_srcFull.length){
+      var _keepCount=autoSendText?fp:fp+1;
+      var _cnt2=0; _newFull=[];
+      if(_keepCount<=0){
+        // ★ [F5/v2.9] fp=0 边界：prefixItems=[] → fullMessages 仅保留 system（与 items 语义一致，避免保留首条历史）
+        for(var _fk0=0;_fk0<_srcFull.length;_fk0++){
+          if(_srcFull[_fk0].role!=='system')break;
+          var _copy0={};
+          for(var _ck0 in _srcFull[_fk0]){if(_srcFull[_fk0].hasOwnProperty(_ck0))_copy0[_ck0]=_srcFull[_fk0][_ck0];}
+          _newFull.push(_copy0);
+        }
+      }else{
+        for(var _fk2=0;_fk2<_srcFull.length;_fk2++){
+          var _srcM=_srcFull[_fk2];
+          var _copy2={};
+          for(var _ck2 in _srcM){if(_srcM.hasOwnProperty(_ck2))_copy2[_ck2]=_srcM[_ck2];}
+          _newFull.push(_copy2);
+          if(_srcM.role!=='tool'&&_srcM.role!=='system'){_cnt2++;if(_cnt2>=_keepCount){
+            // ★ [F1/v2.9] 补推后续连续 tool 消息，防止截断切断 tool_calls 配对（校验器 Pass3 会删整条 assistant）
+            //   [F1fix/v2.9] 仅补推 tool_call_id 属于当前 assistant.tool_calls 的响应，避免孤立 tool 混入新分支
+            var _lastCalls={};
+            if(_srcM.tool_calls){for(var _lc2=0;_lc2<_srcM.tool_calls.length;_lc2++){var _tc2=_srcM.tool_calls[_lc2].id;if(_tc2)_lastCalls[_tc2]=1;}}
+            for(var _fk3=_fk2+1;_fk3<_srcFull.length;_fk3++){
+              var _t3=_srcFull[_fk3];
+              if(_t3.role!=='tool')break;
+              if(_t3.tool_call_id&&!_lastCalls[_t3.tool_call_id])break;
+              var _copy3={};
+              for(var _ck3 in _t3){if(_t3.hasOwnProperty(_ck3))_copy3[_ck3]=_t3[_ck3];}
+              _newFull.push(_copy3);
+            }
+            break;
+          }}
+        }
+      }
+    }
     var newBid='b_'+Date.now();
-    bd._branches[newBid]={items:prefixItems,parentId:pid,forkPoint:fp};
+    bd._branches[newBid]={items:prefixItems,parentId:pid,forkPoint:fp,fullMessages:_newFull};
     bd._currentBranchId=newBid;
     // 新分支items已通过 prefixItems 保存到新分支记录中
     if(bd._branchOrder.indexOf(newBid)<0)bd._branchOrder.push(newBid);
@@ -22134,6 +22391,30 @@ function initEventBindings(){
     if(!newText){showToast('内容不能为空','error');return;}
     var cd=_editTargetMsg.querySelector('.message-content');
     if(cd){var body=cd.querySelector('.msg-body');if(body)body.textContent=newText;else cd.textContent=newText;}
+    // ★ [P3-Y/v2.8] 数据层同步：编辑内容同步到 fullMessages（UI 视觉零改动）
+    // ★ [R3/v3.0] 骨架定位修正：骨架非注入=items非注入后缀 → 骨架序号=气泡索引-(items数-骨架非注入数)
+    try{var _bdY2=_getBranchData(currentConversationId);var _brY2=_bdY2._branches[_bdY2._currentBranchId];
+      if(_brY2&&_brY2.fullMessages&&_brY2.fullMessages.length){
+        var _bubsY2=Array.from(document.getElementById('messagesList').querySelectorAll('.message.user,.message.agent'));
+        var _bidxY2=_bubsY2.indexOf(_editTargetMsg);
+        if(_bidxY2>=0){
+          var _itemsY2=_brY2.items||[];
+          var _niY2=_itemsY2.length; // items 全为 user/agent 气泡
+          var _nfY2=0;
+          for(var _c2Y2=0;_c2Y2<_brY2.fullMessages.length;_c2Y2++){var _mC2Y2=_brY2.fullMessages[_c2Y2];if((_mC2Y2.role==='user'||_mC2Y2.role==='assistant')&&!_mC2Y2._injected)_nfY2++;}
+          var _wantY2=_bidxY2-(_niY2-_nfY2);
+          if(_wantY2>=0&&_wantY2<_nfY2){var _seenY2=0;
+            for(var _miY2=0;_miY2<_brY2.fullMessages.length;_miY2++){
+              var _mY2=_brY2.fullMessages[_miY2];
+              if(_mY2.role==='system'||_mY2.role==='tool'||_mY2._injected)continue;
+              if(_seenY2===_wantY2){_mY2.content=newText;delete _mY2.tool_calls;
+                while(_miY2+1<_brY2.fullMessages.length&&_brY2.fullMessages[_miY2+1].role==='tool')_brY2.fullMessages.splice(_miY2+1,1);
+                break;}
+              _seenY2++;
+            }}
+        }
+      }}catch(_eY2){}
+
     document.getElementById('editMessageModal').style.display='none';_editTargetMsg=null;
     saveCurrentMessages({forceFull:true}).catch(function(){});showToast('消息已更新 ','success');
   };
@@ -22146,6 +22427,30 @@ function initEventBindings(){
     document.getElementById('editMessageModal').style.display='none';_editTargetMsg=null;
     var cd2=target.querySelector('.message-content');
     if(cd2){var body2=cd2.querySelector('.msg-body');if(body2)body2.textContent=newText;else cd2.textContent=newText;}
+    // ★ [P3-Y/v2.8] 数据层同步：编辑内容同步到 fullMessages（UI 视觉零改动），fork 前确保新分支上下文为编辑后文本
+    // ★ [R3/v3.0] 骨架定位修正：骨架非注入=items非注入后缀 → 骨架序号=气泡索引-(items数-骨架非注入数)
+    try{var _bdY=_getBranchData(currentConversationId);var _brY=_bdY._branches[_bdY._currentBranchId];
+      if(_brY&&_brY.fullMessages&&_brY.fullMessages.length){
+        var _bubsY=Array.from(document.getElementById('messagesList').querySelectorAll('.message.user,.message.agent'));
+        var _bidxY=_bubsY.indexOf(target);
+        if(_bidxY>=0){
+          var _itemsY=_brY.items||[];
+          var _niY=_itemsY.length; // items 全为 user/agent 气泡
+          var _nfY=0;
+          for(var _c2Y=0;_c2Y<_brY.fullMessages.length;_c2Y++){var _mC2Y=_brY.fullMessages[_c2Y];if((_mC2Y.role==='user'||_mC2Y.role==='assistant')&&!_mC2Y._injected)_nfY++;}
+          var _wantY=_bidxY-(_niY-_nfY);
+          if(_wantY>=0&&_wantY<_nfY){var _seenY=0;
+            for(var _miY=0;_miY<_brY.fullMessages.length;_miY++){
+              var _mY=_brY.fullMessages[_miY];
+              if(_mY.role==='system'||_mY.role==='tool'||_mY._injected)continue;
+              if(_seenY===_wantY){_mY.content=newText;delete _mY.tool_calls;
+                while(_miY+1<_brY.fullMessages.length&&_brY.fullMessages[_miY+1].role==='tool')_brY.fullMessages.splice(_miY+1,1);
+                break;}
+              _seenY++;
+            }}
+        }
+      }}catch(_eY){}
+
     saveCurrentMessages({forceFull:true}).catch(function(){});
     _forkAtForkPoint(newText);
   };
@@ -22154,9 +22459,27 @@ function initEventBindings(){
   });
 
   // ★ 关闭/刷新前保存当前对话 + Token计数
+  // ★ [P5b/v2.8] 追加同步 localStorage 快照：IndexedDB 事务在卸载时可能被中止，
+  //   同步 API 卸载前 100% 执行；快照与 record 同构（branches 含 items+fullMessages），恢复端 updatedAt 取新
   window.addEventListener('beforeunload',function(){
     saveCurrentMessages({forceFull:true});
     _saveTokenCounts();
+    try{
+      var _bdS=_getBranchData(currentConversationId);
+      if(_bdS&&_bdS._branches&&_bdS._currentBranchId){
+        // ★ [F4/v2.9] 清理其他对话快照键，防止多对话累积撑爆 localStorage（QuotaExceeded 静默失效）
+        var _lsKeys=Object.keys(localStorage);
+        for(var _lk=0;_lk<_lsKeys.length;_lk++){
+          if(_lsKeys[_lk].indexOf('exo_fullmsg_snap_')===0&&_lsKeys[_lk]!=='exo_fullmsg_snap_'+currentConversationId){
+            try{localStorage.removeItem(_lsKeys[_lk]);}catch(_eL2){}
+          }
+        }
+        localStorage.setItem('exo_fullmsg_snap_'+currentConversationId,JSON.stringify({
+          branches:_bdS._branches,currentBranchId:_bdS._currentBranchId,
+          branchOrder:_bdS._branchOrder,updatedAt:Date.now()
+        }));
+      }
+    }catch(_eS){}
   });
 
   // ★ 滚动监听：显示/隐藏回底按钮 + 自动滚底开关
