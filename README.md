@@ -649,7 +649,7 @@ for(var i=0;i<files.length;i+=CONC){
 ╚══════╝ ╚═╝      ╚═╝    ╚═════╝ 
 ```
 
-> 🛸 Browser-native full-stack AI agent. MCTS planning · Pipeline V6 · Flow Mode · Pre-Gate · World simulation · Self-evolution. **Your external brain.**
+> Ultra-lightweight in-browser agent
 
 ---
 ## Table of Contents
