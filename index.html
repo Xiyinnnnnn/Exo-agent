@@ -778,6 +778,8 @@ button,label,[role="button"],.file-upload-btn{
         <h3> 预算控制</h3><span class="section-arrow collapsed">▼</span>
       </div>
       <div class="section-body collapsed">
+        <div class="settings-field" style="border-top:none"><div style="display:flex;gap:6px;align-items:center;margin-bottom:4px"><button class="btn btn-outline btn-sm" id="btnCheckBalance" style="flex:1;font-size:12px"> 查询余额</button></div><div id="balanceInfo" style="font-size:12px;line-height:1.7;color:var(--color-text-secondary);min-height:0"><span class="help-text">查询 DeepSeek 账户实时余额（GET /user/balance）</span></div></div>
+
         <div class="settings-field"><label for="settingDailyLimit">每日 LLM 调用上限</label><input type="number" id="settingDailyLimit" value="4000" min="10" max="100000"></div>
         <div class="settings-field"><label for="settingDailyTokenLimit">每日总Token消耗量</label><input type="number" id="settingDailyTokenLimit" value="34328085" min="10000" max="1000000000" step="10000" onchange="var v=parseInt(this.value);settings.daily_token_limit=v;clearTimeout(this._saveTimer);this._saveTimer=setTimeout(function(){saveSettings();},500);updateTokenDisplay();"> <div class="help-text">基于API返回的usage信息精确计费。当API未返回usage时自动回退为字符估算。设为任意值控制每日消耗上限。</div></div>
         <div class="settings-field"><label>Token消耗进度</label><div>已消耗: <strong id="tokenUsedLabel">0</strong> / <span id="tokenTotalLabel">34M</span> (<span id="tokenUsedPercent">0%</span>)</div><div class="progress-bar"><div class="fill" id="tokenBar" style="width:0%"></div></div></div>
@@ -4968,8 +4970,11 @@ async function _compressOldMessages(messages,modelMaxTokens){
     return compressed;
   }catch(e){debugLogger.warn('压缩失败: '+e.message);return null;}
 
+
+}
 // ★ 降级压缩：LLM摘要失败时的确定性兜底 —— 按"真实 user 轮次"整体丢弃最旧消息
 //   不依赖LLM，必定成功（消息有限）。返回 true 表示已丢弃；false 表示无可丢弃
+//   ★ 修复(2026-08-02)：原定义误置于 _compressOldMessages 函数体内(catch之后)，导致 callLLM/streamChatCompletion 调用时 ReferenceError: _dropOldestByUserRound is not defined —— 已移到全局作用域
 function _dropOldestByUserRound(messages){
   if(!messages||messages.length<=3)return false;
   // 收集真实 user 索引（排除 _injected 技能推荐等；从0开始——messages可能不含system，index0即首个user）
@@ -4981,8 +4986,8 @@ function _dropOldestByUserRound(messages){
   // 多 user 轮次 → 丢弃第一个 user 轮次（含其全部工具调用），保留最近工作流
   if(userIdx.length>=2){
     var dropEnd=userIdx[1];
-    // 边界：丢弃后剩余必须 ≥2 条（至少 1 user + 1 回复）
-    if(dropEnd>=messages.length-1)dropEnd=messages.length-1;
+    // 边界：丢弃后剩余必须 ≥2 条（至少 1 user + 1 回复）——droppedN=dropEnd-userIdx[0] ≤ messages.length-2
+    if(dropEnd>messages.length-2+userIdx[0])dropEnd=messages.length-2+userIdx[0];
     var droppedN=dropEnd-userIdx[0];
     messages.splice(userIdx[0],droppedN);
     debugLogger.warn(' 降级压缩: 丢弃最旧user轮次 '+droppedN+' 条 → 剩 '+messages.length+' 条');
@@ -5005,12 +5010,14 @@ function _dropOldestByUserRound(messages){
   return false;
 }
 
-}
-
-// ★ 用API返回的精确 prompt_tokens 按字符比例分配，给每条消息打上 _tokens 标签
-//    后续压缩时优先使用 _tokens（精确），回退到字符估算
+// ★ 增量标记（2026-08-02）：一次 API 产出只标记新消息（untagged）
+//   数据流：API返回全量usage → 记账吃全量(recordDailyTokenUsage累加total_tokens)
+//           → 此处算增量(delta=本次prompt-上次锚点) 喂给标记机制
+//   仅主对话(source==='user')启用；压缩/子Agent/技能管理等不标记、不读写锚点
   function _utf8Len(str){if(typeof str!=='string')str=str?String(str):'';return (new TextEncoder().encode(str)).length;}
-  function _tagMessageTokens(messages, apiUsage){
+  function _tagMessageTokens(messages, apiUsage, source){
+  // ★ 仅主对话(source==='user')做增量标记；其他source直接跳过（防锚点污染）
+  if(source!=='user')return;
   if(!apiUsage||!Array.isArray(messages)||messages.length===0)return;
   var promptTokens=apiUsage.prompt_tokens;
   if(typeof promptTokens!=='number'||promptTokens<=0)return;
@@ -5040,29 +5047,52 @@ function _dropOldestByUserRound(messages){
     }
     return total;
   }
-  // ★ 第一遍：扫描区分已标记/未标记/过期消息
-  //   已过期（_tokens<=0）→ 不参与 ratio 计算，不重新标记
-  //   已标记（_tokens>0）  → 保留原值，参与 ratio 分母但不被覆盖
-  //   未标记（_tokens===undefined）→ 加入 untagged，等待分配
-  var totalAllBytes=0;
+  // ★ 增量标记（2026-08-02）：一次 API 产出只标记新消息（untagged）
+  //   delta = 本次全量 prompt_tokens - 上次锚点 → 增量喂给新消息（user/tool按字节比例）
+  //   completion_tokens 归属本次生成的 assistant 回复（最后一条新消息）
+  //   ★ 锚点按 convId 隔离；source!=='user' 已在入口跳过（压缩/子Agent不污染锚点）
+  var convKey=currentConversationId||'__default__';
+  if(!window._lastApiPromptTokens)window._lastApiPromptTokens={};
+  var lastPrompt=window._lastApiPromptTokens[convKey]||0;
+  var deltaPrompt=Math.max(0,promptTokens-lastPrompt);
+  // ★ 压缩/重建检测：本次prompt未增长(delta<=0) → 退化为全量分配
+  //   压缩后messages变小但锚点仍是旧大值 → 新消息(压缩摘要/新提问)是当前上下文的新增内容，按全量分配合适
+  var basePrompt=deltaPrompt>0?deltaPrompt:promptTokens;
+  // 收集 untagged 新消息（本次API产出的新消息）
   var untagged=[];
   for(var i=0;i<messages.length;i++){
-    var _m=messages[i];
-    if(_m._tokens!==undefined&&_m._tokens<=0)continue; // 已过期→跳过
-    totalAllBytes+=_msgBytes(_m);
-    if(_m._tokens===undefined)untagged.push(i); // 只加真正未标记的
+    if(messages[i]._tokens===undefined)untagged.push(i);
   }
-  if(untagged.length===0)return;
-  if(totalAllBytes<=0)return;
-  var ratio=promptTokens/totalAllBytes;
-  // ★ 第二遍：只给未标记的消息分配
-  for(var k=0;k<untagged.length;k++){
-    var idx=untagged[k];
-    var m=messages[idx];
-    var bytes=_msgBytes(m);
-    if(bytes<=0){m._tokens=0;continue;}
-    m._tokens=Math.max(1,Math.round(bytes*ratio));
+  // ★ delta 分配给新消息中的 prompt 部分（user/tool/system，按字节比例）
+  if(basePrompt>0&&untagged.length>0){
+    var totalBytes=0;
+    for(var k=0;k<untagged.length;k++){
+      var m=messages[untagged[k]];
+      if(m.role!=='assistant')totalBytes+=_msgBytes(m);
+    }
+    if(totalBytes>0){
+      var ratio=basePrompt/totalBytes;
+      for(var k2=0;k2<untagged.length;k2++){
+        var m2=messages[untagged[k2]];
+        if(m2.role==='assistant')continue;
+        var bytes=_msgBytes(m2);
+        if(bytes<=0){m2._tokens=0;continue;}
+        m2._tokens=Math.max(1,Math.round(bytes*ratio));
+      }
+    }
   }
+  // ★ completion_tokens 归属：本次调用生成的回复 = 最后一条新 assistant 消息
+  if(apiUsage.completion_tokens>0){
+    for(var _ai=untagged.length-1;_ai>=0;_ai--){
+      var _am=messages[untagged[_ai]];
+      if(_am.role==='assistant'){
+        _am._tokens=(_am._tokens||0)+apiUsage.completion_tokens;
+        break;
+      }
+    }
+  }
+  // ★ 更新锚点（即使delta=0/上下文压缩也要重置，避免下次虚高）
+  window._lastApiPromptTokens[convKey]=promptTokens;
   // ★ 记录本次 API 调用 usage 到日志
   if(typeof currentConversationId!=='undefined'&&currentConversationId){
     _appendToApiUsageLog(currentConversationId,{
@@ -5070,6 +5100,7 @@ function _dropOldestByUserRound(messages){
       prompt_tokens:apiUsage.prompt_tokens,
       completion_tokens:apiUsage.completion_tokens,
       total_tokens:apiUsage.total_tokens,
+      delta_prompt:deltaPrompt,
       message_count:messages.length,
       new_tagged_count:untagged.length
     });
@@ -7195,21 +7226,17 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
     dailyTokenUsed = 0;
     _dailyTokenDate = todayStr;
   }
-  // ★ 增量计算：只累加本次新增的token，而非全量（修复累积对话中重复计数bug）
-  //   · prompt_tokens → 记录每轮累计值，delta = 本轮累计 - 上轮累计（即新加入的prompt内容）
-  //   · completion_tokens → 每次都是全新的，直接加
+  // ★ 全量累加：每次API调用都是完整上下文计费，usage 即为本次全部token消耗
+  //   · prompt_tokens 含旧消息+系统提示全量（缓存命中仅是单价折扣，token数照记全量）
+  //   · completion_tokens 每次全量
+  //   ★ 修复(2026-08-02)：原"增量"逻辑只累加新增内容，多轮对话严重低估实际消耗
   var tokensToAdd = 0;
   var sourceLabel = '';
   if (apiUsage && typeof apiUsage.total_tokens === 'number' && apiUsage.total_tokens > 0) {
-    if(!window._lastApiPromptTokens) window._lastApiPromptTokens = {};
-    var convKey = currentConversationId || '__default__';
-    var lastPrompt = window._lastApiPromptTokens[convKey] || 0;
-    var curPrompt = apiUsage.prompt_tokens || 0;
-    var curComp = apiUsage.completion_tokens || (apiUsage.total_tokens - curPrompt) || 0;
-    var promptDelta = Math.max(0, curPrompt - lastPrompt);
-    tokensToAdd = promptDelta + curComp;
-    window._lastApiPromptTokens[convKey] = curPrompt;
-    sourceLabel = ' (API增量)';
+    tokensToAdd = apiUsage.total_tokens;
+    var _hitT = apiUsage.prompt_cache_hit_tokens || 0;
+    var _missT = apiUsage.prompt_cache_miss_tokens || 0;
+    sourceLabel = ' (API全量' + ((_hitT>0||_missT>0)?' 缓存H'+_hitT+'/M'+_missT:'') + ')';
   } else if (apiUsage && typeof apiUsage.prompt_tokens === 'number' && typeof apiUsage.completion_tokens === 'number') {
     tokensToAdd = apiUsage.prompt_tokens + apiUsage.completion_tokens;
     sourceLabel = ' (API精确-旧路径)';
@@ -7224,7 +7251,7 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
     tokensToAdd = _estimateTokensFromChars(totalChars);
     sourceLabel = ' (估算)';
   }
-  // ★ 兜底：增量异常（≤0）时改用 full total_tokens
+  // ★ 兜底：异常（≤0）时改用 full total_tokens
   if(tokensToAdd <= 0 && apiUsage && apiUsage.total_tokens > 0){
     tokensToAdd = apiUsage.total_tokens;
     sourceLabel = ' (API总-回退)';
@@ -7235,7 +7262,7 @@ function recordDailyTokenUsage(messages, responseContent, apiUsage){
   // ★ Token消耗日志：API精确计费每次都记录；估算按10%节流
   var tokenLimit = settings.daily_token_limit || 34328085;
   var tokenPct = Math.round(dailyTokenUsed / tokenLimit * 100);
-  var isPrecise = (sourceLabel.indexOf('增量') >= 0);
+  var isPrecise = (sourceLabel.indexOf('API') >= 0);
   if (isPrecise && tokenPct >= 50 || tokenPct >= 90) {
     var usedStr = dailyTokenUsed >= 1000000 ? (dailyTokenUsed / 1000000).toFixed(1) + 'M' : dailyTokenUsed.toLocaleString();
     var limitStr = tokenLimit >= 1000000 ? (tokenLimit / 1000000).toFixed(0) + 'M' : tokenLimit.toLocaleString();
@@ -10540,7 +10567,7 @@ async function callLLM(messages,tools,stream,source){
             var _llmRsp2=(data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.content)||'';
             if(data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.reasoning_content)_llmRsp2+=data2.choices[0].message.reasoning_content;
             recordDailyTokenUsage(messages||[],_llmRsp2,data2.usage||null);
-            _tagMessageTokens(messages,data2.usage);
+            _tagMessageTokens(messages,data2.usage,source);
             return data2;
           }
           debugLogger.warn('callLLM 回退 max_token 仍失败，执行压缩...');
@@ -10576,7 +10603,7 @@ async function callLLM(messages,tools,stream,source){
         var _llmRsp3=(data3.choices&&data3.choices[0]&&data3.choices[0].message&&data3.choices[0].message.content)||'';
         if(data3.choices&&data3.choices[0]&&data3.choices[0].message&&data3.choices[0].message.reasoning_content)_llmRsp3+=data3.choices[0].message.reasoning_content;
         recordDailyTokenUsage(messages||[],_llmRsp3,data3.usage||null);
-        _tagMessageTokens(messages,data3.usage);
+        _tagMessageTokens(messages,data3.usage,source);
         return data3;
       }
     }
@@ -10588,7 +10615,7 @@ async function callLLM(messages,tools,stream,source){
   var _llmRsp=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'';
   if(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.reasoning_content)_llmRsp+=data.choices[0].message.reasoning_content;
   recordDailyTokenUsage(messages||[],_llmRsp,data.usage||null);
-  _tagMessageTokens(messages,data.usage);
+  _tagMessageTokens(messages,data.usage,source);
   return data;
 }
 
@@ -10740,7 +10767,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
           if(data==='[DONE]'){
             activeStreamReader=null;
             recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
-            _tagMessageTokens(messages, streamUsage);
+            _tagMessageTokens(messages, streamUsage, source);
             // ★ 立即同步累计器：只用精确 _tokens，无标记的消息贡献 0
             _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
             saveCurrentMessages();
@@ -10772,7 +10799,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       if(!streamError){
         activeStreamReader=null;
         recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
-        _tagMessageTokens(messages, streamUsage);
+        _tagMessageTokens(messages, streamUsage, source);
         // ★ 立即同步累计器：只用精确 _tokens，无标记的消息贡献 0
         _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
         saveCurrentMessages();
@@ -10791,6 +10818,12 @@ async function streamChatCompletion(messages,tools,onChunk,source){
 
     if(streamError instanceof TypeError){
       debugLogger.warn(' 流读取中断('+(totalStreamContent?totalStreamContent.length+'字已收':'空收')+')，将重试');
+      // ★ 补记已计费的中断请求：服务器已开始生成即已计费，但该请求usage随流丢失，
+      //   按已收内容估算补记一次（避免重试后只记最后一次导致漏计）
+      if(totalStreamContent){
+        recordDailyTokenUsage(messages, totalStreamContent, null);
+        debugLogger.warn(' 中断请求补记(估算): 已收'+totalStreamContent.length+'字');
+      }
       await onChunk({_streamReset:true});
       totalStreamContent='';
       continue;
@@ -17428,7 +17461,7 @@ async function _preExecutionCritique(pendingToolCalls, agentMsgDiv, streamReason
             }
           }
         }
-      },'user');
+      },'critique');
       _gateThinkBlock.classList.add('collapsed');
       _gateThinkToggle.textContent='[>] 逐行审查思考';
       var _scKeys=Object.keys(_streamCalls);
@@ -22059,6 +22092,43 @@ function initEventBindings(){
     }catch(e){showToast('网络错误: '+e.message,'error');}
     btnVerifyApiKey.disabled=false;btnVerifyApiKey.textContent='验证Key';
   });
+  // ★ 查询余额（DeepSeek GET /user/balance）
+  var btnCheckBalance=document.getElementById('btnCheckBalance');
+  if(btnCheckBalance)btnCheckBalance.addEventListener('click',async function(){
+    var key=(document.getElementById('settingApiKey').value||'').trim();
+    var url=(document.getElementById('settingBaseUrl').value||'').trim();
+    if(!key){showToast('请先输入API Key','warning');return;}
+    if(!url){showToast('请先输入Base URL','warning');return;}
+    btnCheckBalance.disabled=true;btnCheckBalance.textContent='查询中...';
+    var infoEl=document.getElementById('balanceInfo');
+    if(infoEl)infoEl.innerHTML='查询中...';
+    try{
+      var resp=await fetch(_getApiBase(url)+'/user/balance',{
+        headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'}
+      });
+      if(!resp.ok){
+        var t=await resp.text();
+        showToast('失败: HTTP '+resp.status+' '+(t||'').slice(0,120),'error');
+        if(infoEl)infoEl.textContent='查询失败: HTTP '+resp.status;
+      }else{
+        var data=await resp.json();
+        var html='';
+        if(data.is_available===false){html+='<div style="color:#e74c3c">账户不可用：余额不足或已欠费</div>';}
+        var infos=data.balance_infos||[];
+        for(var i=0;i<infos.length;i++){
+          var bi=infos[i];
+          html+='<div style="display:flex;justify-content:space-between;gap:8px"><span>'+bi.currency+' 总余额</span><strong>'+bi.total_balance+'</strong></div>'+
+                '<div style="display:flex;justify-content:space-between;gap:8px;opacity:0.7"><span>其中赠金</span><span>'+bi.granted_balance+'</span></div>'+
+                '<div style="display:flex;justify-content:space-between;gap:8px;opacity:0.7"><span>其中充值</span><span>'+bi.topped_up_balance+'</span></div>';
+        }
+        if(!infos.length&&!html)html='<div>未返回余额信息</div>';
+        if(infoEl)infoEl.innerHTML=html;
+        showToast('余额查询成功','success');
+      }
+    }catch(e){showToast('网络错误: '+e.message,'error');if(infoEl)infoEl.textContent='网络错误: '+e.message;}
+    btnCheckBalance.disabled=false;btnCheckBalance.textContent=' 查询余额';
+  });
+
   var btnFetchModels=document.getElementById('btnFetchModels');
   if(btnFetchModels)btnFetchModels.addEventListener('click',async function(){
     var key=(document.getElementById('settingApiKey').value||'').trim();
