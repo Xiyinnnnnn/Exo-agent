@@ -2573,53 +2573,77 @@ chart / diagram / svg_animator / table_generator / word_generator / mcts_plan / 
 - /memory/ — 系统记忆存储
 - /config/ — 配置文件`,
 
-  'code_runner':`## code_runner — 代码执行器
+  'code_runner':`## code_runner — 代码执行器（强力增强版）
 
-仅支持 JavaScript(.js) 和 Python(.py)。沙箱内代码可读写文件系统。
+仅支持 JavaScript(.js) 和 Python(.py)。沙箱内代码可读写文件系统（受限）。
 
-### JS 沙箱说明（非 Node.js）
-- 轻量沙箱引擎，基于 `+"`"+`new Function()`+"`"+` 执行，非 Node.js 运行时
-- 内置模块: fs/path/os/url/querystring/crypto/util/assert
-- CDN 可用: `+"`"+`require('lodash')`+"`"+` / `+"`"+`require('dayjs')`+"`"+` / `+"`"+`require('marked')`+"`"+` / `+"`"+`require('qs')`+"`"+`
-- 不支持: npm 任意包、child_process、Buffer
-- ✅ 网络: `+"`"+`fetch(url)`+"`"+` 自动CORS代理降级(直连失败→corsproxy.io→allorigins)；`+"`"+`http.get/post/put/delete`+"`"+`、`+"`"+`fetchText/fetchJSON`+"`"+` 便捷函数；`+"`"+`net`+"`"+` 为 http 别名；`+"`"+`require('http')`+"`"+` 请用 fetch/http 替代
-- 支持顶级 await（async IIFE 包装），但 setTimeout/Promise 回调需在 timeout 内完成
-- 需要完整 npm 生态请使用 Python (Pyodide) 沙箱
+### JS 沙箱（非 Node.js）
+**运行时注入**: require / console / fetch / http / net / fs / process / Buffer / setInterval / clearInterval / queueMicrotask / global(=api) / window(=api)
 
+**网络 API（自动 CORS 三代理降级: corsproxy.io → allorigins → codetabs）**
+- `+"`"+`fetch(url, opts)`+"`"+` — 默认 30s 超时（opts.timeout 可改 / opts.signal 自定义），返回标准 Response
+- `+"`"+`http.get/post/put/delete/patch/request(url, body, opts)`+"`"+` — 便捷请求；`+"`"+`net`+"`"+` 为 http 别名
+- `+"`"+`http.download(url, filePath?, opts?)`+"`"+` — 下载：
+  · 传 filePath → 流式分片（默认每 4MB 一片，opts.chunkSize 可改），写 filePath.partN(base64) + filePath.meta 清单，内存峰值≈分片大小，100MB 文件不爆内存
+  · 不传 → 小文件直接返回 dataURL
+  · 返回 {ok,status,size,mime,viaProxy,path,saved,chunked,parts}
+- `+"`"+`fetchText(url)`+"`"+` / `+"`"+`fetchJSON(url)`+"`"+` — 文本/JSON 便捷
+
+**文件系统（同步）**
+- `+"`"+`fs.read/write/exists/list/delete`+"`"+` — 简单 API
+- `+"`"+`fs.readDownload(path)`+"`"+` — 合并读取分片下载文件 → {bytes,size,mime,dataUrl}（同次执行内可用）
+- `+"`"+`require('fs')`+"`"+` Node 风格: readFileSync/writeFileSync/appendFileSync/existsSync/readdirSync/unlinkSync/statSync/mkdirSync
+- 内置模块: `+"`"+`require('path'/'os'/'url'/'querystring'/'crypto'/'util'/'assert'/'buffer')`+"`"+`
+
+**npm 包（去白名单，任意包）**
+- 白名单快速路径: lodash/dayjs/marked/qs/axios/moment/crypto-js
+- 白名单外任意包: `+"`"+`require('包名')`+"`"+` 自动从 jsdelivr/unpkg 多路径(9种)同步加载（UMD/IIFE）
+- 缓存: 跨执行内存缓存 + Cache API 持久化，装好不二次下载
+- 限制: 仅 UMD/IIFE（同步 importScripts）；ESM-only 包请用 fetch 手动加载或 Python
+
+### Python 沙箱（Pyodide 0.25）
+**网络 API（pyfetch 优先，失败自动降级 JS 三代理）**
+- `+"`"+`await http_get/http_post/http_put/http_delete(url, json=/data=/headers=)`+"`"+` — 返回 {status,ok,headers,text(),json()}
+- `+"`"+`await http_download(url, file_path?)`+"`"+` — 下载为 base64 dataURL；传 file_path 自动写文件
+- `+"`"+`import requests`+"`"+` 可用（桥接，需 await）；urllib.request 不可用
+
+**pip 包（带持久缓存）**
+- `+"`"+`await pip_install('包名')`+"`"+` — wheel 持久缓存(Cache API pip_wheels)：命中不二次下载，跨页面刷新生效；返回 {installed,cached,url}
+- `+"`"+`await pip_list()`+"`"+` — 列出已装包
+- 说明: 纯 Python wheel 可装；含 C 扩展包需 Pyodide 预编译版
+
+**文件系统**: 原生 open(path).read()/open(path,'w').write()；相对路径落在 /sandbox/<会话ID>/（执行前自动 chdir）
+
+### 主线程行为
+- 默认超时: JS 30s / Python 120s（timeout 参数可覆盖）
+- /tmp 自动清理: snippet 执行后删除 + 5 分钟定时清 10 分钟旧文件
+- 分片下载文件点击下载自动合并（.partN+.meta → 完整文件）
+- 分片文件不进沙箱快照（防大快照），主线程合并下载直接读 IndexedDB
 
 ### 两种运行模式
 | 模式 | 方式 | 示例 |
 |------|------|------|
-| 主模式 | 先 filesystem create 创建代码文件, 再传 path 运行 | `+"`"+`code_runner path="/downloads/script.py"`+"`"+` |
+| 主模式 | 先 filesystem create 代码文件, 再传 path 运行 | `+"`"+`code_runner path="/downloads/script.py"`+"`"+` |
 | 次要模式 | 不传 path, 直接传 code + language | `+"`"+`code_runner code="print('hello')" language="python"`+"`"+` |
 
 ### 参数
-- **path**: 代码文件路径(.js或.py)。与code二选一,优先path
-- **code**: 代码片段字符串。不传path时使用,需搭配language
-- **language**: "js" 或 "python"。传code时必填;传path时可省略(从扩展名自动推断)
-- **timeout**: 超时ms。JS默认10s,Python默认60s
-- **context_files**: 额外上下文文件 {别名:路径}
-- **sandbox_dir**: 沙箱工作目录,默认/sandbox/
+- **path/code/language/timeout/context_files/sandbox_dir**（sandbox_dir 默认 /sandbox/）
 
 ### 文件系统权限
-沙箱内代码可读写文件系统，受权限控制：
-- /config/、/memory/、/pipelines/、/trash/ — 不可见
-- /uploads/ — 只读可读取
-- /downloads/、/sandbox/、/tmp/ — 可读写
-- /tmp/ 下的文件在代码执行后自动清理
-- JS代码内用 fs.read(path) 和 fs.write(path,content) 读写（同步）
-- Python代码内用原生 open(path).read() 和 open(path,'w').write(content)
+- `+"`"+`/config/`+"`"+`、`+"`"+`/memory/`+"`"+`、`+"`"+`/pipelines/`+"`"+`、`+"`"+`/trash/`+"`"+` — 不可见（none）
+- `+"`"+`/uploads/`+"`"+` — 只读（read）
+- `+"`"+`/downloads/`+"`"+`、`+"`"+`/sandbox/`+"`"+`、`+"`"+`/tmp/`+"`"+` — 可读写（readwrite）
+- 越权写入被拦截，输出 FS_PERMISSION_DENIED
 
 ### 最小示例
-`+"`"+`code_runner path="/downloads/process_data.py"`+"`"+`
 `+"`"+`code_runner code="console.log('Hello World')" language="js"`+"`"+`
 `+"`"+`code_runner code="import json; print(json.dumps({'ok':True}))" language="python"`+"`"+`
-`+"`"+`code_runner path="/sandbox/main.js" timeout=5000`+"`"+`
+`+"`"+`code_runner code="var d=await http.download('https://example.com/big.zip','/downloads/big.zip');console.log(d.parts+'分片')" language="js"`+"`"+`
+`+"`"+`code_runner code="await pip_install('pandas'); import pandas; print(pandas.__version__)" language="python"`+"`"+`
 
 ### 注意事项
-- 仅支持 .js 和 .py，其他语言不支持
 - Python首次运行需加载Pyodide WASM(约6MB),耗时5-15秒,后续秒开
-- ✅ Python 网络: 内置 `+"`"+`http_get/http_post/http_put/http_delete`+"`"+`（基于 pyfetch 桥接，顶层 await 调用）；`+"`"+`import requests`+"`"+` 也可用（get/post/put/delete 需 await）；`+"`"+`urllib.request`+"`"+` 在 WASM 下不可用
+- 仅支持 .js 和 .py，其他语言不支持
 - [MUST] 改前备份 → 修改已有文件先 filesystem copy 备份(.bak) → code_runner → 失败则 copy 备份覆盖回滚`,
 
   'search':`## search — 网络搜索
@@ -5175,9 +5199,36 @@ function _extractKeyFacts(userText,agentContent){
 }
 
 // 全局下载函数 — 恢复历史消息时通过 onclick 属性调用
-window._downloadRecentFile=function(btn){
+window._downloadRecentFile=async function(btn){
   var fn=btn.getAttribute('data-filename');
   if(!fn)return;
+  // ★ 分片下载合并：xxx.partN + xxx.meta → 自动合并为完整文件下载
+  try{
+    var _mIdx=fn.lastIndexOf('.part');
+    if(_mIdx>0){
+      var _base=fn.substring(0,_mIdx);
+      var _metaRaw=await readFile('/downloads/'+_base+'.meta');
+      if(_metaRaw){
+        try{
+          var _meta=JSON.parse(_metaRaw);
+          var _b64='';
+          for(var _pi=0;_pi<_meta.parts;_pi++){
+            var _part=await readFile('/downloads/'+_base+'.part'+_pi);
+            if(_part===null)break;
+            _b64+=_part;
+          }
+          if(_b64.length>0){
+            var _bin=atob(_b64);var _bytes=new Uint8Array(_bin.length);
+            for(var _bi=0;_bi<_bin.length;_bi++)_bytes[_bi]=_bin.charCodeAt(_bi);
+            var _blob=new Blob([_bytes],{type:_meta.mime||'application/octet-stream'});
+            triggerDownload(_blob,_meta.name||_base,'application/octet-stream');
+            showToast('已合并下载: '+(_meta.name||_base)+' ('+formatSize(_bytes.length)+', '+_meta.parts+'分片)','success');
+            return;
+          }
+        }catch(e){/* 合并失败走原逻辑 */}
+      }
+    }
+  }catch(e){}
   // ★ 优先从产物注册表获取最新版本（修正阶段可能已覆盖）
   if(_artifactRegistry&&_artifactRegistry[fn]){
     var art=_artifactRegistry[fn];
@@ -5892,6 +5943,9 @@ async function collectVfsSnapshot(sandboxDir){
     var fp=allPaths[i];
     var perm=getCodeRunPermission(fp);
     if(perm==='none')continue;
+    // ★ [审查修复] 分片下载文件(.partN/.meta)不进快照：100MB分片(≈133MB b64)避免每次执行全量拖入worker；主线程合并下载直接从IDB读取，不受影响
+    if(/\.part\d+$/.test(fp)||/\.meta$/.test(fp))continue;
+
     var content=await readFile(fp);
     if(content===null)continue;
     snapshot[fp]={content:content,permission:perm};
@@ -8358,6 +8412,7 @@ function buildEvoWorkerSource(){
   src+='      if(auditResult&&auditResult.content){\n';
   src+='        try{var auditParsed=JSON.parse(auditResult.content);if(!auditParsed.passed)return {passed:false,reason:"红队测试发现安全问题: "+(auditParsed.reason||"")+"。违规: "+(auditParsed.violations||[]).join(", ")};}catch(e){}\n';
   src+='      }\n';
+	src+='var _npmPkgCache={};\n';
   src+='    }\n';
   src+='    return {passed:true,results:cases};\n';
   src+='  }catch(e){return {passed:true,message:"红队结果解析失败，跳过"};}\n';
@@ -8388,10 +8443,15 @@ function buildTaskWorkerSource(){
 	// === 网络层：fetch 自动CORS代理降级 + http 便捷API（js沙箱用）===
 	src+='var _workerFetch=async function(url,opts){\n';
 	src+='  opts=opts||{};\n';
+	src+='  // ★ 默认30s超时（可 opts.timeout 覆盖；已有 signal 则不接管）\n';
+	src+='  if(!opts.signal&&opts.timeout===undefined)opts.timeout=30000;\n';
+	src+='  var _ctrl=opts.signal?null:new AbortController();\n';
+	src+='  if(_ctrl){opts.signal=_ctrl.signal;setTimeout(function(){try{_ctrl.abort();}catch(e){}},opts.timeout);}\n';
 	src+='  var lastErr=null;\n';
 	src+='  try{return await self.fetch(url,opts);}catch(e){lastErr=e;}\n';
 	src+='  var method=(opts.method||"GET").toUpperCase();\n';
-	src+='  var proxies=["https://corsproxy.io/?url=","https://api.allorigins.win/raw?url="];\n';
+	src+='  // ★ 三代理链：corsproxy → allorigins → codetabs\n';
+	src+='  var proxies=["https://corsproxy.io/?url=","https://api.allorigins.win/raw?url=","https://api.codetabs.com/v1/proxy?quest="];\n';
 	src+='  for(var pi=0;pi<proxies.length;pi++){\n';
 	src+='    try{\n';
 	src+='      var proxyUrl=proxies[pi]+encodeURIComponent(url);\n';
@@ -8402,7 +8462,7 @@ function buildTaskWorkerSource(){
 	src+='      return r;\n';
 	src+='    }catch(e2){lastErr=e2;}\n';
 	src+='  }\n';
-	src+='  throw new Error("网络请求失败(直连+CORS代理均失败): "+(lastErr?lastErr.message:"")+" URL: "+url+"。若目标无CORS头，可手动拼接代理: https://corsproxy.io/?url="+encodeURIComponent(url));\n';
+	src+='  throw new Error("网络请求失败(直连+3个CORS代理均失败): "+(lastErr?lastErr.message:"")+" URL: "+url+"。若目标无CORS头，可手动拼接代理: https://corsproxy.io/?url="+encodeURIComponent(url));\n';
 	src+='};\n';
 	src+='var _workerHttp={\n';
 	src+='  get:function(url,opts){opts=opts||{};opts.method="GET";return _workerFetch(url,opts);},\n';
@@ -8436,16 +8496,27 @@ function buildTaskWorkerSource(){
 	src+='  "        except Exception: return {}",\n';
 	src+='  "    def __repr__(self):",\n';
 	src+='  "        return \'<NetResp status=%s ok=%s>\' % (self.status, self.ok)",\n';
-	src+='  "async def _net_req(url, method=\\"GET\\", json=None, data=None, headers=None, **kw):",\n';
-	src+='  "    if headers is None: headers = {}",\n';
-	src+='  "    body = None",\n';
-	src+='  "    if json is not None:",\n';
-	src+='  "        body = _json.dumps(json)",\n';
-	src+='  "        headers.setdefault(\\"Content-Type\\", \\"application/json\\")",\n';
-	src+='  "    elif data is not None:",\n';
-	src+='  "        body = data",\n';
-	src+='  "    r = await _pyfetch(url, method=method, body=body, headers=headers, **kw)",\n';
-	src+='  "    return _NetResp(r)",\n';
+  src+='  "async def _net_req(url, method=\\"GET\\", json=None, data=None, headers=None, **kw):",\n';
+  src+='  "    if headers is None: headers = {}",\n';
+  src+='  "    body = None",\n';
+  src+='  "    if json is not None:",\n';
+  src+='  "        body = _json.dumps(json)",\n';
+  src+='  "        headers.setdefault(\\"Content-Type\\", \\"application/json\\")",\n';
+  src+='  "    elif data is not None:",\n';
+  src+='  "        body = data",\n';
+  src+='  "    try:",\n';
+  src+='  "        r = await _pyfetch(url, method=method, body=body, headers=headers, **kw)",\n';
+  src+='  "        return _NetResp(r)",\n';
+  src+='  "    except Exception as _e:",\n';
+  src+='  "        # ★ CORS降级：pyfetch失败→走JS _workerFetch（自动三代理）",\n';
+  src+='  "        try:",\n';
+  src+='  "            import js as _js",\n';
+  src+='  "            jopts = {\'method\': method, \'headers\': headers}",\n';
+  src+='  "            if body is not None: jopts[\'body\'] = body",\n';
+  src+='  "            jr = await _js._jsFetchForPy(url, jopts)",\n';
+  src+='  "            return _PyJsResp(jr)",\n';
+  src+='  "        except Exception:",\n';
+  src+='  "            raise _e",\n';
 	src+='  "async def http_get(url, **kw): return await _net_req(url, method=\\"GET\\", **kw)",\n';
 	src+='  "async def http_post(url, **kw): return await _net_req(url, method=\\"POST\\", **kw)",\n';
 	src+='  "async def http_put(url, **kw): return await _net_req(url, method=\\"PUT\\", **kw)",\n';
@@ -8461,7 +8532,91 @@ function buildTaskWorkerSource(){
 	src+='  "_req_mod.put = http_put",\n';
 	src+='  "_req_mod.delete = http_delete",\n';
 	src+='  "_req_mod.http_get = http_get",\n';
-	src+='  "_sys.modules[\\"requests\\"] = _req_mod"\n';
+  src+='  "_sys.modules[\\"requests\\"] = _req_mod",\n';
+  src+='  "class _PyJsResp:",\n';
+  src+='  "    def __init__(self, jr):",\n';
+  src+='  "        self._j = jr",\n';
+  src+='  "        self.status = int(jr.status)",\n';
+  src+='  "        self.ok = bool(jr.ok)",\n';
+  src+='  "        self._t = None",\n';
+  src+='  "        self._jv = None",\n';
+  src+='  "    async def text(self):",\n';
+  src+='  "        if self._t is None: self._t = await self._j.text()",\n';
+  src+='  "        return self._t",\n';
+  src+='  "    async def json(self):",\n';
+  src+='  "        if self._jv is None: self._jv = _json.loads(await self.text())",\n';
+  src+='  "        return self._jv",\n';
+  src+='  "    @property",\n';
+  src+='  "    def headers(self):",\n';
+  src+='  "        try: return dict(self._j.headers)",\n';
+  src+='  "        except Exception: return {}",\n';
+  src+='  "    def __repr__(self):",\n';
+  src+='  "        return \'<PyJsResp status=%s ok=%s>\' % (self.status, self.ok)",\n';
+  src+='  "async def http_download(url, file_path=None, **kw):",\n';
+  src+='  "    r = await _net_req(url, method=\'GET\', **kw)",\n';
+  src+='  "    data = None",\n';
+  src+='  "    if hasattr(r, \'_r\') and hasattr(r._r, \'bytes\'):",\n';
+  src+='  "        data = await r._r.bytes()",\n';
+  src+='  "    else:",\n';
+  src+='  "        data = (await r.text()).encode(\'utf-8\')",\n';
+  src+='  "    import base64 as _b64",\n';
+  src+='  "    b64 = _b64.b64encode(data).decode(\'ascii\')",\n';
+  src+='  "    mime = \'application/octet-stream\'",\n';
+  src+='  "    try:",\n';
+  src+='  "        ct = dict(r.headers).get(\'content-type\', \'\')",\n';
+  src+='  "        if ct: mime = ct.split(\';\')[0].strip()",\n';
+  src+='  "    except Exception: pass",\n';
+  src+='  "    data_url = \'data:%s;base64,%s\' % (mime, b64)",\n';
+  src+='  "    out = {\'ok\': r.ok, \'status\': r.status, \'size\': len(data), \'mime\': mime, \'data_url\': data_url}",\n';
+  src+='  "    if file_path:",\n';
+  src+='  "        with open(file_path, \'w\', encoding=\'utf-8\') as f: f.write(data_url)",\n';
+  src+='  "        out[\'path\'] = file_path",\n';
+  src+='  "        out[\'saved\'] = True",\n';
+  src+='  "    return out",\n';
+  src+='  "_builtins.http_download = http_download",\n';
+  src+='  "async def _pip_resolve_url(pkg):",\n';
+  src+='  "    try:",\n';
+  src+='  "        info = await http_get(\'https://pypi.org/pypi/%s/json\' % pkg)",\n';
+  src+='  "        data = await info.json()",\n';
+  src+='  "        files = data.get(\'urls\', [])",\n';
+  src+='  "        best = None",\n';
+  src+='  "        for f in files:",\n';
+  src+='  "            fn = f.get(\'filename\', \'\')",\n';
+  src+='  "            if not fn.endswith(\'.whl\'): continue",\n';
+  src+='  "            if \'py3-none-any\' in fn: return f[\'url\']",\n';
+  src+='  "            if best is None and (\'abi3\' in fn or \'py2.py3\' in fn or \'cp311\' in fn or \'cp312\' in fn): best = f[\'url\']",\n';
+  src+='  "        return best",\n';
+  src+='  "    except Exception:",\n';
+  src+='  "        return None",\n';
+  src+='  "async def pip_install(pkg, deps=True, verbose=False):",\n';
+  src+='  "    # ★ wheel 持久缓存（Cache API pip_wheels）：命中不二次下载，跨页面刷新生效",\n';
+  src+='  "    import micropip",\n';
+  src+='  "    try:",\n';
+  src+='  "        import js as _js",\n';
+  src+='  "        url = await _pip_resolve_url(pkg)",\n';
+  src+='  "        if url:",\n';
+  src+='  "            b64 = await _js._jsFetchWheel(url)",\n';
+  src+='  "            if b64:",\n';
+  src+='  "                await micropip.install(_js._jsB64ToBlobUrl(b64), deps=deps, verbose=verbose)",\n';
+  src+='  "                import importlib as _il; _il.invalidate_caches()",\n';
+  src+='  "                return {\'installed\': pkg, \'cached\': True, \'url\': url}",\n';
+  src+='  "    except Exception as _e:",\n';
+  src+='  "        pass",\n';
+  src+='  "    # 兜底：micropip 原生安装（无缓存）",\n';
+  src+='  "    await micropip.install(pkg, deps=deps, verbose=verbose)",\n';
+  src+='  "    import importlib as _il",\n';
+  src+='  "    _il.invalidate_caches()",\n';
+  src+='  "    return {\'installed\': pkg, \'cached\': False}",\n';
+
+
+  src+='  "async def pip_list():",\n';
+  src+='  "    import importlib.metadata as _imd",\n';
+  src+='  "    try:",\n';
+  src+='  "        return sorted([_d.metadata.get(\'Name\', _d.metadata.get(\'name\', \'?\')) for _d in _imd.distributions()])",\n';
+  src+='  "    except Exception:",\n';
+  src+='  "        return []",\n';
+  src+='  "_builtins.pip_install = pip_install",\n';
+  src+='  "_builtins.pip_list = pip_list"\n';
 	src+='];\n';
 	src+='var _pyNetPatch=_pyNetLines.join("\\n");\n';
 	// 【重构】importScripts优先 + Blob-import降级，彻底移除eval依赖
@@ -8580,13 +8735,46 @@ function buildTaskWorkerSource(){
   src+='      }\n';
   src+='    }\n';
   src+='    var _stdout=[];\n';
+  src+='    // ★ Buffer增强：Uint8Array 挂 Node 风格 toString(enc) 方法\n';
+  src+='    function _bufWrap(u8){u8.toString=function(enc){if(enc==="base64"){var bin="";for(var i=0;i<this.length;i++)bin+=String.fromCharCode(this[i]);return btoa(bin);}if(enc==="hex"){var h="";for(var i=0;i<this.length;i++)h+=this[i].toString(16).padStart(2,"0");return h;}return new TextDecoder().decode(this);};return u8;}\n';
+	src+='    // ★ 任意 npm 包同步加载器：多CDN×多路径 + 跨执行缓存 + Cache API 持久化\n';
+	src+='    function _loadNpmPkg(name){\n';
+	src+='      if(_npmPkgCache[name]!==undefined)return _npmPkgCache[name];\n';
+	src+='      var _seg=name.split("/");var _last=_seg[_seg.length-1];\n';
+	src+='      var _paths=["dist/umd/index.min.js","umd/index.min.js","dist/index.min.js","index.min.js","index.js","browser.js","dist/"+_last+".min.js",""+_last+".min.js",""+_last+".js"];\n';
+	src+='      var _cdns=["https://cdn.jsdelivr.net/npm/"+name+"/","https://unpkg.com/"+name+"/"];\n';
+	src+='      var _found=undefined,_lastUrl="";\n';
+	src+='      for(var _cd=0;_cd<_cdns.length&&!_found;_cd++){\n';
+	src+='        for(var _pi=0;_pi<_paths.length;_pi++){\n';
+	src+='          var _url=_cdns[_cd]+_paths[_pi];\n';
+	src+='          var _before={};for(var _k1 in self)_before[_k1]=1;\n';
+	src+='          try{importScripts(_url);_lastUrl=_url;}catch(e){continue;}\n';
+	src+='          var _cands=[name,_last,_last.replace(/-([a-z])/g,function(_,c){return c.toUpperCase();}),_last.charAt(0).toUpperCase()+_last.slice(1),_last.toUpperCase(),_last.replace(/[-_]/g,""),_last.replace(/[-_]/g,"").toUpperCase()];\n';
+	src+='          for(var _ci=0;_ci<_cands.length;_ci++){if(_cands[_ci]&&self[_cands[_ci]]!==undefined&&!_before[_cands[_ci]]){_found=self[_cands[_ci]];break;}}\n';
+	src+='          if(!_found){for(var _k2 in self){if(!_before[_k2]&&(typeof self[_k2]==="object"||typeof self[_k2]==="function")&&self[_k2]!==self&&_k2!=="caches"&&_k2!=="location"&&_k2!=="navigator"&&_k2!=="self"&&_k2!=="fetch"&&_k2!=="postMessage"&&_k2!=="importScripts"&&_k2!=="setTimeout"&&_k2!=="clearTimeout"&&_k2!=="setInterval"&&_k2!=="clearInterval"&&_k2!=="queueMicrotask"&&_k2!=="URL"&&_k2!=="TextEncoder"&&_k2!=="TextDecoder"&&_k2!=="Uint8Array"){_found=self[_k2];break;}}}\n';
+
+	src+='          if(_found){_npmPkgCache[name]=_found;break;}\n';
+	src+='        }\n';
+	src+='      }\n';
+	src+='      // ★ 异步持久化到 Cache API（fire-and-forget，不阻塞 require）\n';
+	src+='      if(_found&&_lastUrl){try{fetch(_lastUrl).then(function(r){return r.ok?r.blob():null;}).then(function(b){if(!b)return null;return caches.open("libs").then(function(c){return c.put(_lastUrl,new Response(b,{headers:{"Content-Type":"application/javascript","Cache-Control":"max-age=31536000,immutable"}}));});}).catch(function(){});}catch(e){}}\n';
+	src+='      return _found;\n';
+	src+='    }\n';
   src+='    var api={\n';
   src+='      fs:{\n';
   src+='        read:function(p){if(!_vfs.has(p))throw new Error("文件不存在: "+p);return _vfs.get(p);},\n';
   src+='        write:function(p,content){_vfs.set(p,content);return true;},\n';
   src+='        exists:function(p){return _vfs.has(p);},\n';
   src+='        list:function(dir){var r=[];_vfs.forEach(function(v,k){if(!dir||k.indexOf(dir)===0)r.push(k);});return r;},\n';
-  src+='        delete:function(p){return _vfs.delete(p);}\n';
+  src+='        delete:function(p){return _vfs.delete(p);},\n';
+  src+='        readDownload:function(p){\n';
+  src+='          if(!_vfs.has(p+".meta"))throw new Error("非分片下载文件: "+p+" (请用 http.download(url, path) 下载)");\n';
+  src+='          var meta=JSON.parse(_vfs.get(p+".meta"));\n';
+  src+='          var b64="";for(var i=0;i<meta.parts;i++)b64+=_vfs.get(p+".part"+i);\n';
+  src+='          var bin=atob(b64);var bytes=new Uint8Array(bin.length);\n';
+  src+='          for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);\n';
+  src+='          return {bytes:bytes,size:bytes.length,mime:meta.mime,dataUrl:"data:"+meta.mime+";base64,"+b64};\n';
+  src+='        }\n';
   src+='      },\n';
   src+='      console:{log:function(){_stdout.push(Array.prototype.slice.call(arguments).join(" "));}},\n';
   src+='      CONTEXT_FILES:params.context_files||{},\n';
@@ -8601,25 +8789,66 @@ function buildTaskWorkerSource(){
   src+='        if(m==="url")return _rc[m]={parse:function(s,p){try{var u=new URL(s);var o={protocol:u.protocol,slashes:true,auth:null,host:u.host,port:u.port,hostname:u.hostname,hash:u.hash,search:u.search,pathname:u.pathname,path:u.pathname+u.search,href:u.href};if(p){o.query={};u.searchParams.forEach(function(v,k){o.query[k]=v})}return o}catch(e){var i=s.indexOf("://");return{protocol:i>=0?s.slice(0,i+1):"",slashes:i>=0,pathname:s,path:s,href:s}}},format:function(o){var p=o.protocol||"";var h=o.host||(o.hostname||"");if(o.port)h+=":"+o.port;if(h&&p&&!p.endsWith("//"))p+="//";return p+h+(o.pathname||"")+(o.search||"")+(o.hash||"")},resolve:function(f,t){try{return new URL(t,f).href}catch(e){return t}}};\n';
   src+='        if(m==="querystring")return _rc[m]={parse:function(s,sep,eq,opt){sep=sep||"&";eq=eq||"=";var o={};if(!s)return o;s.split(sep).forEach(function(p){var i=p.indexOf(eq);var k=i>=0?decodeURIComponent(p.slice(0,i)):decodeURIComponent(p);var v=i>=0?decodeURIComponent(p.slice(i+1)):"";if(opt&&opt.decodeURIComponent){k=opt.decodeURIComponent(k);v=opt.decodeURIComponent(v)}o[k]=v});return o},stringify:function(o,sep,eq,opt){sep=sep||"&";eq=eq||"=";var a=[];var enc=opt&&opt.encodeURIComponent?opt.encodeURIComponent:encodeURIComponent;for(var k in o){if(o.hasOwnProperty(k))a.push(enc(k)+eq+enc(String(o[k])))}return a.join(sep)},escape:encodeURIComponent,unescape:decodeURIComponent};\n';
   src+='        if(m==="crypto")return _rc[m]={randomBytes:function(n){var b=new Uint8Array(n);self.crypto.getRandomValues(b);return b},randomUUID:function(){return self.crypto.randomUUID()},getHashes:function(){return["sha1","sha256","sha384","sha512"]},createHash:function(algo){var _algo=algo==="sha1"?"SHA-1":algo==="sha256"?"SHA-256":algo==="sha384"?"SHA-384":algo==="sha512"?"SHA-512":algo;var _buf=[];var _h={update:function(d){if(typeof d==="string"){_buf.push(d)}else{for(var i=0;i<d.length;i++)_buf.push(String.fromCharCode(d[i]))}return _h},digest:function(fmt){throw new Error("crypto.createHash(\'"+algo+"\').digest()在浏览器沙箱中不支持同步。请使用 crypto.subtle.digest() 或 Python沙箱执行加密操作。")}};return _h},subtle:self.crypto.subtle};\n';
+  src+='        if(m==="buffer")return _rc[m]={Buffer:api.Buffer};\n';
   src+='        if(m==="http"||m==="https")return _rc[m]={request:function(o,cb){throw new Error("http/https 模块在浏览器沙箱中不可用，请使用全局 fetch() 或 http.get()/http.post()（自动CORS代理）")},get:function(u,cb){throw new Error("http.get() 不可用，请使用 http.get(url)（自动CORS代理）")},METHODS:["GET","POST","PUT","DELETE","PATCH","HEAD"]};\n';
   src+='        if(m.charAt(0)==="."){var _rp=m;if(_rp.indexOf("./")===0)_rp=_rp.slice(2);else if(_rp.indexOf("../")===0){_rp=_rp.slice(3)}var _candidates=[];_vfs.forEach(function(_v,_k){if(_v!=="__DIR__"&&_k.indexOf(_rp)===_k.length-_rp.length)_candidates.push(_k)});for(var _ci=0;_ci<_candidates.length;_ci++){var _tp=_candidates[_ci];var _msrc=_vfs.get(_tp);var _m={exports:{}};var _mdir="";var _si=_tp.lastIndexOf("/");if(_si>=0)_mdir=_tp.substring(0,_si);var _mf=new Function("module","exports","require","__dirname","__filename","console","api",_msrc);var _mr=function(x){if(x.charAt(0)==="."){if(x.indexOf("./")===0)x=_mdir+"/"+x.slice(2);else if(x.indexOf("../")===0){var _d=_mdir;while(x.indexOf("../")===0){x=x.slice(3);var _li=_d.lastIndexOf("/");_d=_li>=0?_d.substring(0,_li):""}x=_d?(_d+"/"+x):x}}return api.require(x)};_mf(_m,_m.exports,_mr,_mdir,_tp,api.console,api);return _rc[m]=_m.exports}throw new Error("模块未找到: "+m+" (沙箱VFS候选: "+JSON.stringify(_candidates)+")")}\n';
-  src+='        var _map={lodash:{url:"https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js",g:"_"},dayjs:{url:"https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js",g:"dayjs"},marked:{url:"https://cdn.jsdelivr.net/npm/marked/marked.min.js",g:"marked"},qs:{url:"https://cdn.jsdelivr.net/npm/qs/dist/qs.js",g:"Qs"}};\n';
+  src+='        var _map={lodash:{url:"https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js",g:"_"},dayjs:{url:"https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js",g:"dayjs"},marked:{url:"https://cdn.jsdelivr.net/npm/marked/marked.min.js",g:"marked"},qs:{url:"https://cdn.jsdelivr.net/npm/qs/dist/qs.js",g:"Qs"},axios:{url:"https://cdn.jsdelivr.net/npm/axios@1.7.9/dist/axios.min.js",g:"axios"},moment:{url:"https://cdn.jsdelivr.net/npm/moment@2.30.1/min/moment.min.js",g:"moment"},"crypto-js":{url:"https://cdn.jsdelivr.net/npm/crypto-js@4.2.0/crypto-js.min.js",g:"CryptoJS"}};\n';
   src+='        var _e=_map[m];\n';
 	src+='        if(_e){if(self[_e.g])return _rc[m]=self[_e.g];try{importScripts(_e.url);if(self[_e.g])return _rc[m]=self[_e.g]}catch(e){throw new Error("加载 "+m+" CDN失败: "+e.message)}}\n';
-  src+='        var _urls=["https://cdn.jsdelivr.net/npm/"+m+"/dist/umd/index.min.js","https://unpkg.com/"+m+"/dist/umd/index.min.js"];\n';
-  src+='        for(var _i2=0;_i2<_urls.length;_i2++){try{importScripts(_urls[_i2]);if(self[m])return _rc[m]=self[m];var _nl=m.toLowerCase();for(var _k in self){if(_k.toLowerCase()===_nl)return _rc[m]=self[_k]}}catch(e){}}\n';
-  src+='        throw new Error("require(\'"+m+"\') 浏览器沙箱不支持。\\n已内置: fs/path/os/url/querystring/crypto/util/assert\\nhttp/https 请使用 fetch() 替代\\nCDN支持: lodash/dayjs/marked/qs\\n其他npm包请使用Python执行。");\n';
+	src+='        // ★ 白名单外：任意 npm 包同步加载（多CDN×多路径+跨执行缓存+Cache持久化）\n';
+	src+='        var _pkg=_loadNpmPkg(m);\n';
+	src+='        if(_pkg)return _rc[m]=_pkg;\n';
+	src+='        throw new Error("require(\'"+m+"\') 同步加载失败：所有CDN候选均不可用或非UMD格式。\\n已尝试: jsdelivr/unpkg 多路径(dist/umd, umd, dist, index, browser...)\\n已内置: fs/path/os/url/querystring/crypto/util/assert/buffer\\n白名单CDN: lodash/dayjs/marked/qs/axios/moment/crypto-js\\n提示: 仅支持UMD/IIFE格式(同步importScripts)；ESM-only包请用 fetch 手动加载或改用Python。");\n';
   src+='      },\n';
   src+='      setTimeout:self.setTimeout,\n';
+  src+='      setInterval:self.setInterval,\n';
+  src+='      clearInterval:self.clearInterval,\n';
+  src+='      queueMicrotask:self.queueMicrotask,\n';
+  src+='      process:{env:{},platform:"browser",arch:"wasm32",version:"v18.0.0",versions:{node:"18.0.0"},cwd:function(){return sandboxDir;},nextTick:function(fn){Promise.resolve().then(fn);},hrtime:function(t){var n=Date.now()*1e6;return t?[n-t[0],0]:[n,0];}},\n';
+  src+='      Buffer:{from:function(v,enc){if(typeof v==="string"){if(enc==="base64"){var bin=atob(v);var b=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return _bufWrap(b);}return _bufWrap(new TextEncoder().encode(v));}return v instanceof Uint8Array?v:_bufWrap(new Uint8Array(v));},alloc:function(n){return _bufWrap(new Uint8Array(n));},concat:function(list){var len=0;for(var i=0;i<list.length;i++)len+=list[i].length;var out=new Uint8Array(len);var off=0;for(var i=0;i<list.length;i++){out.set(list[i],off);off+=list[i].length;}return _bufWrap(out);},isBuffer:function(v){return v instanceof Uint8Array;}},\n';
       src+='      fetch:_workerFetch,\n';
       src+='      fetchText:async function(url,opts){var r=await _workerFetch(url,opts);return r.text();},\n';
       src+='      fetchJSON:async function(url,opts){var r=await _workerFetch(url,opts);return r.json();},\n';
-      src+='      http:_workerHttp,\n';
+      src+='      http:Object.assign(_workerHttp,{download:async function(url,filePath,opts){\n';
+      src+='        var r=await _workerFetch(url,opts||{});\n';
+      src+='        if(!r.ok)throw new Error("下载失败 HTTP "+r.status+" | "+url);\n';
+      src+='        var mime="application/octet-stream";\n';
+      src+='        try{var ct=r.headers.get("content-type");if(ct)mime=ct.split(";")[0].trim();}catch(e){}\n';
+      src+='        // ★ 流式分片：getReader 逐块读，每 chunkSize(默认4MB) 一个 .partN 文件(base64)，内存峰值≈分片大小\n';
+      src+='        var cs=(opts&&opts.chunkSize)||4194304;\n';
+      src+='        var reader=r.body.getReader();\n';
+      src+='        var parts=0,total=0,buf=new Uint8Array(cs),blen=0,rawChunks=[];\n';
+      src+='        function flushPart(){\n';
+      src+='          var slice=buf.slice(0,blen);\n';
+      src+='          total+=blen;\n';
+      src+='          if(filePath){\n';
+      src+='            var bin="";for(var i=0;i<slice.length;i++)bin+=String.fromCharCode(slice[i]);\n';
+      src+='            _vfs.set(filePath+".part"+parts,btoa(bin));\n';
+      src+='            parts++;\n';
+      src+='          }else{rawChunks.push(slice);}\n';
+      src+='          blen=0;\n';
+      src+='        }\n';
+      src+='        while(true){\n';
+      src+='          var dr=await reader.read();\n';
+      src+='          if(dr.done)break;\n';
+      src+='          if(dr.value){for(var i=0;i<dr.value.length;i++){buf[blen++]=dr.value[i];if(blen>=cs)flushPart();}}\n';
+      src+='        }\n';
+      src+='        if(blen>0)flushPart();\n';
+      src+='        // 有 filePath → 落盘分片+.meta清单（空文件也写meta）\n';
+      src+='        if(filePath&&(parts>0||total===0)){\n';
+      src+='          _vfs.set(filePath+".meta",JSON.stringify({mime:mime,size:total,parts:parts,name:(filePath.split("/").pop()||"download")}));\n';
+      src+='          return {ok:true,status:r.status,size:total,mime:mime,viaProxy:!!r.viaProxy,path:filePath,saved:true,chunked:true,parts:parts};\n';
+      src+='        }\n';
+      src+='        // 无 filePath → 小响应直接拼 dataURL 返回\n';
+      src+='        var bin2="";for(var i2=0;i2<rawChunks.length;i2++){var rc=rawChunks[i2];for(var j=0;j<rc.length;j++)bin2+=String.fromCharCode(rc[j]);}\n';
+      src+='        var dataUrl="data:"+mime+";base64,"+btoa(bin2);\n';
+      src+='        return {ok:true,status:r.status,size:total,mime:mime,dataUrl:dataUrl,viaProxy:!!r.viaProxy};\n';
+      src+='      }}),\n';
       src+='      net:_workerHttp,\n';
   src+='    };\n';
   src+='    var _result=await Promise.race([\n';
   src+='      (async function(){\n';
-  src+='        var fn=new Function("api","var require=api.require;var console=api.console;var fetch=api.fetch;var http=api.http;var net=api.net;return (async function(){"+code+"})()");\n';
+  src+='        var fn=new Function("api","var require=api.require;var console=api.console;var fetch=api.fetch;var http=api.http;var net=api.net;var fs=api.fs;var process=api.process;var Buffer=api.Buffer;var setInterval=api.setInterval;var clearInterval=api.clearInterval;var queueMicrotask=api.queueMicrotask;var global=api;var window=api;return (async function(){"+code+"})()");\n';
   src+='        var ret=await fn(api);\n';
   src+='        await new Promise(function(r){setTimeout(r,0)});\n';
   src+='        return ret;\n';
@@ -8647,9 +8876,34 @@ function buildTaskWorkerSource(){
   src+='      if(_entry.content==="__DIR__")continue;\n';
   src+='      var _dir=_fp2.substring(0,_fp2.lastIndexOf("/"));\n';
   src+='      if(_dir&&_dir!=="/"){try{pyodide.FS.mkdirTree(_dir);}catch(_e){}}\n';
-  src+='      pyodide.FS.writeFile(_fp2,_entry.content);\n';
+  src+='      // ★ [强力修复] 二进制归一化：Blob/ArrayBuffer→Uint8Array，杜绝 writeFile 抛 Unsupported data type\n';
+  src+='      var _entryData=_entry.content;\n';
+  src+='      if(typeof _entryData!=="string"){\n';
+  src+='        try{\n';
+  src+='          if(_entryData instanceof ArrayBuffer){_entryData=new Uint8Array(_entryData);}\n';
+  src+='          else if(_entryData&&typeof _entryData.arrayBuffer==="function"){_entryData=new Uint8Array(await _entryData.arrayBuffer());}\n';
+  src+='          else if(!(_entryData instanceof Uint8Array)){_entryData=String(_entryData);}\n';
+  src+='        }catch(_eb){_entryData=String(_entryData);}\n';
+  src+='      }\n';
+  src+='      pyodide.FS.writeFile(_fp2,_entryData);\n';
   src+='    }\n';
   src+='    var pyOut="";pyodide.setStdout({batched:function(t){pyOut+=String(t)+"\\n"}});\n';
+  src+='    // ★ 把JS _workerFetch（含CORS三代理降级）暴露给Python，pyfetch失败时自动走代理\n';
+  src+='    try{pyodide.globals.set("_jsFetchForPy",_workerFetch);}catch(e){}\n';
+  src+='    try{pyodide.globals.set("_jsFetchWheel",async function(url){\n';
+  src+='      try{var _c=await caches.open("pip_wheels");var _hit=await _c.match(url);var _data=null;\n';
+  src+='        if(_hit){_data=new Uint8Array(await _hit.arrayBuffer());}\n';
+  src+='        else{var _r=await _workerFetch(url,{timeout:120000});if(!_r.ok)return null;var _blob=await _r.blob();try{await _c.put(url,new Response(_blob,{headers:{"Content-Type":"application/octet-stream","Cache-Control":"max-age=31536000,immutable"}}));}catch(e){}_data=new Uint8Array(await _blob.arrayBuffer());}\n';
+  src+='        var _bin="";for(var _i=0;_i<_data.length;_i++)_bin+=String.fromCharCode(_data[_i]);return btoa(_bin);\n';
+  src+='      }catch(e){return null;}\n';
+  src+='    });}catch(e){}\n';
+  src+='    try{pyodide.globals.set("_jsB64ToBlobUrl",function(b64){\n';
+  src+='      try{var _bin=atob(b64);var _bytes=new Uint8Array(_bin.length);for(var _i=0;_i<_bin.length;_i++)_bytes[_i]=_bin.charCodeAt(_i);return URL.createObjectURL(new Blob([_bytes],{type:"application/octet-stream"}));}catch(e){return null;}\n';
+  src+='    });}catch(e){}\n';
+
+
+  src+='    // ★ [强力] 执行前 chdir 到 sandboxDir：相对路径 open()/write 的文件落入扫描区，不再因默认cwd丢失\n';
+  src+='    try{pyodide.FS.chdir(sandboxDir);}catch(_e6b){}\n';
   src+='    var result=await Promise.race([pyodide.runPythonAsync(_pyNetPatch+"\\n"+code),new Promise(function(_,reject){return setTimeout(function(){reject(new Error("Python执行超时"))},timeout)})]);\n';
   src+='    // ★ 收集Python写入的变更：chdir到sandboxDir + 扫描用户文件区(sandboxDir递归+快照目录+/tmp)，diff快照\n';
   src+='    var _pyChanges=[];\n';
@@ -10903,7 +11157,7 @@ async function toolCodeRunner(args){
   var vfsSnapshot=await collectVfsSnapshot(sandboxDir);
 
   var isPython=(language==='python');
-  var runTimeout=args.timeout||(isPython?60000:10000);
+  var runTimeout=args.timeout||(isPython?120000:30000);
   var runResp=await sendToTaskWorker('code_run',{
     language:isPython?'python':'javascript',
     code:code,
@@ -10936,6 +11190,8 @@ async function toolCodeRunner(args){
     var tc=fsChanges[ti];
     if(tc.path.indexOf('/tmp/')===0)try{await deleteFile(tc.path);}catch(e){}
   }
+  // ★ [强力] /tmp/_snippet_* 临时脚本由主线程创建、worker未修改→不在fsChanges中，执行后主动删除防泄漏
+  if(path&&path.indexOf('/tmp/_snippet_')===0){try{await deleteFile(path);}catch(e){}}
 
   var metaNote='[文件: '+path+']';
   if(writeCount>0)metaNote+='\n[文件系统回写: '+writeCount+'个文件]';
@@ -20780,6 +21036,33 @@ async function renderFileManager(filterCat,searchQuery){
 }
 	// 挂到全局以便 onclick 调用（用 path 而非 id，因 IndexedDB keyPath='path'）
 	window.downloadFileByPath=async function(filePath){
+	  // ★ 分片下载合并：xxx.partN + xxx.meta → 自动合并为完整文件下载
+	  try{
+	    var _mIdx=filePath.lastIndexOf('.part');
+	    if(_mIdx>0){
+	      var _base=filePath.substring(0,_mIdx);
+	      var _metaRaw=await idbTransaction('files','readonly',function(store){return store.get(_base+'.meta');});
+	      if(_metaRaw&&_metaRaw.content){
+	        try{
+	          var _meta=JSON.parse(_metaRaw.content);
+	          var _b64='';
+	          for(var _pi=0;_pi<_meta.parts;_pi++){
+	            var _part=await idbTransaction('files','readonly',function(store){return store.get(_base+'.part'+_pi);});
+	            if(!_part||!_part.content)break;
+	            _b64+=_part.content;
+	          }
+	          if(_b64.length>0){
+	            var _bin=atob(_b64);var _bytes=new Uint8Array(_bin.length);
+	            for(var _bi=0;_bi<_bin.length;_bi++)_bytes[_bi]=_bin.charCodeAt(_bi);
+	            var _blob=new Blob([_bytes],{type:_meta.mime||'application/octet-stream'});
+	            triggerDownload(_blob,_meta.name||filePath.split('/').pop().replace(/\.part\d+$/,''),'application/octet-stream');
+	            showToast('已合并下载: '+(_meta.name||'')+' ('+formatSize(_bytes.length)+', '+_meta.parts+'分片)','success');
+	            return;
+	          }
+	        }catch(e){/* 合并失败走原逻辑 */}
+	      }
+	    }
+	  }catch(e){}
 	  try{
 	    var f=await idbTransaction('files','readonly',function(store){return store.get(filePath);});
 	    if(f&&f.content&&f.content!=='__DIR__'){
@@ -21419,6 +21702,24 @@ async function triggerManualReflection(){
 if(storageInfoIntervalId)clearInterval(storageInfoIntervalId);
 setTimeout(function(){updateStorageInfo();},2000);
 storageInfoIntervalId=setInterval(function(){updateStorageInfo();},60000);
+// ★ [强力] /tmp 自动清理：每5分钟扫描一次，删除超过10分钟的旧临时文件（覆盖崩溃残留/异常中断）
+var _tmpCleanTimer=setInterval(async function(){
+  try{
+    var _tmpPaths=await listDir('/tmp/');
+    var _nowT=Date.now();
+    var _cleaned=0;
+    for(var _ti2=0;_ti2<_tmpPaths.length;_ti2++){
+      try{
+        var _tm=await getFileMeta(_tmpPaths[_ti2]);
+        if(_tm&&!_tm.isDir&&_tm.updated_at&&_nowT-_tm.updated_at>10*60*1000){
+          await deleteFile(_tmpPaths[_ti2]);
+          _cleaned++;
+        }
+      }catch(_te){}
+    }
+    if(_cleaned>0)debugLogger.info('/tmp 自动清理: 删除 '+_cleaned+' 个过期临时文件');
+  }catch(_tce){}
+},5*60*1000);
 
 // ================================================================
 // 第38部分：页面卸载清理
