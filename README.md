@@ -1,6 +1,7 @@
 <!-- language-tabs -->
 
 [ 中文](#chinese) | [ English](#english)
+
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Version](https://img.shields.io/badge/version-v2.0-4f6ef7)
 ![Lines](https://img.shields.io/badge/lines-24243-7a5cf0)
