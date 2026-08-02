@@ -4710,6 +4710,17 @@ function _getApiBase(url){
   // https://api.deepseek.com → https://api.deepseek.com (不变)
   return url.replace(/\/chat\/completions\/?$/,'').replace(/\/+$/,'');
 }
+function _chatEndpoint(url){
+  // ★ base URL → chat completions endpoint 归一化（方案B）
+  //   https://api.deepseek.com            → https://api.deepseek.com/chat/completions
+  //   https://api.deepseek.com/v1         → https://api.deepseek.com/v1/chat/completions（旧兼容路径）
+  //   https://xxx/v4/chat/completions     → 不变（幂等）
+  var u=(url||'').trim().replace(/\/+$/,'');
+  if(!u)u='https://api.deepseek.com';
+  if(/\/chat\/completions\/?$/i.test(u))return u;
+  return u+'/chat/completions';
+}
+
 
 function _renderModelSelect(models,modelEl){
   // 将 INPUT 替换为 SELECT，底部加空白选项；选择空白选项时切回 INPUT
@@ -9793,7 +9804,7 @@ async function handleProxyLLMCall(msg){
   }
   var evoAvailable=budgetManager.getAvailableForEvo();
   if(budgetUsed>=limit&&evoAvailable<=0)throw new Error('DAILY_LIMIT_REACHED');
-  var baseUrl=settings.base_url||'https://api.deepseek.com';
+  var baseUrl=_chatEndpoint(settings.base_url||'https://api.deepseek.com');
   var model=settings.model||'deepseek-v4-flash';
   // ★ 统一消息清理，与 _buildLLMRequest 配套
   var _safeStr = _safeMessageStr;
@@ -10344,7 +10355,7 @@ function _buildLLMRequest(messages,tools,stream,source){
     if(dailyTokenUsed>=tokenLimit){
         throw new Error('DAILY_TOKEN_LIMIT_REACHED: 每日Token已用尽('+dailyTokenUsed.toLocaleString()+'/'+tokenLimit.toLocaleString()+')');
     }
-    var baseUrl=settings.base_url; if(!baseUrl)throw new Error('Base URL未配置，请在设置中填写');
+    if(!settings.base_url)throw new Error('Base URL未配置，请在设置中填写'); var baseUrl=_chatEndpoint(settings.base_url);
     var model=settings.model||'deepseek-v4-flash';
     
     // 【修复】清理messages — 使用模块级 _safeMessageStr（三条LLM路径统一复用）
