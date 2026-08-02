@@ -540,7 +540,7 @@ Exo 内置完整的可视化设置面板，无需修改代码即可配置：
 ## 技术难点与设计决策
 
 ### 1. 单HTML零构建
-20854行, 1.1MB 单个HTML文件。无npm, 无webpack, 无构建工具。所有外部库(18个)通过CDN动态加载 + Cache API本地缓存，一次加载后离线可用。
+24243行, 1.26MB 单个HTML文件。无npm, 无webpack, 无构建工具。所有外部库(18个)通过CDN动态加载 + Cache API本地缓存，一次加载后离线可用。
 
 ### 2. Worker沙箱执行 + Base64零转义
 V4重构: Worker代码Base64编码 → `importScripts('data:application/javascript;base64,...')`，消除多层转义地狱。任务Worker使用 `importScripts` + fetch Cache-first 加载CDN库，进化Worker使用 Base64 纯算法离线运行。
