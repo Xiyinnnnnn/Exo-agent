@@ -1,6 +1,11 @@
 <!-- language-tabs -->
 
 [ 中文](#chinese) | [ English](#english)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-v2.0-4f6ef7)
+![Lines](https://img.shields.io/badge/lines-747-7a5cf0)
+![Size](https://img.shields.io/badge/size-1.1MB_Single_HTML-ff4757)
+![Engine](https://img.shields.io/badge/engine-MCTS_%2B_Pipeline_V6-d4a5ff)
 
 ---
 
@@ -18,6 +23,28 @@
 > 🛸 浏览器端全栈智能体。MCTS深度规划 · 流水线多Agent调度 · 世界离散验证 · 自进化技能载入 · 心流自主运行 · 逐行审查 · **你的外脑。**
 
 **当前版本**: v2.0 (对应源码 20,854 行, 1.1MB 单HTML文件) · 纯浏览器运行 · 📍 GitHub友好 Mermaid 版
+
+---
+## 目录
+
+- [这是什么](#这是什么)
+- [架构总览](#架构总览)
+- [核心子系统](#核心子系统)
+  - [MCTS 深度规划器](#mcts-深度规划器)
+  - [心流模式 (Flow Mode)](#心流模式-flow-mode)
+  - [流水线引擎 V6](#流水线引擎-v6)
+  - [前置拦截门 (Pre-Gate) & 自评估系统](#前置拦截门-pre-gate-自评估系统)
+  - [世界验证器 (World Validator)](#世界验证器-world-validator)
+  - [自进化系统](#自进化系统)
+  - [本地嵌入引擎 (MBSRP + HYPERMEM)](#本地嵌入引擎-mbsrp-hypermem)
+  - [分支导航 & 多对话并行](#分支导航-多对话并行)
+  - [记忆系统](#记忆系统)
+- [全部工具清单 (45+)](#全部工具清单-45)
+- [设置面板功能](#设置面板功能)
+- [技术难点与设计决策](#技术难点与设计决策)
+- [快速开始](#快速开始)
+- [依赖](#依赖)
+- [English Version](#english)
 
 ---
 
@@ -624,6 +651,16 @@ for(var i=0;i<files.length;i+=CONC){
 ```
 
 > 🛸 Browser-native full-stack AI agent. MCTS planning · Pipeline V6 · Flow Mode · Pre-Gate · World simulation · Self-evolution. **Your external brain.**
+
+---
+## Table of Contents
+
+- [What is Exo](#what-is-exo)
+- [Key Upgrades in v2.0](#key-upgrades-in-v20)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [License](#license)
+- [中文版](#chinese)
 
 ---
 
