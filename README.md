@@ -3,7 +3,7 @@
 [ 中文](#chinese) | [ English](#english)
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Version](https://img.shields.io/badge/version-v2.0-4f6ef7)
+![Version](https://img.shields.io/badge/version-v1.0.5-4f6ef7)
 ![Lines](https://img.shields.io/badge/lines-24243-7a5cf0)
 ![Size](https://img.shields.io/badge/size-1.26MB_Single_HTML-ff4757)
 ![Engine](https://img.shields.io/badge/engine-MCTS_%2B_Pipeline_V6-d4a5ff)
