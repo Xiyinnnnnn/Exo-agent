@@ -3,7 +3,7 @@
 [ 中文](#chinese) | [ English](#english)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Version](https://img.shields.io/badge/version-v2.0-4f6ef7)
-![Lines](https://img.shields.io/badge/lines-747-7a5cf0)
+![Lines](https://img.shields.io/badge/lines-24243-7a5cf0)
 ![Size](https://img.shields.io/badge/size-1.26MB_Single_HTML-ff4757)
 ![Engine](https://img.shields.io/badge/engine-MCTS_%2B_Pipeline_V6-d4a5ff)
 
@@ -20,7 +20,7 @@
 ╚══════╝ ╚═╝      ╚═╝    ╚═════╝ 
 ```
 
-> 🛸 浏览器端全栈智能体。MCTS深度规划 · 流水线多Agent调度 · 世界离散验证 · 自进化技能载入 · 心流自主运行 · 逐行审查 
+> 超轻量浏览器端智能体
 
 ---
 ## 目录
