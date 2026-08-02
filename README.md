@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Version](https://img.shields.io/badge/version-v2.0-4f6ef7)
 ![Lines](https://img.shields.io/badge/lines-747-7a5cf0)
-![Size](https://img.shields.io/badge/size-1.1MB_Single_HTML-ff4757)
+![Size](https://img.shields.io/badge/size-1.26MB_Single_HTML-ff4757)
 ![Engine](https://img.shields.io/badge/engine-MCTS_%2B_Pipeline_V6-d4a5ff)
 
 ---
@@ -20,9 +20,7 @@
 ╚══════╝ ╚═╝      ╚═╝    ╚═════╝ 
 ```
 
-> 🛸 浏览器端全栈智能体。MCTS深度规划 · 流水线多Agent调度 · 世界离散验证 · 自进化技能载入 · 心流自主运行 · 逐行审查 · **你的外脑。**
-
-**当前版本**: v2.0 (对应源码 20,854 行, 1.1MB 单HTML文件) · 纯浏览器运行 · 📍 GitHub友好 Mermaid 版
+> 🛸 浏览器端全栈智能体。MCTS深度规划 · 流水线多Agent调度 · 世界离散验证 · 自进化技能载入 · 心流自主运行 · 逐行审查 
 
 ---
 ## 目录
