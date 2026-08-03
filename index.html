@@ -6637,14 +6637,18 @@ async function verifyTavilyKey(btnEl){
   if(!key){showToast('请先输入Tavily API Key','warning');return;}
   btnEl.disabled=true;btnEl.textContent='验证中...';
   try{
+    var controller=new AbortController();
+    var timeoutId=setTimeout(function(){controller.abort()},5000);
     var resp=await fetch('https://api.tavily.com/search',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
-      body:JSON.stringify({query:'test',max_results:1,search_depth:'basic'})
+      body:JSON.stringify({query:'test',max_results:1,search_depth:'basic'}),
+      signal:controller.signal
     });
+    clearTimeout(timeoutId);
     if(resp.ok){showToast('Tavily Key 有效','success');}
     else{var t=await resp.text();showToast('失败: HTTP '+resp.status+' '+(t||'').slice(0,80),'error');}
-  }catch(e){showToast('网络错误: '+e.message,'error');}
+  }catch(e){showToast((e.name==='AbortError'?'验证超时(5s)':'网络错误: ')+e.message,'error');}
   btnEl.disabled=false;btnEl.textContent='验证';
 }
 
@@ -9460,29 +9464,35 @@ src+='  }\n';
   src+='}\n';
   src+='\n';
   
-  // === performSearch (多Key轮换版) ===
+  // === performSearch (多Key轮换+重试版) ===
   src+='async function performSearch(params){\n';
-  src+='  var query=params.query,max_results=params.max_results||5,search_depth=params.search_depth||\"advanced\",apiKeys=params.apiKeys||[],include_raw_content=params.include_raw_content||false,include_domains=params.include_domains||[],exclude_domains=params.exclude_domains||[];\n';
-  src+='  if(!query||!query.trim())throw new Error(\"搜索关键词不能为空\");\n';
-  src+='  if(!apiKeys||apiKeys.length===0)throw new Error(\"Tavily API Key未配置\");\n';
-  src+='  var lastError=null;\n';
+  src+='  var query=params.query,max_results=params.max_results||5,search_depth=params.search_depth||"advanced",apiKeys=params.apiKeys||[],include_raw_content=params.include_raw_content||false,include_domains=params.include_domains||[],exclude_domains=params.exclude_domains||[];\n';
+  src+='  if(!query||!query.trim())throw new Error("搜索关键词不能为空");\n';
+  src+='  if(!apiKeys||apiKeys.length===0)throw new Error("Tavily API Key未配置");\n';
+  src+='  // ★ v2: 每Key最多MAX_ATTEMPTS次尝试(网络错误/超时/5xx瞬时错误自动重试+指数退避), 额度耗尽/Key无效直接轮换, 全部失败则汇总各Key明细\n';
+  src+='  var MAX_ATTEMPTS=3,errors=[];\n';
   src+='  for(var ki=0;ki<apiKeys.length;ki++){\n';
   src+='    var apiKey=apiKeys[ki];if(!apiKey)continue;\n';
-  src+='    var controller=new AbortController();\n';
-  src+='    var timeoutId=setTimeout(function(){controller.abort()},30000);\n';
-  src+='    try{\n';
-  src+='      var response=await fetch(\"https://api.tavily.com/search\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer \"+apiKey},body:JSON.stringify({query:query.trim(),max_results:Math.min(max_results,10),search_depth:search_depth,include_raw_content:include_raw_content||false,include_domains:include_domains||[],exclude_domains:exclude_domains||[]}),signal:controller.signal});\n';
-  src+='      clearTimeout(timeoutId);\n';
-  src+='      if(!response.ok){var errText=await response.text().catch(function(){return\"\"});var isQuota=(response.status===429||response.status===403||(errText&&(errText.indexOf(\"quota\")>-1||errText.indexOf(\"exceeded\")>-1||errText.indexOf(\"limit\")>-1||errText.indexOf(\"usage\")>-1||errText.indexOf(\"exhausted\")>-1)));if(isQuota){lastError=new Error(\"Key #\"+(ki+1)+\" 额度已用完: \"+errText.substring(0,100));continue;}throw new Error(\"Tavily API错误 (\"+response.status+\"): \"+errText.substring(0,200));}\n';
-  src+='      var data=await response.json();var results=data.results||[];\n';
-  src+='      if(results.length===0)return (data.answer?\"AI摘要: \"+data.answer:\"未找到相关搜索结果。\");\n';
-  src+='      var formatted=results.map(function(r,i){return (i+1)+\". **\"+(r.title||\"无标题\")+\"**\\n   \"+(r.content||\"(无内容)\")+\"\\n   URL: \"+r.url+(r.raw_content?\"\\n    原文长度: ~\"+r.raw_content.length+\"字符\":\"\")}).join(\"\\n\\n\");\n';
-  src+='      if(data.answer)formatted+=\"\\n\\n AI摘要: \"+data.answer;\n';
-  src+='      if(include_raw_content&&results.length>0){formatted+=\"\\n\\n 已抓取\"+results.length+\"个页面原文(raw_content)，可通过 search 工具结果中的 raw_content 字段获取。\";}\n';
-  src+='      return formatted;\n';
-  src+='    }catch(e){clearTimeout(timeoutId);if(e.name===\"AbortError\"){lastError=new Error(\"Key #\"+(ki+1)+\" 搜索超时，尝试下一个...\");continue;}if(e.message&&e.message.indexOf(\"额度已用完\")>-1){lastError=e;continue;}throw e;}\n';
+  src+='    var keyFailed=false,keyErr=null;\n';
+  src+='    for(var attempt=0;attempt<MAX_ATTEMPTS&&!keyFailed;attempt++){\n';
+  src+='      if(attempt>0)await new Promise(function(r){return setTimeout(r,500*Math.pow(2,attempt-1));});\n';
+  src+='      var controller=new AbortController();\n';
+  src+='      var timeoutId=setTimeout(function(){controller.abort()},5000);\n';
+  src+='      try{\n';
+  src+='        var response=await fetch("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},body:JSON.stringify({query:query.trim(),max_results:Math.min(max_results,10),search_depth:search_depth,include_raw_content:include_raw_content||false,include_domains:include_domains||[],exclude_domains:exclude_domains||[]}),signal:controller.signal});\n';
+  src+='        clearTimeout(timeoutId);\n';
+  src+='        if(!response.ok){var errText=await response.text().catch(function(){return""});var isQuota=(response.status===429||response.status===403||(errText&&(errText.indexOf("quota")>-1||errText.indexOf("exceeded")>-1||errText.indexOf("limit")>-1||errText.indexOf("usage")>-1||errText.indexOf("exhausted")>-1)));if(isQuota){keyFailed=true;keyErr=new Error("Key #"+(ki+1)+" 额度已用完: "+errText.substring(0,100));break;}if(response.status>=500){keyErr=new Error("Key #"+(ki+1)+" 服务端错误(HTTP "+response.status+"), 重试中");continue;}keyFailed=true;keyErr=new Error("Key #"+(ki+1)+" 无效 (HTTP "+response.status+"): "+errText.substring(0,200));break;}\n';
+  src+='        var data=await response.json();var results=data.results||[];\n';
+  src+='        if(results.length===0)return (data.answer?"AI摘要: "+data.answer:"未找到相关搜索结果。");\n';
+  src+='        var formatted=results.map(function(r,i){return (i+1)+". **"+(r.title||"无标题")+"**\\n   "+(r.content||"(无内容)")+"\\n   URL: "+r.url+(r.raw_content?"\\n    原文长度: ~"+r.raw_content.length+"字符":"")}).join("\\n\\n");\n';
+  src+='        if(data.answer)formatted+="\\n\\n AI摘要: "+data.answer;\n';
+  src+='        if(include_raw_content&&results.length>0){formatted+="\\n\\n 已抓取"+results.length+"个页面原文(raw_content)，可通过 search 工具结果中的 raw_content 字段获取。";}\n';
+  src+='        return formatted;\n';
+  src+='      }catch(e){clearTimeout(timeoutId);keyErr=new Error("Key #"+(ki+1)+" 尝试"+(attempt+1)+"失败: "+e.message);if(attempt<MAX_ATTEMPTS-1)continue;keyFailed=true;break;}\n';
+  src+='    }\n';
+  src+='    errors.push(keyErr?keyErr.message:"Key #"+(ki+1)+" 未知错误");\n';
   src+='  }\n';
-  src+='  throw lastError||new Error(\"所有Tavily API Key均已耗尽，请更换Key或等待额度重置。\");\n';
+  src+='  throw new Error("所有Tavily API Key均搜索失败: "+errors.join(" | "));\n';
   src+='}\n';
 
   
