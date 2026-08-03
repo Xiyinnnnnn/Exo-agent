@@ -5244,33 +5244,24 @@ function _extractKeyFacts(userText,agentContent){
 window._downloadRecentFile=async function(btn){
   var fn=btn.getAttribute('data-filename');
   if(!fn)return;
-  // ★ 分片下载合并：xxx.partN + xxx.meta → 自动合并为完整文件下载
+  // ★ 分片下载合并：xxx.partN/xxx.meta/主名入口 → 按名查分片组，逐片atob解码合并为完整文件下载
+  // ★ [下载气泡] 主名入口（分片组注册的 xx.png）也尝试合并；非分片文件 _loadChunkedByName 返回 null 走原逻辑
   try{
-    var _mIdx=fn.lastIndexOf('.part');
-    if(_mIdx>0){
-      var _base=fn.substring(0,_mIdx);
-      var _metaRaw=await readFile('/downloads/'+_base+'.meta');
-      if(_metaRaw){
-        try{
-          var _meta=JSON.parse(_metaRaw);
-          var _b64='';
-          for(var _pi=0;_pi<_meta.parts;_pi++){
-            var _part=await readFile('/downloads/'+_base+'.part'+_pi);
-            if(_part===null)break;
-            _b64+=_part;
-          }
-          if(_b64.length>0){
-            var _bin=atob(_b64);var _bytes=new Uint8Array(_bin.length);
-            for(var _bi=0;_bi<_bin.length;_bi++)_bytes[_bi]=_bin.charCodeAt(_bi);
-            var _blob=new Blob([_bytes],{type:_meta.mime||'application/octet-stream'});
-            triggerDownload(_blob,_meta.name||_base,'application/octet-stream');
-            showToast('已合并下载: '+(_meta.name||_base)+' ('+formatSize(_bytes.length)+', '+_meta.parts+'分片)','success');
-            return;
-          }
-        }catch(e){/* 合并失败走原逻辑 */}
-      }
+    var _base=fn;
+    var _pi2=fn.lastIndexOf('.part'),_mi2=fn.lastIndexOf('.meta');
+    if(_pi2>0)_base=fn.substring(0,_pi2);
+    else if(_mi2>0)_base=fn.substring(0,_mi2);
+    var _chunked=await _loadChunkedByName(_base);
+    if(_chunked&&!_chunked.error){
+      var _blob=new Blob([_chunked.bytes],{type:_chunked.meta.mime||'application/octet-stream'});
+      triggerDownload(_blob,_chunked.meta.name||_base,'application/octet-stream');
+      showToast('已合并下载: '+(_chunked.meta.name||_base)+' ('+formatSize(_chunked.bytes.length)+', '+_chunked.meta.parts+'分片)','success');
+      return;
+    }else if(_chunked&&_chunked.error){
+      showToast('合并下载失败: '+_chunked.error,'error');
     }
-  }catch(e){}
+  }catch(e){/* 合并失败走原逻辑 */}
+
   // ★ 优先从产物注册表获取最新版本（修正阶段可能已覆盖）
   if(_artifactRegistry&&_artifactRegistry[fn]){
     var art=_artifactRegistry[fn];
@@ -5335,6 +5326,18 @@ window._downloadRecentFile=async function(btn){
       setTimeout(function(){URL.revokeObjectURL(u);},60000);
       return;
     }
+    // ★ [二进制修复] Uint8Array/ArrayBuffer → Blob 下载（此前分支缺失，code_runner回写的二进制无法下载）
+      var _u8=content instanceof Uint8Array?content:new Uint8Array(content);
+    if(content instanceof Uint8Array||content instanceof ArrayBuffer){
+      var _u8Blob=new Blob([_u8],{type:'application/octet-stream'});
+      _artifactRegistry[_fn]={blob:_u8Blob,filename:_fn,mimeType:'application/octet-stream',size:_u8Blob.size,time:Date.now(),_srcPath:matched.path};
+      var _u8Url=URL.createObjectURL(_u8Blob);
+      var _u8A=document.createElement('a');_u8A.href=_u8Url;_u8A.download=_fn;
+      document.body.appendChild(_u8A);_u8A.click();
+      setTimeout(function(){if(_u8A.parentNode)_u8A.parentNode.removeChild(_u8A);},200);
+      setTimeout(function(){URL.revokeObjectURL(_u8Url);},60000);
+      return;
+    }
     var raw=content;
     if(typeof raw==='string'&&raw.startsWith('data:')){
       var comma=raw.indexOf(',');
@@ -5379,6 +5382,9 @@ async function _restoreArtifactRegistry(){
     for(var i=0;i<allFiles.length;i++){
       var f=allFiles[i];
       if(!f.content||f.content==='__DIR__')continue;
+      // ★ [二进制修复] 分片文件(.partN/.meta)不注册为独立产物：base64文本不可直接下载，且刷新后历史下载走 _loadChunkedByName 按名合并，无需注册
+      if(/\.part\d+$/.test(f.path)||/\.meta$/.test(f.path))continue;
+
       var fn=f.path.split('/').pop();
       if(!fn)continue;
       // 跳过系统文件
@@ -5395,6 +5401,11 @@ async function _restoreArtifactRegistry(){
       if(f.content instanceof Blob){
         var fb=f.content instanceof File?f.content:new File([f.content],fn,{type:f.content.type||'application/octet-stream'});
         _artifactRegistry[fn]={blob:fb,filename:fn,mimeType:fb.type,size:fb.size,time:Date.now(),_srcPath:f.path};
+      }else if(f.content instanceof Uint8Array||f.content instanceof ArrayBuffer){
+        // ★ [二进制修复] Uint8Array/ArrayBuffer → Blob 注册（此前分支缺失，二进制文件刷新后无法下载）
+        var u8=f.content instanceof Uint8Array?f.content:new Uint8Array(f.content);
+        var u8Blob=new Blob([u8],{type:'application/octet-stream'});
+        _artifactRegistry[fn]={blob:u8Blob,filename:fn,mimeType:'application/octet-stream',size:u8Blob.size,time:Date.now(),_srcPath:f.path};
         registered++;
       }else if(typeof f.content==='string'){
         if(f.content.startsWith('data:')){
@@ -5664,6 +5675,46 @@ function triggerDownload(data,filename,mimeType){
     setTimeout(function(){URL.revokeObjectURL(url);},60000);
   },50);
 }
+// ★ [二进制修复] 分片base64合并：逐片atob解码（单片padding在末尾合法）再拼字节，避免拼接后atob遇中间'='崩溃；同时避免超大字符串内存峰值
+function _mergeB64Parts(partsArr){
+  var decoded=[],total=0;
+  for(var mi=0;mi<partsArr.length;mi++){
+    var _bin=atob(partsArr[mi]);
+    var _u=new Uint8Array(_bin.length);
+    for(var _j=0;_j<_bin.length;_j++)_u[_j]=_bin.charCodeAt(_j);
+    decoded.push(_u);total+=_u.length;
+  }
+  var out=new Uint8Array(total);var off=0;
+  for(var k=0;k<decoded.length;k++){out.set(decoded[k],off);off+=decoded[k].length;}
+  return out;
+}
+// ★ [二进制修复] 按文件名查找分片组（任意目录，不硬编码/downloads/）：返回 {bytes,meta} 或 {error}
+async function _loadChunkedByName(baseName){
+  try{
+    var all=await idbTransaction('files','readonly',function(store){return store.getAll();});
+    var metaFile=null,partMap={};
+    for(var i=0;i<all.length;i++){
+      var f=all[i];if(!f.path||f.content==='__DIR__')continue;
+      var n=f.path.split('/').pop();
+      if(n===baseName+'.meta'){metaFile=f;continue;}
+      var pfx=baseName+'.part';
+      if(n.indexOf(pfx)===0){
+        var idx=parseInt(n.substring(pfx.length),10);
+        if(!isNaN(idx))partMap[idx]=f;
+      }
+    }
+    if(!metaFile)return null;
+    var meta=JSON.parse(metaFile.content);
+    var parts=[];
+    for(var pi=0;pi<meta.parts;pi++){
+      var pf=partMap[pi];
+      if(!pf||pf.content==null)return {error:'分片缺失: '+baseName+'.part'+pi};
+      parts.push(pf.content);
+    }
+    return {bytes:_mergeB64Parts(parts),meta:meta};
+  }catch(e){return {error:e.message};}
+}
+
 
 // 只存到下载气泡，不触发浏览器下载（图表/流程图/SVG用）
 function registerGeneratedFile(data,filename,mimeType){
@@ -5990,6 +6041,14 @@ async function collectVfsSnapshot(sandboxDir){
 
     var content=await readFile(fp);
     if(content===null)continue;
+    // ★ [二进制修复] 快照归一化：Blob/ArrayBuffer→Uint8Array，字符串(含dataURL)保留。
+    //   归一化后：JS沙箱readFileSync直接拿Uint8Array按字节操作；diff时按内容比较；
+    //   postMessage回传可结构化克隆（Blob不可克隆会抛DataCloneError）
+    if(content instanceof Blob||content instanceof File){
+      content=new Uint8Array(await content.arrayBuffer());
+    }else if(content instanceof ArrayBuffer){
+      content=new Uint8Array(content);
+    }
     snapshot[fp]={content:content,permission:perm};
   }
   var sd=sandboxDir||'/sandbox/';
@@ -8475,10 +8534,66 @@ function buildEvoWorkerSource(){
 // 【重构】buildTaskWorkerSource → buildTaskWorkerModuleSource
 // 架构变更：放弃 fetch+eval 加载 CDN 库，改用 importScripts()
 // 模型加载：启动时主动加载，带进度上报 + 超时 + 明确失败通知
+// ★ [二进制修复] Worker 二进制处理辅助函数集（注入 buildTaskWorkerSource 生成的 worker 源码）
+var _WORKER_BIN_HELPERS=[
+  'function _contentEquals(a,b){\n',
+  '  if(a===b)return true;\n',
+  '  if(a==null||b==null)return false;\n',
+  '  if(typeof a==="string"||typeof b==="string"){\n',
+  '    if(a instanceof Uint8Array||b instanceof Uint8Array){\n',
+  '      var _u=a instanceof Uint8Array?a:b,_s=a instanceof Uint8Array?b:a;\n',
+  '      try{return new TextDecoder("utf-8").decode(_u)===_s;}catch(_e){return false;}\n',
+  '    }\n',
+  '    return String(a)===String(b);\n',
+  '  }\n',
+  '  if(a instanceof Uint8Array&&b instanceof Uint8Array){\n',
+  '    if(a.length!==b.length)return false;\n',
+  '    for(var _i=0;_i<a.length;_i++){if(a[_i]!==b[_i])return false;}\n',
+  '    return true;\n',
+  '  }\n',
+  '  return false;\n',
+  '}\n',
+  'function _normOutContent(v){\n',
+  '  if(typeof v==="string")return v;\n',
+  '  if(v instanceof Uint8Array)return v;\n',
+  '  if(v instanceof ArrayBuffer)return new Uint8Array(v);\n',
+  '  // Blob 同步读取：Web Worker 可用 FileReaderSync（本函数只在worker内使用）\n',
+  '  if(typeof FileReaderSync!=="undefined"&&(v instanceof Blob||v instanceof File)){\n',
+  '    try{return new Uint8Array(new FileReaderSync().readAsArrayBuffer(v));}catch(e){}\n',
+  '  }\n',
+  '  try{return new Uint8Array(v);}catch(e){return String(v);}\n',
+  '}\n',
+  'function _pyReadSmart(p,snap){\n',
+  '  var raw=pyodide.FS.readFile(p);\n',
+  '  // 快照中原本就是二进制(Uint8Array等)→直接返回原始字节；文本文件→utf8解码\n',
+  '  var wasBin=snap&&snap[p]&&typeof snap[p].content!=="string";\n',
+  '  if(wasBin)return raw;\n',
+  '  var str=new TextDecoder("utf-8").decode(raw);\n',
+  '  // 解码出现替换字符U+FFFD→大概率是二进制，保留原始字节\n',
+  '  if(str.indexOf("\\uFFFD")>=0)return raw;\n',
+  '  return str;\n',
+
+  '}\n',
+  'function _mergeB64Parts(partsArr){\n',
+  '  // ★ [二进制修复] 分片base64逐片atob解码再拼字节：直接拼接后atob会因中间"="padding崩溃\n',
+  '  var decoded=[],total=0;\n',
+  '  for(var mi=0;mi<partsArr.length;mi++){\n',
+  '    var _bin=atob(partsArr[mi]);\n',
+  '    var _u=new Uint8Array(_bin.length);\n',
+  '    for(var _j=0;_j<_bin.length;_j++)_u[_j]=_bin.charCodeAt(_j);\n',
+  '    decoded.push(_u);total+=_u.length;\n',
+  '  }\n',
+  '  var out=new Uint8Array(total);var off=0;\n',
+  '  for(var k=0;k<decoded.length;k++){out.set(decoded[k],off);off+=decoded[k].length;}\n',
+  '  return out;\n',
+  '}\n'
+
+].join('');
 // 构建任务Worker的源代码（纯JS字符串，零转义！）
 function buildTaskWorkerSource(){
   var src='';
   
+  src+=_WORKER_BIN_HELPERS;
   src+='var pyodide=null;\n';
   src+='var embedder=null;\n';
   src+='var modelLoading=false;\n';
@@ -8773,7 +8888,11 @@ function buildTaskWorkerSource(){
   src+='    var _vfs=new Map();\n';
   src+='    for(var _fp in fsSnapshot){\n';
   src+='      if(fsSnapshot[_fp].content!=="__DIR__"){\n';
-  src+='        _vfs.set(_fp,fsSnapshot[_fp].content);\n';
+  src+='        var _c=fsSnapshot[_fp].content;\n';
+  src+='        // ★ [二进制修复] 快照兜底归一化（主线程collectVfsSnapshot已归一化，此处防Blob直传）\n';
+  src+='        if(_c instanceof Blob||_c instanceof File){_c=new Uint8Array(await _c.arrayBuffer());}\n';
+  src+='        else if(_c instanceof ArrayBuffer){_c=new Uint8Array(_c);}\n';
+  src+='        _vfs.set(_fp,_c);\n';
   src+='      }\n';
   src+='    }\n';
   src+='    var _stdout=[];\n';
@@ -8809,14 +8928,23 @@ function buildTaskWorkerSource(){
   src+='        exists:function(p){return _vfs.has(p);},\n';
   src+='        list:function(dir){var r=[];_vfs.forEach(function(v,k){if(!dir||k.indexOf(dir)===0)r.push(k);});return r;},\n';
   src+='        delete:function(p){return _vfs.delete(p);},\n';
-  src+='        readDownload:function(p){\n';
-  src+='          if(!_vfs.has(p+".meta"))throw new Error("非分片下载文件: "+p+" (请用 http.download(url, path) 下载)");\n';
-  src+='          var meta=JSON.parse(_vfs.get(p+".meta"));\n';
-  src+='          var b64="";for(var i=0;i<meta.parts;i++)b64+=_vfs.get(p+".part"+i);\n';
-  src+='          var bin=atob(b64);var bytes=new Uint8Array(bin.length);\n';
-  src+='          for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);\n';
-  src+='          return {bytes:bytes,size:bytes.length,mime:meta.mime,dataUrl:"data:"+meta.mime+";base64,"+b64};\n';
-  src+='        }\n';
+src+='        readDownload:function(p){\n';
+src+='          if(!_vfs.has(p+".meta"))throw new Error("非分片下载文件: "+p+" (请用 http.download(url, path) 下载)");\n';
+src+='          var meta=JSON.parse(_vfs.get(p+".meta"));\n';
+src+='          // ★ [二进制修复] 逐片atob解码再拼接：分片base64直接拼接后atob会因中间"="padding崩溃\n';
+src+='          var partsArr=[];\n';
+src+='          for(var i=0;i<meta.parts;i++){\n';
+src+='            if(!_vfs.has(p+".part"+i))throw new Error("分片缺失: "+p+".part"+i);\n';
+src+='            partsArr.push(_vfs.get(p+".part"+i));\n';
+src+='          }\n';
+src+='          var bytes=_mergeB64Parts(partsArr);\n';
+src+='          var dataUrl="";\n';
+src+='          if(bytes.length<=2097152){\n';
+src+='            var bin="";for(var i2=0;i2<bytes.length;i2++)bin+=String.fromCharCode(bytes[i2]);\n';
+src+='            dataUrl="data:"+meta.mime+";base64,"+btoa(bin);\n';
+src+='          }\n';
+src+='          return {bytes:bytes,size:bytes.length,mime:meta.mime,dataUrl:dataUrl};\n';
+src+='        }\n';
   src+='      },\n';
   src+='      console:{log:function(){_stdout.push(Array.prototype.slice.call(arguments).join(" "));}},\n';
   src+='      CONTEXT_FILES:params.context_files||{},\n';
@@ -8900,7 +9028,8 @@ function buildTaskWorkerSource(){
   src+='    var _fsChanges=[];\n';
   src+='    _vfs.forEach(function(v,k){\n';
   src+='      var orig=fsSnapshot[k];\n';
-  src+='      if(!orig||orig.content!==v)_fsChanges.push({type:"write",path:k,content:v});\n';
+  src+='      // ★ [二进制修复] 内容级比较（Uint8Array每次执行都是新实例，引用比较必然误报write）+ 回传归一化（Blob不可结构化克隆会抛DataCloneError）\n';
+  src+='      if(!orig||!_contentEquals(orig.content,v))_fsChanges.push({type:"write",path:k,content:_normOutContent(v)});\n';
   src+='    });\n';
   src+='    for(var _op in fsSnapshot){\n';
   src+='      if(fsSnapshot[_op].content!=="__DIR__"&&!_vfs.has(_op)){\n';
@@ -8913,6 +9042,8 @@ function buildTaskWorkerSource(){
   src+='    if(!pyodide){\n';
   src+='      try{await loadScript("pyodide",["https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js","https://unpkg.com/pyodide@0.25.0/pyodide.js"],"loadPyodide");pyodide=await loadPyodide({indexURL:"https://cdn.jsdelivr.net/pyodide/v0.25.0/full/"})}catch(e){throw new Error("Python执行需要加载Pyodide，当前环境不支持。请使用JavaScript。")}\n';
   src+='    }\n';
+  src+='    // ★ 预建可写根目录：快照为空时 Pyodide FS 无 /downloads /tmp sandboxDir，open写会FileNotFoundError\n';
+  src+='    ["/downloads","/tmp",sandboxDir.replace(/\\/+$/,"")].forEach(function(_rd){if(_rd){try{pyodide.FS.mkdirTree(_rd);}catch(_e){}}});\n';
   src+='    for(var _fp2 in fsSnapshot){\n';
   src+='      var _entry=fsSnapshot[_fp2];\n';
   src+='      if(_entry.content==="__DIR__")continue;\n';
@@ -8963,14 +9094,14 @@ function buildTaskWorkerSource(){
   src+='          var _full=_dir==="/"?("/"+_en):(_dir+"/"+_en);\n';
   src+='          try{\n';
   src+='            var _st=pyodide.FS.stat(_full);\n';
-  src+='            if(pyodide.FS.isDir(_st.mode)){_pyScanDir(_full);}\n';
-  src+='            else if(pyodide.FS.isFile(_st.mode)){try{_pyNow[_full]=pyodide.FS.readFile(_full,{encoding:"utf8"});}catch(_e7){}}\n';
+  src+='            if(pyodide.FS.isDir(_st.mode)){if(_en!=="__pycache__")_pyScanDir(_full);}\n';
+  src+='            else if(pyodide.FS.isFile(_st.mode)){if(/\\.(pyc|pyo|tmp|swp)$/.test(_en)||_en.indexOf("~$")===0||_en===".DS_Store"){/*运行时垃圾跳过*/}else{try{_pyNow[_full]=_pyReadSmart(_full,fsSnapshot);}catch(_e7){}}}\n';
   src+='          }catch(_e8){}\n';
   src+='        }\n';
   src+='      }catch(_e9){}\n';
   src+='    })(sandboxDir);\n';
-  src+='    // 快照目录 + /tmp：只扫直接文件（防 Pyodide 系统目录 /lib /usr 等爆炸）\n';
-  src+='    var _scanDirs={"/tmp":1};\n';
+  src+='    // 快照目录：只扫直接文件（防 Pyodide 系统目录 /lib /usr 等爆炸；/tmp 不回写-主线程自动清理）\n';
+  src+='    var _scanDirs={};\n';
   src+='    for(var _fsd in fsSnapshot){\n';
   src+='      if(fsSnapshot[_fsd].content==="__DIR__"){_scanDirs[_fsd.replace(/\\/+$/,"")||"/"]=1;continue;}\n';
   src+='      var _fd=_fsd.substring(0,_fsd.lastIndexOf("/"));\n';
@@ -8978,7 +9109,7 @@ function buildTaskWorkerSource(){
   src+='      _scanDirs[_fd]=1;\n';
   src+='    }\n';
   src+='    for(var _pd in _scanDirs){\n';
-  src+='      if(_pd===sandboxDir)continue;\n';
+  src+='      if(_pd===sandboxDir||_pd==="/tmp")continue;\n';
   src+='      try{\n';
   src+='        var _pe=pyodide.FS.readdir(_pd);\n';
   src+='        for(var _pj=0;_pj<_pe.length;_pj++){\n';
@@ -8987,7 +9118,7 @@ function buildTaskWorkerSource(){
   src+='          var _pf=_pd==="/"?("/"+_pe2):(_pd+"/"+_pe2);\n';
   src+='          try{\n';
   src+='            var _ps=pyodide.FS.stat(_pf);\n';
-  src+='            if(pyodide.FS.isFile(_ps.mode)){try{_pyNow[_pf]=pyodide.FS.readFile(_pf,{encoding:"utf8"});}catch(_ea){}}\n';
+  src+='            if(pyodide.FS.isFile(_ps.mode)){if(/\\.(pyc|pyo|tmp|swp)$/.test(_pe2)||_pe2.indexOf("~$")===0||_pe2===".DS_Store"){/*运行时垃圾跳过*/}else{try{_pyNow[_pf]=_pyReadSmart(_pf,fsSnapshot);}catch(_ea){}}}\n';
   src+='          }catch(_eb){}\n';
   src+='        }\n';
   src+='      }catch(_ec){}\n';
@@ -8995,8 +9126,8 @@ function buildTaskWorkerSource(){
   src+='    // diff 快照：新建+修改 → write；快照有但已消失 → delete\n';
   src+='    for(var _pn in _pyNow){\n';
   src+='      var _po=fsSnapshot[_pn];\n';
-  src+='      if(!_po){_pyChanges.push({type:"write",path:_pn,content:_pyNow[_pn]});}\n';
-  src+='      else if(_po.content!=="__DIR__"&&_po.content!==_pyNow[_pn]){_pyChanges.push({type:"write",path:_pn,content:_pyNow[_pn]});}\n';
+  src+='      if(!_po){_pyChanges.push({type:"write",path:_pn,content:_normOutContent(_pyNow[_pn])});}\n';
+  src+='      else if(_po.content!=="__DIR__"&&!_contentEquals(_po.content,_pyNow[_pn])){_pyChanges.push({type:"write",path:_pn,content:_normOutContent(_pyNow[_pn])});}\n';
   src+='    }\n';
   src+='    for(var _op2 in fsSnapshot){\n';
   src+='      if(fsSnapshot[_op2].content==="__DIR__")continue;\n';
@@ -10998,7 +11129,15 @@ async function toolFilesystem(args){
       var fc=await readFile(path);
       if(fc===null)return '[ERR_CODE] NOT_FOUND\n[PARAM] path\n[VALUE] '+path+'\n[MESSAGE] 文件不存在\n[SUGGEST] 检查路径或使用 filesystem list / 查看目录';
       // 防御：readFile 可能返回对象（LLM 调用 create 时 content 被传为 JSON 对象而非字符串）
-      if(typeof fc!=='string')fc=JSON.stringify(fc,null,2);
+      // ★ [二进制修复] Uint8Array/ArrayBuffer → base64 前缀展示，不再 JSON.stringify 成数字数组
+      if(typeof fc!=='string'){
+        if(fc instanceof Uint8Array||fc instanceof ArrayBuffer){
+          var _binArr=fc instanceof Uint8Array?fc:new Uint8Array(fc);
+          var _binB64=_arrayBufferToBase64(_binArr.buffer);
+          return '[文件: '+path+' | 二进制 '+_binArr.length+' 字节 | base64 前缀]\n---base64(前6000字符)---\n'+_binB64.substring(0,6000)+(_binB64.length>6000?'\n...(共'+_binB64.length+'字符，完整数据可用 code_runner 读写)':'');
+        }
+        fc=JSON.stringify(fc,null,2);
+      }
       var mode=args.mode||'auto';  // auto(默认,自动) | chunked(按行号) | full(强制全量)
       // ★ 如果用户显式指定了 line/endLine，说明需要分块读取，不要走 full
       var userWantsChunked=args.line!=null||args.endLine!=null;
@@ -11226,19 +11365,41 @@ async function toolCodeRunner(args){
   var fsChanges=runResp.fs_changes||(output&&output.fs_changes)||[];
   var resultText=(output&&output.result!==undefined&&output.result!==null)?output.result:(typeof output==='string'?output:JSON.stringify(output));
   var writeCount=0,skipCount=0,skippedPaths=[];
+  // ★ [回写防御] 运行时垃圾路径（__pycache__/.pyc/.pyo/.tmp/.swp/~$/.DS_Store）→ 不回写；delete 不拦截（用于清理历史垃圾）
+  var _isJunk=function(p){var _bn=p.split('/').pop();return /\/__pycache__\/|\.pyc$|\.pyo$|\.tmp$|\.swp$|\.DS_Store$/.test(p)||_bn.indexOf('~$')===0;};
+  // ★ [下载气泡] /downloads/ 分片组 .meta 元信息：主名 → {size,mime,parts}
+  var _dlMetaMap={};
   for(var ci=0;ci<fsChanges.length;ci++){
     var change=fsChanges[ci];
+    if(change.path.indexOf('/downloads/')===0&&/\.meta$/.test(change.path)){
+      try{var _dmj=JSON.parse(change.content);_dlMetaMap[change.path.slice(0,-5)]={size:_dmj.size||0,mime:_dmj.mime||'application/octet-stream',parts:_dmj.parts||0};}catch(e){}
+    }
     var perm=getCodeRunPermission(change.path);
     if(perm!=='readwrite'){skipCount++;skippedPaths.push({path:change.path,perm:perm});continue;}
+    if(change.type!=='delete'&&_isJunk(change.path)){skipCount++;skippedPaths.push({path:change.path,perm:'junk'});continue;}
     try{
       if(change.type==='write'||change.type==='create'){
-        await createFile(change.path,change.content||'');
+        // ★ [二进制修复] ==null 判断保留空Uint8Array/空Blob类型，||''会把空二进制吞成空字符串
+        await createFile(change.path,change.content==null?'':change.content);
         writeCount++;
+        // ★ [下载气泡] /downloads/ 直接文件（非分片）→ 注册产物，本轮消息显示下载气泡
+        if(change.path.indexOf('/downloads/')===0&&!/\.part\d+$/.test(change.path)&&!/\.meta$/.test(change.path)){
+          try{_registerDownloadable(change.path,change.content==null?'':change.content);}catch(e){debugLogger.warn('code_runner 产物注册失败: '+change.path+' '+e.message);}
+        }
       }else if(change.type==='delete'){
         await deleteFile(change.path);
         writeCount++;
       }
     }catch(e){debugLogger.warn('code_runner 回写失败: '+change.path+' '+e.message);}
+  }
+  // ★ [下载气泡] 分片下载组 → 注册主文件名气泡（点击下载由 _downloadRecentFile 分片合并）
+  for(var _dm2 in _dlMetaMap){
+    var _dmi=_dlMetaMap[_dm2],_dfn2=_dm2.split('/').pop();
+    if(!_dfn2)continue;
+    var _dblob=new Blob([],{type:_dmi.mime});
+    recentDownloads.push({filename:_dfn2,size:_dmi.size,type:_dmi.mime,blob:_dblob,time:Date.now()});
+    _artifactRegistry[_dfn2]={blob:_dblob,filename:_dfn2,mimeType:_dmi.mime,size:_dmi.size,time:Date.now()};
+    if(_recentFileBlobs)_recentFileBlobs[_dfn2]=_dblob;
   }
   for(var ti=0;ti<fsChanges.length;ti++){
     var tc=fsChanges[ti];
@@ -11250,7 +11411,7 @@ async function toolCodeRunner(args){
   var metaNote='[文件: '+path+']';
   if(writeCount>0)metaNote+='\n[文件系统回写: '+writeCount+'个文件]';
   if(skipCount>0){
-    var permHint={none:'不可访问(系统目录)',read:'只读(仅可读)'};
+    var permHint={none:'不可访问(系统目录)',read:'只读(仅可读)',junk:'运行时临时文件(已忽略)'};
     var deniedLines=skippedPaths.map(function(s,i){return '  '+(i+1)+'. '+s.path+' — 权限: '+(permHint[s.perm]||s.perm);});
     metaNote+='\n\n[ERR_CODE] FS_PERMISSION_DENIED\n[PARAM] path\n[COUNT] '+skipCount+'\n[MESSAGE] 沙箱代码尝试写入只读/无权限路径，已阻止：\n'+deniedLines.join('\n')+'\n[SUGGEST] 沙箱仅可写 /downloads/ /sandbox/ /tmp/；/uploads/ 只读，/config/ /memory/ /pipelines/ /trash/ 不可见。请修改代码写入可写目录(推荐 /downloads/)，再用 filesystem read 验证落盘。';
   }
@@ -14610,8 +14771,8 @@ async function _calendarWakeCheck(){
         if(cs&&!cs.isProcessing){
       var wp=settings.calendar_wake_prompt||'';
       if(!wp.trim()){
-        wp='⏰ **日程提醒**\n\n现在时间: '+new Date().toLocaleString('zh-CN')+'\n\n以下日程已到提醒时间:\n\n';
-        wp+='📌 **'+(tev.title||'(无标题)')+'**\n';
+        wp='**日程提醒**\n\n现在时间: '+new Date().toLocaleString('zh-CN')+'\n\n以下日程已到提醒时间:\n\n';
+        wp+='**'+(tev.title||'(无标题)')+'**\n';
         wp+='- **开始**: '+new Date(tev.start).toLocaleString('zh-CN')+'\n';
         if(tev.end)wp+='- **结束**: '+new Date(tev.end).toLocaleString('zh-CN')+'\n';
         if(tev.location)wp+='- **地点**: '+tev.location+'\n';
@@ -14620,7 +14781,7 @@ async function _calendarWakeCheck(){
         wp+='\n请主动告知用户。';
       }else{
         wp=wp.replace(/\{title\}/g,tev.title||'').replace(/\{description\}/g,tev.description||'').replace(/\{location\}/g,tev.location||'').replace(/\{start\}/g,tev.start||'').replace(/\{end\}/g,tev.end||'');
-        wp+='\n\n---\n⏰ **日程详情**\n';
+        wp+='\n\n---\n**日程详情**\n';
         wp+='- **标题**: '+(tev.title||'(无标题)')+'\n';
         wp+='- **开始**: '+new Date(tev.start).toLocaleString('zh-CN')+'\n';
         if(tev.end)wp+='- **结束**: '+new Date(tev.end).toLocaleString('zh-CN')+'\n';
@@ -20921,10 +21082,17 @@ async function handleFileUploads(files){
         if(isImageFile){
           content=await readFileAsDataURL(file);
         }else{
-          content=await readFileAsText(file);
+          // ★ [二进制修复] 文本扩展名/MIME→readAsText；其余二进制→ArrayBuffer(Uint8Array)原样存储，杜绝UTF-8解码损坏
+          var _isTextual=/\.(txt|md|markdown|json|csv|tsv|xml|yaml|yml|js|mjs|cjs|ts|jsx|tsx|html|htm|css|scss|less|py|java|c|cpp|h|hpp|go|rs|sh|bash|zsh|bat|cmd|ps1|ini|conf|cfg|log|svg|toml|sql|env|properties|rtf|tex|bib|vtt|srt|vue|php|rb|pl|lua|r|kt|swift|scala|groovy|hcl|tf|dockerfile|makefile|cmake|editorconfig|prettierrc|eslintrc|babelrc|nvmrc|pem|pub|asc|lock|gradle|diff|patch|map)$/i.test(file.name)||/^text\//i.test(file.type)||file.type==='application/json'||file.type==='application/xml'||file.type==='application/javascript'||file.type==='application/x-javascript'||file.type==='application/x-httpd-php'||file.type==='application/x-sh'||file.type==='application/x-yaml'||file.type==='application/yaml'||file.type==='application/x-www-form-urlencoded'||file.type==='application/sql';
+          if(_isTextual){
+            content=await readFileAsText(file);
+          }else{
+            content=await readFileAsArrayBuffer(file);
+            content=new Uint8Array(content);
+          }
         }
-        contentLen=typeof content==='string'?content.length:0;
-        if(!isImageFile&&contentLen>1024*1024){
+        contentLen=typeof content==='string'?content.length:(content&&typeof content.byteLength==='number'?content.byteLength:0);
+        if(typeof content==='string'&&contentLen>1024*1024){
           showToast('文件过大 ('+formatSize(contentLen)+')，正在压缩...','info');
           content=await compressText(content);
         }
@@ -21039,13 +21207,42 @@ async function renderFileManager(filterCat,searchQuery){
     var files=await idbTransaction('files','readonly',function(store){return store.getAll();});
     if(!files||files.length===0){container.innerHTML='<div class="file-policy-empty"> 暂无文件</div>';_updateFilePolicyTagCounts({});return;}
     files=files.filter(function(f){return f.content!=='__DIR__';});
+    // ★ [二进制修复] 分片文件折叠：xxx.partN + xxx.meta → 合并为一条"分片下载"记录，不再暴露base64文本条目
+    var _partPat=/\.part\d+$/,_metaPat=/\.meta$/,_partGroups={},_keptFiles=[];
+    for(var _fi2=0;_fi2<files.length;_fi2++){
+      var _f2=files[_fi2],_p2=_f2.path;
+      if(_partPat.test(_p2)){
+        var _b2=_p2.replace(/\.part\d+$/,'');
+        (_partGroups[_b2]=_partGroups[_b2]||{parts:[]}).parts.push(_p2);
+        continue;
+      }
+      if(_metaPat.test(_p2)){
+        var _mb2=_p2.substring(0,_p2.length-5);
+        _partGroups[_mb2]=_partGroups[_mb2]||{parts:[]};
+        _partGroups[_mb2].metaRaw=_f2.content;
+        continue;
+      }
+      _keptFiles.push(_f2);
+    }
+    for(var _pb2 in _partGroups){
+      var _pg=_partGroups[_pb2];
+      try{
+        var _pm=_pg.metaRaw?JSON.parse(_pg.metaRaw):null;
+        var _pname=_pm&&_pm.name?String(_pm.name):(_pb2.split('/').pop()||'download');
+        var _psize=_pm&&_pm.size?_pm.size:0;
+        var _pcount=_pm&&_pm.parts?_pm.parts:(_pg.parts?_pg.parts.length:0);
+        _keptFiles.push({path:_pb2,name:_pname,size:_psize,cat:'data',icon:'',label:'分片下载',updated:0,isSystem:false,_partGroup:true,_firstPart:_pb2+'.part0',_partCount:_pcount});
+      }catch(e){}
+    }
+    files=_keptFiles;
+
     files.sort(function(a,b){return (b.updated_at||b.created_at||0)-(a.updated_at||a.created_at||0);});
     var enriched=files.map(function(f){
       var path=f.path||f.filename||'unknown';
       var name=path.split('/').pop()||path;
-      var cls=_classifyFile(path,name);
+      var cls=f._partGroup?{cat:'data',icon:'',label:'分片下载'}:_classifyFile(path,name);
       var size=f.size||(f.content?(typeof f.content==='string'?f.content.length:f.content.size||0):0);
-      return{path:path,name:name,size:size,cat:cls.cat,icon:cls.icon,label:cls.label,updated:f.updated_at||f.created_at||0,isSystem:cls.cat==='system'};
+      return{path:path,name:name,size:size,cat:cls.cat,icon:cls.icon,label:cls.label,updated:f.updated_at||f.created_at||0,isSystem:cls.cat==='system',_partGroup:f._partGroup,_firstPart:f._firstPart,_partCount:f._partCount};
     });
     var catCounts={};
     for(var ei=0;ei<enriched.length;ei++){var c=enriched[ei].cat;catCounts[c]=(catCounts[c]||0)+1;}
@@ -21067,7 +21264,8 @@ async function renderFileManager(filterCat,searchQuery){
       html+='<div class="file-policy-group-title">'+catLabels[catKey]+' <span class="group-count">'+group.length+'个</span></div>';
       for(var fi=0;fi<group.length;fi++){
         var f=group[fi];
-        var escPath=f.path.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        var escPath=(f._partGroup?(f._firstPart||f.path):f.path).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        var escBase=f._partGroup?f.path.replace(/\\/g,'\\\\').replace(/'/g,"\\'"):'';
         html+='<div class="file-policy-card'+(f.isSystem?' fp-system':'')+'">';
         html+='<span class="fp-icon">'+f.icon+'</span>';
         html+='<div class="fp-info">';
@@ -21080,7 +21278,13 @@ async function renderFileManager(filterCat,searchQuery){
         html+='<span class="fp-date">'+_formatDate(f.updated)+'</span>';
         html+='<div class="fp-actions">';
         html+='<button onclick="downloadFileByPath(\''+escPath+'\')" title="下载">⬇</button>';
-        if(!f.isSystem){html+='<button class="fp-del" onclick="deleteFileByPath(\''+escPath+'\',\''+f.name.replace(/'/g,"\\'")+'\')" title="删除">×</button>';}
+        if(!f.isSystem){
+          if(f._partGroup){
+            html+='<button class="fp-del" onclick="deleteFileGroupByPath(\''+escBase+'\',\''+f.name.replace(/'/g,"\\'")+'\')" title="删除整组(含全部分片)">×</button>';
+          }else{
+            html+='<button class="fp-del" onclick="deleteFileByPath(\''+escPath+'\',\''+f.name.replace(/'/g,"\\'")+'\')" title="删除">×</button>';
+          }
+        }
         html+='</div></div>';
       }
     }
@@ -21097,26 +21301,22 @@ async function renderFileManager(filterCat,searchQuery){
 	      var _base=filePath.substring(0,_mIdx);
 	      var _metaRaw=await idbTransaction('files','readonly',function(store){return store.get(_base+'.meta');});
 	      if(_metaRaw&&_metaRaw.content){
-	        try{
-	          var _meta=JSON.parse(_metaRaw.content);
-	          var _b64='';
-	          for(var _pi=0;_pi<_meta.parts;_pi++){
-	            var _part=await idbTransaction('files','readonly',function(store){return store.get(_base+'.part'+_pi);});
-	            if(!_part||!_part.content)break;
-	            _b64+=_part.content;
-	          }
-	          if(_b64.length>0){
-	            var _bin=atob(_b64);var _bytes=new Uint8Array(_bin.length);
-	            for(var _bi=0;_bi<_bin.length;_bi++)_bytes[_bi]=_bin.charCodeAt(_bi);
-	            var _blob=new Blob([_bytes],{type:_meta.mime||'application/octet-stream'});
-	            triggerDownload(_blob,_meta.name||filePath.split('/').pop().replace(/\.part\d+$/,''),'application/octet-stream');
-	            showToast('已合并下载: '+(_meta.name||'')+' ('+formatSize(_bytes.length)+', '+_meta.parts+'分片)','success');
-	            return;
-	          }
-	        }catch(e){/* 合并失败走原逻辑 */}
+	        var _meta=JSON.parse(_metaRaw.content);
+	        // ★ [二进制修复] 逐片atob解码再拼接字节：分片base64直接拼接后atob会因中间'='padding崩溃
+	        var _partsArr=[];
+	        for(var _pi=0;_pi<_meta.parts;_pi++){
+	          var _part=await idbTransaction('files','readonly',function(store){return store.get(_base+'.part'+_pi);});
+	          if(!_part||!_part.content)throw new Error('分片缺失: '+_base+'.part'+_pi);
+	          _partsArr.push(_part.content);
+	        }
+	        var _bytes=_mergeB64Parts(_partsArr);
+	        var _blob=new Blob([_bytes],{type:_meta.mime||'application/octet-stream'});
+	        triggerDownload(_blob,_meta.name||filePath.split('/').pop().replace(/\.part\d+$/,''),'application/octet-stream');
+	        showToast('已合并下载: '+(_meta.name||'')+' ('+formatSize(_bytes.length)+', '+_meta.parts+'分片)','success');
+	        return;
 	      }
 	    }
-	  }catch(e){}
+	  }catch(e){showToast('分片合并失败: '+e.message,'warning');}
 	  try{
 	    var f=await idbTransaction('files','readonly',function(store){return store.get(filePath);});
 	    if(f&&f.content&&f.content!=='__DIR__'){
@@ -21128,6 +21328,26 @@ async function renderFileManager(filterCat,searchQuery){
 	    }
 	  }catch(e){showToast('下载失败: '+e.message,'error');}
 	};
+
+	window.deleteFileGroupByPath=async function(basePath,displayName){
+	  var confirmed=await showConfirmDialog('确定删除分片文件组「'+(displayName||basePath)+'」？（含全部 .partN 与 .meta）','删除确认');
+	  if(!confirmed)return;
+	  try{
+	    var all=await idbTransaction('files','readonly',function(store){return store.getAll();});
+	    var deleted=0;
+	    for(var gi=0;gi<all.length;gi++){
+	      var gf=all[gi].path;
+	      if(gf===basePath+'.meta'||gf.indexOf(basePath+'.part')===0){
+	        try{await idbTransaction('files','readwrite',function(store){return store.delete(gf);});deleted++;}catch(e){}
+	      }
+	    }
+	    if(deleted===0){showToast('未找到分片文件组: '+basePath,'warning');return;}
+	    showToast('已删除分片文件组 ('+deleted+'个文件): '+(displayName||basePath),'success');
+	    renderFileManager();
+	  }catch(e){showToast('删除失败: '+e.message,'error');}
+	};
+
+
 
 	window.deleteFileByPath=async function(filePath,name){
 	  var confirmed=await showConfirmDialog('确定删除文件「'+name+'」？','删除确认');
