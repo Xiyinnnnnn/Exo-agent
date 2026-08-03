@@ -4236,7 +4236,7 @@ function _ensureConvState(convId){
 // ===== 心流模式状态（按对话隔离）=====
 var _flowSessions={};
 function flowSession(){return _flowSessions[currentConversationId||'default']||null;}
-function _setFlowSession(v){_flowSessions[currentConversationId||'default']=v;}
+function _setFlowSession(v, convId){convId=convId||currentConversationId||'default';_flowSessions[convId]=v;}
 function _saveFlowSession(convId){
   convId=convId||currentConversationId;
   var sess=_flowSessions[convId];
@@ -4260,7 +4260,7 @@ async function _deleteFlowSession(convId){
   delete _flowSessions[convId];
 }
 
-// TODO 工具存储层（按对话隔离）
+// ★ todo 存储层（按对话隔离）：_convTodos 内存Map + /flow/todos_<convId>.json 持久化，读写均显式传convId
 var _convTodos={};
 function _getTodos(convId){ return _convTodos[convId||currentConversationId] || null; }
 function _setTodos(convId, todos){
@@ -4544,7 +4544,7 @@ async function _triggerManualCompression(){
        }catch(_eC){debugLogger.warn('手动压缩落库失败: '+_eC.message);}
         _updateTokenAccumulator(convId, null, _newFull2);
        _updateToolbarTokenDisplay();
-        _saveTokenCounts();
+         _saveTokenCounts(convId);
        toast.className='toast success';
        toast.textContent='上下文已成功压缩 → '+compressed.length+' 条活跃消息（UI 历史保留）';
     }else{
@@ -4570,6 +4570,7 @@ window._triggerManualCompression=_triggerManualCompression;
 function _startTokenDisplayTimer(){
   if(window._tokenTimer)clearInterval(window._tokenTimer);
   window._tokenTimer=setInterval(function(){
+    if(document.hidden)return; // ★ [FIX-2026-08-04-d] 后台标签页不轮询DOM(对比heartbeat/healthCheck均有hidden守卫)
     _updateToolbarTokenDisplay();
   },5000);
 }
@@ -5968,6 +5969,15 @@ async function ensureDirectoryExists(dirPath){
   if(meta)return;
   await createFile(np,'__DIR__');
 }
+// ★ [FIX-2026-08-04] per-path 写锁：IndexedDB 无行锁，读-改-写跨事务并发会丢更新（两个对话并行写同一文件时）
+//   实现：按 path 的 promise 链队列，同路径写操作串行化；不同路径互不阻塞
+var _fileWriteQueue={};
+function _withFileLock(path,fn){
+  var prev=_fileWriteQueue[path]||Promise.resolve();
+  var run=prev.then(fn,fn); // 前一个失败也继续执行下一个
+  _fileWriteQueue[path]=run.catch(function(){});
+  return run;
+}
 
 async function createFile(path,content){
   var np=normalizePath(path);
@@ -5976,7 +5986,7 @@ async function createFile(path,content){
     await ensureDirectoryExists(parentDir);
   }
   var record={path:np,content:content,size:new Blob([content]).size,created_at:Date.now(),updated_at:Date.now(),accessed_at:Date.now(),compressed:false,metadata:{}};
-  await idbTransaction('files','readwrite',function(store){return store.put(record);});
+  await _withFileLock(np, function(){return idbTransaction('files','readwrite',function(store){return store.put(record);});}); // ★ [FIX-2026-08-04] 与updateFile互斥：防create/update并发覆盖
   debugLogger.debug('文件创建: '+np);
 }
 
@@ -5996,13 +6006,15 @@ async function readFile(path){
 
 async function updateFile(path,newContent){
   var np=normalizePath(path);
-  var existing=await idbTransaction('files','readonly',function(store){return store.get(np);});
-  if(!existing)throw new Error('File not found: '+np);
-  existing.content=newContent;
-  existing.size=new Blob([newContent]).size;
-  existing.updated_at=Date.now();
-  existing.compressed=false;
-  await idbTransaction('files','readwrite',function(store){return store.put(existing);});
+  return _withFileLock(np, async function(){ // ★ [FIX-2026-08-04] 读-改-写包进per-path锁：防两个对话并行写同一文件丢失更新
+    var existing=await idbTransaction('files','readonly',function(store){return store.get(np);});
+    if(!existing)throw new Error('File not found: '+np);
+    existing.content=newContent;
+    existing.size=new Blob([newContent]).size;
+    existing.updated_at=Date.now();
+    existing.compressed=false;
+    await idbTransaction('files','readwrite',function(store){return store.put(existing);});
+  });
 }
 
 async function deleteFile(path){
@@ -6084,13 +6096,16 @@ async function getFileMeta(path){
 }
 
 // === code_run 辅助：列出所有文件系统路径 ===
-async function listAllVfsPaths(){
+async function listAllVfsPaths(prefix){
   var d=await getDB();
   return new Promise(function(resolve,reject){
     var transaction=d.transaction('files','readonly');
     var store=transaction.objectStore('files');
     var results=[];
-    var request=store.openCursor();
+    // ★ [FIX-2026-08-04-d] 支持前缀过滤：IDBKeyRange.bound(prefix, prefix+'\uffff') 只扫描指定前缀，避免全表cursor遍历
+    var _range=null;
+    if(prefix){_range=IDBKeyRange.bound(prefix,prefix+'\uffff');}
+    var request=_range?store.openCursor(_range):store.openCursor();
     request.onsuccess=function(event){
       var cursor=event.target.result;
       if(cursor){
@@ -6101,13 +6116,43 @@ async function listAllVfsPaths(){
     request.onerror=function(){reject(request.error);};
   });
 }
-
-// === code_run 辅助：按白名单收集文件系统快照 ===
-async function collectVfsSnapshot(sandboxDir){
+// === code_run 辅助：按前缀白名单收集文件系统快照 ===
+async function collectVfsSnapshot(sandboxDir, contextFiles){
   var snapshot={};
-  var allPaths=await listAllVfsPaths();
-  for(var i=0;i<allPaths.length;i++){
-    var fp=allPaths[i];
+  var sd=sandboxDir||'/sandbox/';
+  if(!sd.endsWith('/'))sd+='/';
+  // ★ [FIX-2026-08-04-d] 前缀白名单快照：原实现listAllVfsPaths()全表扫描+读所有可见文件(含其他对话沙箱/大下载文件)，
+  //   每次code_runner全量读传worker造成主线程阻塞。现只快照：当前对话沙箱 + /uploads/(只读共享) + /tmp/ + /downloads/ + context_files显式路径
+  var _prefixes=[sd,'/uploads/','/tmp/','/downloads/'];
+  var _seen={};
+  var _allPaths=[];
+  for(var _pi=0;_pi<_prefixes.length;_pi++){
+    var _sub=await listAllVfsPaths(_prefixes[_pi]);
+    for(var _si=0;_si<_sub.length;_si++){
+      if(!_seen[_sub[_si]]){_seen[_sub[_si]]=1;_allPaths.push(_sub[_si]);}
+    }
+  }
+  // context_files 显式补充：key以'/'开头视为路径，直接读入快照（LLM显式要求，绕过前缀限制）
+  if(contextFiles&&typeof contextFiles==='object'){
+    for(var _ck in contextFiles){
+      if(_ck.charAt(0)==='/'&&!_seen[_ck]){
+        _seen[_ck]=1;
+        var _perm0=getCodeRunPermission(_ck);
+        if(_perm0!=='none'){
+          try{
+            var _cc=await readFile(_ck);
+            if(_cc!==null&&_cc!=='__DIR__'){
+              if(_cc instanceof Blob||_cc instanceof File)_cc=new Uint8Array(await _cc.arrayBuffer());
+              else if(_cc instanceof ArrayBuffer)_cc=new Uint8Array(_cc);
+              snapshot[_ck]={content:_cc,permission:_perm0};
+            }
+          }catch(_ce){}
+        }
+      }
+    }
+  }
+  for(var i=0;i<_allPaths.length;i++){
+    var fp=_allPaths[i];
     var perm=getCodeRunPermission(fp);
     if(perm==='none')continue;
     // ★ [审查修复] 分片下载文件(.partN/.meta)不进快照：100MB分片(≈133MB b64)避免每次执行全量拖入worker；主线程合并下载直接从IDB读取，不受影响
@@ -6115,18 +6160,22 @@ async function collectVfsSnapshot(sandboxDir){
 
     var content=await readFile(fp);
     if(content===null)continue;
+    // ★ [FIX-2026-08-04-d] 大文件(>2MB)不进快照：避免大payload克隆传输阻塞主线程；如需沙箱读取请用context_files显式传入
+    if(content instanceof Blob||content instanceof File){
+      if(content.size>2097152){debugLogger.debug(' code_runner快照跳过>2MB文件: '+fp+' ('+Math.round(content.size/1024)+'KB)');continue;}
+      content=new Uint8Array(await content.arrayBuffer());
+    }else if(content instanceof ArrayBuffer){
+      if(content.byteLength>2097152){debugLogger.debug(' code_runner快照跳过>2MB文件: '+fp+' ('+Math.round(content.byteLength/1024)+'KB)');continue;}
+      content=new Uint8Array(content);
+    }else if(typeof content==='string'&&content.length>2097152){
+      debugLogger.debug(' code_runner快照跳过>2MB文件: '+fp+' ('+Math.round(content.length/1024)+'KB)');
+      continue;
+    }
     // ★ [二进制修复] 快照归一化：Blob/ArrayBuffer→Uint8Array，字符串(含dataURL)保留。
     //   归一化后：JS沙箱readFileSync直接拿Uint8Array按字节操作；diff时按内容比较；
     //   postMessage回传可结构化克隆（Blob不可克隆会抛DataCloneError）
-    if(content instanceof Blob||content instanceof File){
-      content=new Uint8Array(await content.arrayBuffer());
-    }else if(content instanceof ArrayBuffer){
-      content=new Uint8Array(content);
-    }
     snapshot[fp]={content:content,permission:perm};
   }
-  var sd=sandboxDir||'/sandbox/';
-  if(!sd.endsWith('/'))sd+='/';
   snapshot[sd]={content:'__DIR__',permission:'readwrite'};
   return snapshot;
 }
@@ -6250,15 +6299,17 @@ async function archiveAndCompress(filePath){
       var compressedResp=await sendToTaskWorker('compress',{data:content});
       if(compressedResp&&compressedResp.success){
         var np=normalizePath(filePath);
-        var existing=await idbTransaction('files','readonly',function(store){return store.get(np);});
-        if(existing){
-          existing.content=compressedResp.data;
-          existing.size=new Blob([compressedResp.data]).size;
-          existing.compressed=true;
-          existing.updated_at=Date.now();
-          await idbTransaction('files','readwrite',function(store){return store.put(existing);});
-          debugLogger.info('文件已自动压缩归档: '+filePath);
-        }
+        await _withFileLock(np, async function(){ // ★ [FIX-2026-08-04] 读-改-写包进per-path锁，防并发覆盖
+          var existing=await idbTransaction('files','readonly',function(store){return store.get(np);});
+          if(existing){
+            existing.content=compressedResp.data;
+            existing.size=new Blob([compressedResp.data]).size;
+            existing.compressed=true;
+            existing.updated_at=Date.now();
+            await idbTransaction('files','readwrite',function(store){return store.put(existing);});
+            debugLogger.info('文件已自动压缩归档: '+filePath);
+          }
+        });
       }
     }
   }catch(e){debugLogger.warn('文件归档压缩失败: '+filePath+' '+e.message);}
@@ -7951,7 +8002,14 @@ function getMarkdownRenderer(){
   return mdRenderer;
 }
 
+// ★ [FIX-2026-08-04-g] 渲染缓存：同一内容(含sanitize结果)原样复用，切换对话/多轮工具循环/编辑重渲染免重复 markdown+KaTeX+DOMPurify。
+//   安全语义不变（DOMPurify 输出原样缓存）；key 含 katex 加载状态防"加载前纯文本→加载后公式"错配；超限清空防内存膨胀。
+var _mdHtmlCache=new Map();
+var _MD_CACHE_MAX=200,_MD_CACHE_CHARS=8388608;
 function renderMarkdown(text){
+  var _cKey=(window.katex?'K':'P')+(text||'');
+  var _cHit=_mdHtmlCache.get(_cKey);
+  if(_cHit!==undefined)return _cHit;
   text=text.replace(/<\s*think\b[^>]*>[\s\S]*?<\s*\/\s*think\s*>/gi,'').replace(/<\s*\/\s*think\s*>/gi,'').replace(/<\s*\/?\s*answer\s*>/gi,'');
   var md=getMarkdownRenderer();
   var html=md.render(text);
@@ -7966,9 +8024,27 @@ function renderMarkdown(text){
   // ★ 代码块复制按钮（HTML注入后调用 _injectCodeCopyButtons 操作DOM）
   html=html.replace(/<pre><code/g,'<pre class="code-block-wrapper"><code');
   if(window.DOMPurify){html=DOMPurify.sanitize(html,{ADD_ATTR:['mathvariant','mathsize','displaystyle','scriptlevel','linethickness','columnspacing','rowspacing','fractionrule','lspace','rspace','selection','minsize','maxsize']});}
+  if(_mdHtmlCache.size>=_MD_CACHE_MAX)_mdHtmlCache.clear();
+  if(_cKey.length<=_MD_CACHE_CHARS)_mdHtmlCache.set(_cKey,html);
   return html;
 }
 
+// ★ [FIX-2026-08-04-e] 流式渲染降级：markdown 语法快速检测（宽松匹配，宁全量勿漏）
+var _MD_FAST_RE=/(^|\n)\s*(```|~~~|#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\||-{3,})|(\*\*|__|`|\[[^\]]*\]\([^)]*\)|\$\$|\$[^$\n]+\$)/;
+function _looksLikeMarkdown(t){
+  return !!t&&_MD_FAST_RE.test(t);
+}
+// ★ [FIX-2026-08-04-e] 流式渲染降级：纯文本走 textContent（无解析/无sanitize/无DOM重建，O(1)），
+//    有 markdown 语法才全量 renderMarkdown。返回 true=已走全量渲染（调用方需注入代码复制按钮）。
+//    流结束后的最终渲染保持全量 renderMarkdown，最终质量优先。
+function _renderStreamContent(container,content){
+  if(_looksLikeMarkdown(content)){
+    container.innerHTML=renderMarkdown(content);
+    return true;
+  }
+  container.textContent=content;
+  return false;
+}
 // —— DOM 安全标签白名单 ——
 var _SAFE_TAGS={div:1,span:1,p:1,br:1,hr:1,h1:1,h2:1,h3:1,h4:1,h5:1,h6:1,
   ul:1,ol:1,li:1,dl:1,dt:1,dd:1,table:1,thead:1,tbody:1,tr:1,th:1,td:1,
@@ -7991,13 +8067,23 @@ var _SAFE_ATTRS={class:1,id:1,style:1,alt:1,title:1,href:1,src:1,
   'linethickness':1,'lspace':1,'rspace':1,'selection':1,'minsize':1,'maxsize':1,'aria-hidden':1};
 var _DANGEROUS_HREF=/^(javascript|data\s*:|vbscript):/i;
 
+var _artSanCache=new Map();
+var _ART_SAN_CACHE_MAX=50,_ART_SAN_CACHE_CHARS=4194304;
 function sanitizeArtifactHTML(html){
   if(!html||typeof html!=='string')return '';
-  if(window.DOMPurify){return DOMPurify.sanitize(html,{ADD_TAGS:['math','semantics','annotation','mrow','mi','mo','mn','msup','msub','mfrac','msqrt','mover','munder'],ADD_ATTR:['mathvariant','mathsize','displaystyle','scriptlevel','linethickness','lspace','rspace','selection','minsize','maxsize','aria-hidden']});}
-  var doc=new DOMParser().parseFromString(html,'text/html');
-  var body=doc.body;
-  _sanitizeNode(body);
-  return body.innerHTML;
+  var _ch=_artSanCache.get(html);
+  if(_ch!==undefined)return _ch;
+  var _out;
+  if(window.DOMPurify){_out=DOMPurify.sanitize(html,{ADD_TAGS:['math','semantics','annotation','mrow','mi','mo','mn','msup','msub','mfrac','msqrt','mover','munder'],ADD_ATTR:['mathvariant','mathsize','displaystyle','scriptlevel','linethickness','lspace','rspace','selection','minsize','maxsize','aria-hidden']});}
+  else{
+    var doc=new DOMParser().parseFromString(html,'text/html');
+    var body=doc.body;
+    _sanitizeNode(body);
+    _out=body.innerHTML;
+  }
+  if(_artSanCache.size>=_ART_SAN_CACHE_MAX)_artSanCache.clear();
+  if(html.length<=_ART_SAN_CACHE_CHARS)_artSanCache.set(html,_out);
+  return _out;
 }
 function _sanitizeNode(node){
   var toRemove=[];
@@ -8086,12 +8172,15 @@ async function handleFeedback(messageId,type){
   try{
     var feedbackEntry={messageId:messageId,type:type,timestamp:new Date().toISOString()};
     var fbPath='/cases/feedback.jsonl';
-    var existing=await readFile(fbPath)||'';
-    if(existing){
-      await updateFile(fbPath,existing+JSON.stringify(feedbackEntry)+'\n');
-    }else{
-      await createFile(fbPath,JSON.stringify(feedbackEntry)+'\n');
-    }
+    // ★ [FIX-2026-08-04-d] 读-改-写包per-path写锁：原实现无锁，双对话并发反馈可能丢条目(铁律:读改写必须锁)
+    await _withFileLock(fbPath,async function(){
+      var existing=await readFile(fbPath)||'';
+      if(existing){
+        await updateFile(fbPath,existing+JSON.stringify(feedbackEntry)+'\n');
+      }else{
+        await createFile(fbPath,JSON.stringify(feedbackEntry)+'\n');
+      }
+    });
   }catch(e){debugLogger.warn('反馈持久化失败: '+e.message);}
 }
 
@@ -8917,8 +9006,11 @@ function buildTaskWorkerSource(){
 	src+='}\n';
 	src+='\n';
   
+  src+='var _abortedTasks={};\n';
   src+='self.onmessage=async function(event){\n';
   src+='  var msg=event.data;var id=msg.id,type=msg.type,params=msg.params;\n';
+  src+='  // ★ [FIX-2026-08-04-h] 任务取消协议：主线程超时 abort → 标记任务，结果不再回传\n';
+  src+='  if(type==="abort_task"){_abortedTasks[id]=true;return;}\n';
   src+='  var startTime=Date.now();\n';
   src+='  try{\n';
   src+='    var result;\n';
@@ -8941,6 +9033,7 @@ function buildTaskWorkerSource(){
   src+='      case "pca_update":_pcaUpdate(params.embeddings);result={vectors:PCA_VECS,dim:PCA_DIM};break;\n';
   src+='      default:throw new Error("Unknown task type: "+type);\n';
   src+='    }\n';
+  src+='    if(_abortedTasks[id]){self.postMessage({id:id,success:false,error:"任务已取消",aborted:true,duration:Date.now()-startTime});return;}\n';
   src+='    var _respData=result;\n';
   src+='    var _respFsChanges=null;\n';
   src+='    if(result&&typeof result==="object"&&result.fs_changes){\n';
@@ -10047,7 +10140,7 @@ async function handleProxyLLMCall(msg){
    var response=await fetch(baseUrl,{
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+settings.deepseek_api_key},
-    body:JSON.stringify(body)
+    body:JSON.stringify(body),signal:AbortSignal.timeout(180000)
   });
   if(!response.ok){
     var errText=await response.text();
@@ -10253,7 +10346,7 @@ async function handleApplySkillPatch(payload){
     });
     if(existing){await updateFile('/skills/current_version.json',JSON.stringify(currentIndex,null,2));}
     else{await createFile('/skills/current_version.json',JSON.stringify(currentIndex,null,2));}
-    await refreshSkillCache();
+await refreshSkillCache(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04] 工具路径传发起对话
     clearInterval(lockRenewalTimer);
     releaseFileLock('main_thread');
     return {success:true,testVersion:newVersion,activeSkills:currentIndex.active_skills};
@@ -10288,7 +10381,7 @@ async function handleDiscardTestBranch(payload){
       await updateFile('/skills/current_version.json',JSON.stringify(index,null,2));
     }
     releaseFileLock('main_thread');
-    await refreshSkillCache();
+await refreshSkillCache(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04] 工具路径传发起对话
     return {success:true};
   }catch(e){
     if(lockAcquired){try{releaseFileLock('main_thread');}catch(e2){}}
@@ -10329,7 +10422,7 @@ async function handleRollbackToVersion(payload){
     currentIndex.changelog.push({from_version:oldVersion,to_version:targetVersion,action:'rollback',timestamp:new Date().toISOString(),reason:reason});
     await updateFile('/skills/current_version.json',JSON.stringify(currentIndex,null,2));
     releaseFileLock('main_thread');
-    await refreshSkillCache();
+await refreshSkillCache(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04] 工具路径传发起对话
     return {success:true,version:targetVersion};
   }catch(e){
     if(lockAcquired){try{releaseFileLock('main_thread');}catch(e2){}}
@@ -10493,8 +10586,9 @@ function handleTaskWorkerMessage(event){
   }
 }
 
-function sendToTaskWorker(type,params,timeout){
-  timeout=timeout||6000000;
+// ★ [FIX-2026-08-04-h] 支持外部取消 signal：abort → 通知 worker(abort_task) + 立即 reject（防超时后底层任务滞留/重试并发）
+function sendToTaskWorker(type,params,timeout,signal){
+  timeout=timeout||60000; // ★ [FIX-2026-08-04-d] 默认超时100分钟→60秒：worker挂死时pendingWorkerRequests条目长期滞留(100min才清理)；显式传超时的调用不受影响
   return new Promise(function(resolve,reject){
     var id='task_'+crypto.randomUUID();
     var settled=false;
@@ -10509,16 +10603,38 @@ function sendToTaskWorker(type,params,timeout){
       reject:function(err){if(settled)return;settled=true;clearTimeout(timer);reject(err);}
     });
     if(!taskWorker){
+
       clearTimeout(timer);settled=true;
       reject(new Error('任务Worker未启动'));
       return;
     }
+    // ★ [FIX-2026-08-04-h] 已取消的 signal：直接失败，不发任务消息
+    if(signal&&signal.aborted){
+      settled=true;clearTimeout(timer);pendingWorkerRequests.delete(id);
+      reject(new Error('任务已取消: '+type));
+      return;
+    }
+
     try{
       taskWorker.postMessage({id:id,type:type,params:params});
     }catch(e){
       clearTimeout(timer);settled=true;
       pendingWorkerRequests.delete(id);
       reject(new Error('任务Worker消息发送失败: '+e.message));
+    }
+    // ★ [FIX-2026-08-04-h] 外部取消：signal abort → 通知 worker 丢弃该任务 + 本请求立即失败
+    if(signal){
+      if(signal.aborted){
+        settled=true;clearTimeout(timer);pendingWorkerRequests.delete(id);
+        reject(new Error('任务已取消: '+type));
+        return;
+      }
+      signal.addEventListener('abort',function(){
+        if(settled)return;
+        settled=true;clearTimeout(timer);pendingWorkerRequests.delete(id);
+        try{if(taskWorker)taskWorker.postMessage({type:'abort_task',id:id});}catch(e){}
+        reject(new Error('任务已取消: '+type));
+      },{once:true});
     }
   });
 }
@@ -10662,7 +10778,7 @@ function _buildLLMRequest(messages,tools,stream,source){
     _estMsgTotal=0;
     for(var _mii=0;_mii<cleanedMessages.length;_mii++){_estMsgTotal+=(cleanedMessages[_mii]._tokens||_estimateTokens(_getContentText(cleanedMessages[_mii].content)));}
     // ★ 极端丢弃已移除：跨轮精炼已压缩大块工具结果，剩余超限由 API 自行截断
-    // ★ 孤立tool清理已由 _validateMessageSequence 统一处理（见第9284行）
+    // ★ 孤立tool清理已由 _validateMessageSequence 统一处理（见第10719行）
     // ★ 自适应max_tokens：感知上下文使用量自动回退，同压缩阈值逻辑
     //   上下文压力大时自动缩小max_tokens，总用量不超模型上限，防止API静默截断
     //   估算包含: messages + tools定义(JSON Schema) + headroom(8000,覆盖分词偏差)
@@ -10772,11 +10888,31 @@ function _validateMessageSequence(messages){
 // 非流式LLM调用 — API成功后单一递增
 async function callLLM(messages,tools,stream,source){
   source=source||'user';
+  var _clConvId=_streamTargetConvId||currentConversationId; // ★ [FIX-2026-08-04] 压缩await期间可切对话，捕获发起对话防token累计器写错
+  // ★ [FIX-2026-08-04-d] 非流式请求可中止+180s超时：原实现fetch无signal，停止按钮只对流式生效、网络挂起永久悬挂。
+  //   挂载AbortController到发起对话state.llmController(与流式共用停止链)，fetch返回后恢复原controller防覆盖流式句柄
+  function _clFetch(url,opts){
+    var _c=new AbortController();
+    var _t=setTimeout(function(){_c.abort();},180000);
+    var _cs0=_ensureConvState(_clConvId);
+    var _prev=_cs0?_cs0.llmController:null;
+    if(_cs0)_cs0.llmController=_c;
+    if(currentConversationId===_clConvId)activeLLMController=_c;
+    return fetch(url,Object.assign({},opts,{signal:_c.signal})).then(function(r){
+      clearTimeout(_t);
+      if(_cs0&&_cs0.llmController===_c)_cs0.llmController=_prev;
+      if(currentConversationId===_clConvId&&activeLLMController===_c)activeLLMController=null;
+      return r;
+    },function(e){
+      clearTimeout(_t);
+      if(_cs0&&_cs0.llmController===_c)_cs0.llmController=_prev;
+      if(currentConversationId===_clConvId&&activeLLMController===_c)activeLLMController=null;
+      throw (e&&e.name==='AbortError')?new Error('请求中止(用户停止或180s超时): '+source):e;
+    });
+  }
+
   var req=_buildLLMRequest(messages,tools,stream,source);
-  var response=await fetch(req.baseUrl,{
-    method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
-    body:JSON.stringify(req.body)
-  });
+  var response=await _clFetch(req.baseUrl,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},body:JSON.stringify(req.body)});
   if(!response.ok){
     var errText=await response.text();
     // 400 maximum context length → 从报错提取token判断能否回退max_tokens，否则压缩
@@ -10791,10 +10927,7 @@ async function callLLM(messages,tools,stream,source){
           debugLogger.warn('callLLM 回退 max_token 重试,用满上下文窗口: actualCtx='+_clActualCtx+' ctx='+_clCtx);
           var req2=_buildLLMRequest(messages,tools,stream,source);
           req2.body.max_tokens=Math.max(1,_clCtx-_clActualCtx-2000);
-          var response2=await fetch(req2.baseUrl,{
-            method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req2.apiKey},
-            body:JSON.stringify(req2.body)
-          });
+      var response2=await _clFetch(req2.baseUrl,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req2.apiKey},body:JSON.stringify(req2.body)});
           if(response2.ok){
             await budgetManager.recordCall(source);
             if(stream)return response2;
@@ -10824,9 +10957,9 @@ async function callLLM(messages,tools,stream,source){
         if(_clSys)messages.push(_clSys);
         Array.prototype.push.apply(messages,_clCompressed);
         // ★ [v3.0] 压缩后立即同步累计器+刷新+持久化（摘要已带真实_tokens，reduce含system）
-        _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+        _convTokenAccumulator[_clConvId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
         _updateToolbarTokenDisplay();
-        _saveTokenCounts();
+        _saveTokenCounts(_clConvId);
       }else{
         // ★ 压缩失败 → 降级为按user轮次整体丢弃最旧消息（确定性成功，不依赖LLM）
         debugLogger.warn('callLLM 压缩失败，降级为丢弃最旧user轮次...');
@@ -10835,15 +10968,12 @@ async function callLLM(messages,tools,stream,source){
           throw new Error('上下文压缩失败且无可丢弃的旧消息(400 context length exceeded)。请手动压缩上下文或新建对话。');
         }
         // ★ [v3.0] 降级丢弃后同样同步累计器（被丢消息的_tokens不再计入；system在index0不受影响）
-        _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+        _convTokenAccumulator[_clConvId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
         _updateToolbarTokenDisplay();
-        _saveTokenCounts();
+        _saveTokenCounts(_clConvId);
       }
       var req3=_buildLLMRequest(messages,tools,stream,source);
-      var response3=await fetch(req3.baseUrl,{
-        method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req3.apiKey},
-        body:JSON.stringify(req3.body)
-      });
+      var response3=await _clFetch(req3.baseUrl,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req3.apiKey},body:JSON.stringify(req3.body)});
       if(response3.ok){
         await budgetManager.recordCall(source);
         if(stream)return response3;
@@ -10872,6 +11002,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
   var attempt=0;
   var _maxTokenRolledBack=false;
   var _stCompressFailCount=0;
+  var _stConvId=_streamTargetConvId||currentConversationId; // ★ [FIX-2026-08-04] 压缩await期间可切对话，捕获发起对话防token累计器写错
 
   // ★ 可中断延迟：等待期间每200ms检查暂停标志 → 暂停按钮即时响应
   async function _interruptibleSleep(ms, cs){
@@ -10885,7 +11016,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
   }
 
   while(true){
-    var cs=_ensureConvState(currentConversationId);
+    var cs=_ensureConvState(_stConvId); // ★ [FIX-2026-08-04-b] 用发起对话检查stopRequested：处理中切到B后currentConversationId已变→会误查B的停止标志（用户停B会误杀A，用户停A失效）
     if(cs&&cs.stopRequested){throw new Error('用户已中止');}
 
     if(attempt>0){
@@ -10901,7 +11032,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
     for(var fetchAttempt=0;fetchAttempt<12;fetchAttempt++){
       if(cs&&cs.stopRequested){throw new Error('用户已中止');}
       var controller=new AbortController();
-      activeLLMController=controller;
+      if(currentConversationId===_stConvId)activeLLMController=controller; if(cs)cs.llmController=controller; // ★ [FIX-2026-08-04-b] 代理值仅当当前对话=发起对话时同步，防A的controller写进B.state→停止按钮误杀A
       if(cs)cs.llmController=controller;
       var timeoutId=setTimeout(function(){controller.abort();},1800000);
       try{
@@ -10915,7 +11046,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
         clearTimeout(timeoutId);
         lastFetchError=e;
         if(e.name==='AbortError'){
-          activeLLMController=null;
+          if(currentConversationId===_stConvId)activeLLMController=null; // ★ [FIX-2026-08-04-b] 仅清发起对话的代理引用
           throw new Error('用户已中止');
         }
         if(e instanceof TypeError&&fetchAttempt<11){
@@ -10932,7 +11063,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       lastFetchError=new Error('API请求失败 ('+response.status+'): '+_httpErrText);
     }
     if(!response||(response&&!response.ok)){
-      activeLLMController=null;
+      if(currentConversationId===_stConvId)activeLLMController=null; // ★ [FIX-2026-08-04-b] 仅清发起对话的代理引用
       if(lastFetchError instanceof TypeError)continue;
       // 可恢复 HTTP 状态码 → 外层退避重试
       if(response&&(response.status===429||response.status===502||response.status===503||response.status===504))continue;
@@ -10968,9 +11099,9 @@ async function streamChatCompletion(messages,tools,onChunk,source){
           Array.prototype.push.apply(messages,_stCompressed);
           _stCompressFailCount=0;
           // ★ [v3.0] 压缩后立即同步累计器+刷新+持久化（摘要已带真实_tokens，reduce含system）
-          _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+          _convTokenAccumulator[_stConvId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
           _updateToolbarTokenDisplay();
-          _saveTokenCounts();
+          _saveTokenCounts(_stConvId);
         }else{
           // ★ 压缩失败（LLM摘要瞬时失败）→ 不throw，降级为按user轮次整体丢弃最旧消息（确定性成功）
           //   仅当无可丢弃时才抛错，防止无限重试死循环
@@ -10981,23 +11112,23 @@ async function streamChatCompletion(messages,tools,onChunk,source){
             throw new Error('上下文压缩失败且无可丢弃的旧消息(400 context length exceeded)。请手动压缩上下文或新建对话。');
           }
           // ★ [v3.0] 降级丢弃后同样同步累计器（被丢消息的_tokens不再计入；system在index0不受影响）
-          _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+          _convTokenAccumulator[_stConvId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
           _updateToolbarTokenDisplay();
-          _saveTokenCounts();
+          _saveTokenCounts(_stConvId);
         }
         response=null;
         break;
       }
-      if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_failure',payload:{taskId:currentConversationId||'',errorType:response?'HTTP_'+response.status:'NetworkError',relevantSkills:skillCache.activeSkillIds||[],summary:(lastFetchError?lastFetchError.message:'API请求失败').substring(0,200)}});}
+      // ★ [FIX-2026-08-04-b] 删除重复task_failure通知：与processUserMessage catch(19536)重复发送→reflectionScheduler双倍计数；统一由19536(真taskId)负责
       throw lastFetchError||new Error('API请求失败');
     }
-    activeLLMController=null;
+    if(currentConversationId===_stConvId)activeLLMController=null; // ★ [FIX-2026-08-04-b] 仅清发起对话的代理引用
     if(attempt===1){
       await budgetManager.recordCall(source);
     }
 
     var reader=response.body.getReader();
-    activeStreamReader=reader;
+    if(currentConversationId===_stConvId)activeStreamReader=reader; if(cs)cs.streamReader=reader; // ★ [FIX-2026-08-04-b] 代理值仅当当前对话=发起对话时同步，防A的reader写进B.state导致停止按钮误杀A
     var decoder=new TextDecoder();
     var buffer='';
     var streamTimeoutId;
@@ -11026,12 +11157,12 @@ async function streamChatCompletion(messages,tools,onChunk,source){
           if(!trimmed||!trimmed.startsWith('data:'))continue;
           var data=trimmed.slice(5).trim();
           if(data==='[DONE]'){
-            activeStreamReader=null;
+            if(currentConversationId===_stConvId)activeStreamReader=null; if(cs)cs.streamReader=null; // ★ [FIX-2026-08-04-b] 仅清发起对话的引用
             recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
             _tagMessageTokens(messages, streamUsage, source);
             // ★ 立即同步累计器：只用精确 _tokens，无标记的消息贡献 0
-            _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
-            saveCurrentMessages();
+            _convTokenAccumulator[_stConvId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+            saveCurrentMessages({convId:_stConvId});
 
             _updateToolbarTokenDisplay();
             return finishReason||'stop';
@@ -11058,21 +11189,21 @@ async function streamChatCompletion(messages,tools,onChunk,source){
         debugLogger.warn(' 流中无choices: lines='+(typeof lines!=='undefined'?lines.length:'?')+' | finishReason=null | content空');
       }
       if(!streamError){
-        activeStreamReader=null;
+        if(currentConversationId===_stConvId)activeStreamReader=null; if(cs)cs.streamReader=null; // ★ [FIX-2026-08-04-b] 仅清发起对话的引用
         recordDailyTokenUsage(messages, totalStreamContent, streamUsage);
         _tagMessageTokens(messages, streamUsage, source);
         // ★ 立即同步累计器：只用精确 _tokens，无标记的消息贡献 0
-        _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
-        saveCurrentMessages();
+        _convTokenAccumulator[_stConvId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+        saveCurrentMessages({convId:_stConvId});
 
         _updateToolbarTokenDisplay();
         debugLogger.info(' 流式完成: '+finishReason+' | 来源:'+source+' | 消息数:'+messages.length+(streamUsage?' | usage:精确':' | usage:估算'));
-        if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_success',payload:{taskId:currentConversationId||'',relevantSkills:skillCache.activeSkillIds||[],summary:totalStreamContent.substring(0,200)}});}
+        // ★ [FIX-2026-08-04-b] 删除重复task_success通知：与processUserMessage finally(19505)重复发送→reflectionScheduler双倍计数；且此处taskId传convId非真taskId；统一由19505负责
         return finishReason||'stop';
       }
     }finally{
       if(streamTimeoutId)clearTimeout(streamTimeoutId);
-      activeStreamReader=null;
+      if(currentConversationId===_stConvId)activeStreamReader=null; if(cs)cs.streamReader=null; // ★ [FIX-2026-08-04-b] 仅清发起对话的引用：代理值清当前对话会误清B的进行中reader
       try{reader.cancel();}catch(e){}
       try{reader.releaseLock();}catch(e){}
     }
@@ -11089,7 +11220,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
       totalStreamContent='';
       continue;
     }
-    if(source==='user'&&evoWorker){evoWorker.postMessage({type:'task_failure',payload:{taskId:currentConversationId||'',errorType:'StreamError',relevantSkills:skillCache.activeSkillIds||[],summary:(streamError?streamError.message:'').substring(0,200)}});}
+    // ★ [FIX-2026-08-04-b] 删除重复task_failure通知：此处曾用currentConversationId(切对话后错ID)且与processUserMessage catch(19536)重复发送→reflectionScheduler双倍计数；统一由19536(真taskId)负责
     throw streamError;
   }
 }
@@ -11454,9 +11585,9 @@ async function toolCodeRunner(args){
   }
 
   // ── 公共执行逻辑 ──
-  var sandboxDir=args.sandbox_dir||('/sandbox/'+(currentConversationId||'default')+'/');
+  var sandboxDir=args.sandbox_dir||('/sandbox/'+(_streamTargetConvId||currentConversationId||'default')+'/'); // ★ [FIX-2026-08-04] 工具执行期间切对话沙箱目录仍属发起对话
   if(!sandboxDir.endsWith('/'))sandboxDir+='/';
-  var vfsSnapshot=await collectVfsSnapshot(sandboxDir);
+  var vfsSnapshot=await collectVfsSnapshot(sandboxDir,args.context_files||{}); // ★ [FIX-2026-08-04-d] 传context_files白名单，配合collectVfsSnapshot前缀过滤
 
   var isPython=(language==='python');
   var runTimeout=args.timeout||(isPython?120000:30000);
@@ -11475,7 +11606,9 @@ async function toolCodeRunner(args){
   var resultText=(output&&output.result!==undefined&&output.result!==null)?output.result:(typeof output==='string'?output:JSON.stringify(output));
   var writeCount=0,skipCount=0,skippedPaths=[];
   // ★ [回写防御] 运行时垃圾路径（__pycache__/.pyc/.pyo/.tmp/.swp/~$/.DS_Store）→ 不回写；delete 不拦截（用于清理历史垃圾）
-  var _isJunk=function(p){var _bn=p.split('/').pop();return /\/__pycache__\/|\.pyc$|\.pyo$|\.tmp$|\.swp$|\.DS_Store$/.test(p)||_bn.indexOf('~$')===0;};
+  // ★ [FIX-2026-08-04-d] 正则预编译：原实现在fsChanges循环内每次匹配重建正则；现模块级复用
+  var _JUNK_RE=/\/__pycache__\/|\.pyc$|\.pyo$|\.tmp$|\.swp$|\.DS_Store$/;
+  var _isJunk=function(p){var _bn=p.split('/').pop();return _JUNK_RE.test(p)||_bn.indexOf('~$')===0;};
   // ★ [下载气泡] /downloads/ 分片组 .meta 元信息：主名 → {size,mime,parts}
   var _dlMetaMap={};
   for(var ci=0;ci<fsChanges.length;ci++){
@@ -13013,9 +13146,9 @@ async function toolFuzzySearch(args){
 // 第27部分：工具执行调度中心
 // ================================================================
 
-function getToolsDescription(role){
+function getToolsDescription(role, convId){ // ★ [FIX-2026-08-04-c] 新增convId参数：工具描述按发起对话查扩展工具激活集
   var keys=Object.keys(TOOL_REGISTRY).sort();
-  var convId=currentConversationId;
+var convId=convId||(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04-c] 工具描述按发起对话查扩展工具激活集：prompt构建在await后执行，currentConversationId可能已切走→注入B的工具集
   var coreParts=[];
   var extParts=[];
   var supervisorParts=[];
@@ -13050,9 +13183,10 @@ function getToolsDescription(role){
   return result;
 }
 
-async function _withTimeout(promise,ms,label){
+// ★ [FIX-2026-08-04-h] 超时取消钩子：第4参 onTimeout 在超时触发时调用（用于 abort 底层任务），与 Promise.race 兼容
+async function _withTimeout(promise,ms,label,onTimeout){
   var timer;
-  var timeout=new Promise(function(_,rej){timer=setTimeout(function(){rej(new Error('工具执行超时('+ms/1000+'s): '+label));},ms);});
+  var timeout=new Promise(function(_,rej){timer=setTimeout(function(){rej(new Error('工具执行超时('+ms/1000+'s): '+label));if(typeof onTimeout==='function'){try{onTimeout();}catch(e){}}},ms);});
   try{return await Promise.race([promise,timeout]);}finally{clearTimeout(timer);}
 }
 
@@ -13137,10 +13271,13 @@ async function executeTool(toolCall,artifacts){
       return {role:'tool',tool_call_id:toolCall.id,content:'---tool:'+toolName+' err 0ms 0ch param_error---\n[ERR_CODE] '+_validationResult.code+'\n[PARAM] '+_validationResult.param+'\n[EXPECTED] '+_validationResult.expected+'\n[RECEIVED] '+_validationResult.received+'\n[MESSAGE] '+_validationResult.message+'\n[SUGGEST] '+_validationResult.suggest+'\n[DOC] help "'+toolName+'"'};
     }
     var result;
+    // ★ [FIX-2026-08-04-h] 工具超时可取消：AbortController 挂 execute 链路，超时触发 abort（worker 收 abort_task / 主线程 fetch 收 signal）
+    var _actl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var _aSig=_actl?_actl.signal:null;
     if(toolDef.executor==='task_worker'){
-      result=await _withTimeout(executeTaskWorkerTool(toolName,args),1800000,toolName);
+      result=await _withTimeout(executeTaskWorkerTool(toolName,args,_aSig),1800000,toolName,function(){if(_actl){_actl.abort();debugLogger.warn('工具超时已发送取消信号: '+toolName);}});
     }else{
-      result=await _withTimeout(executeMainThreadTool(toolName,args),1800000,toolName);
+      result=await _withTimeout(executeMainThreadTool(toolName,args,_aSig),1800000,toolName,function(){if(_actl){_actl.abort();debugLogger.warn('工具超时已发送取消信号: '+toolName);}});
     }
     var _elapsed=Date.now()-_t0;
     debugLogger.info(' '+toolName+' ('+_elapsed+'ms)');
@@ -13194,7 +13331,7 @@ async function executeTool(toolCall,artifacts){
 }
 
 
-async function executeMainThreadTool(toolName,args){
+async function executeMainThreadTool(toolName,args,signal){
   switch(toolName){
     case 'filesystem':return await toolFilesystem(args);
     case 'code_runner':return await toolCodeRunner(args);
@@ -13210,7 +13347,7 @@ async function executeMainThreadTool(toolName,args){
     case 'knowledge_base':return await toolKnowledgeBase(args);
     case 'skill_manager':return await toolSkillManager(args);
     case 'pdf_generate':return await toolPdfGenerate(args);
-    case 'custom_api_call':return await toolCustomApiCall(args);
+    case 'custom_api_call':return await toolCustomApiCall(args,signal);
     case 'mcp_connect':return await toolMcpConnect(args);
     case 'user_function_call':return await toolUserFunctionCall(args);
     case 'convert_format':return await toolConvertFormat(args);
@@ -13232,7 +13369,7 @@ async function executeMainThreadTool(toolName,args){
     case 'world_validator':return await toolWorldSimulator(args);
     case 'vis_network':return await toolVisNetwork(args);
     case 'flow_mode':return await toolFlowMode(args);
-    case 'todo':return await _executeTodo(args, currentConversationId);
+    case 'todo':return await _executeTodo(args, _streamTargetConvId||currentConversationId);
     case 'flow_context_new':return await toolFlowNoop('context_new');
     case 'flow_deliver':return await toolFlowNoop('deliver');
     case 'help':return await toolHelp(args);
@@ -13243,9 +13380,8 @@ async function executeMainThreadTool(toolName,args){
 async function toolFlowMode(args){
   var action=args.action||'start';
   if(action!=='start')return JSON.stringify({ok:false,message:'不支持的操作'});
-  if(flowSession()&&flowSession().active)return JSON.stringify({ok:false,message:'心流模式已在运行中'});
-
-  var convId = currentConversationId;
+  var convId = _streamTargetConvId||currentConversationId; // ★ [FIX-2026-08-04] 工具路径用发起对话，防切对话后读错todos/flow会话
+  if(_flowSessions[convId]&&_flowSessions[convId].active)return JSON.stringify({ok:false,message:'心流模式已在运行中'}); // ★ [FIX-2026-08-04-b] 检查发起对话的flow会话，防切走后误读B的状态
   var todos = _getTodos(convId);
   if(!todos||!todos.active){
     return JSON.stringify({ok:false,message:'未找到目标清单。请先用 todo create 拆解任务，再启动心流模式。'});
@@ -13272,15 +13408,15 @@ async function toolFlowMode(args){
     };
   });
 
-  _setFlowSession(sess);
-  await _saveFlowSession();
+_setFlowSession(sess, convId); // ★ [FIX-2026-08-04] 显式传发起对话
+await _saveFlowSession(convId); // ★ [FIX-2026-08-04] 显式传发起对话，防切换后存错flow会话
   try{await createFile(workingDir+'.gitkeep','');}catch(e){}
   // ★ 记录心流气泡起始位置，用于后续折叠
   var _msgList = getConvMessagesList(convId);
   var _preFlowCount = _msgList ? _msgList.childElementCount : 0;
   // ★ 同步阻塞执行心流，完成后直接作为该工具的结果返回
   var _fsCs=_ensureConvState(convId);
-  await processFlowTurn(sess.task,_fsCs,currentTaskId);
+  await processFlowTurn(sess.task,_fsCs,currentTaskId,convId); // ★ [FIX-2026-08-04-b] 显式传发起对话：阻塞执行期间用户切走时，processFlowTurn内部可读到正确的flow会话
   // processFlowTurn 结束时设置了 idle，恢复 processing 状态（LLM循环还在继续）
   setStatus('processing');
   // ★ 折叠心流内部气泡（避免主agent回复被顶到下方）
@@ -13322,7 +13458,7 @@ async function toolFlowMode(args){
     var _trace=[],_chain=[],_open=[];
     for(var _ti=0;_ti<_todoItems.length;_ti++){var _it=_todoItems[_ti];if(_it.status==='done'){_trace.push('['+_it.id+'] '+_it.desc+(_it.evidence?' | '+_it.evidence:''));}else if(_it.status==='failed'){_open.push('['+_it.id+'] '+_it.desc+' | 受阻: '+(_it.reason||''));}}
     if(sess.deliveryMessage)_chain.push('最终方案 | 质量:'+(sess.bestScore*100).toFixed(0)+'%');
-     var structured='心流已完成，以下是执行结果摘要（主Agent据此向用户汇报）：\n\n〈执行迹〉\n'+(_trace.length?'- '+_trace.join('\n- '):'(无)')+'\n\n〈推理链〉\n'+(_chain.length?'- '+_chain.join('\n- '):'(自动迭代)')+'\n\n〈关键数据〉\n- 迭代: '+sess.iteration+'轮\n- 质量评分: '+(sess.bestScore*100).toFixed(0)+'%\n- 交付目录: '+sess.workingDir+'\n\n〈待办〉\n'+(_open.length?'- '+_open.join('\n- '):'(无)');
+    var structured='心流已完成，以下是执行结果摘要（主Agent据此向用户汇报）：\n\n〈执行迹〉\n'+(_trace.length?'- '+_trace.join('\n- '):'(无)')+'\n\n〈推理链〉\n'+(_chain.length?'- '+_chain.join('\n- '):'(自动迭代)')+'\n\n〈关键数据〉\n- 迭代: '+sess.iteration+'轮\n- 质量评分: '+(sess.bestScore*100).toFixed(0)+'%\n- 交付目录: '+sess.workingDir+'\n\n〈待办〉\n'+(_open.length?'- '+_open.join('\n- '):'(无)');
     if(sess.deliveryMessage)structured+='\n\n【交付快照】\n'+sess.deliveryMessage;
     return '---tool:flow_mode ok 0ms '+structured.length+'ch structured---\n'+structured;
   }
@@ -13335,7 +13471,7 @@ async function toolFlowNoop(type){
 var _toolEmbeddings={}; // 工具语义搜索向量缓存
 
 async function toolHelp(args){
-  var convId=currentConversationId;
+  var convId=_streamTargetConvId||currentConversationId; // ★ [FIX-2026-08-04] 工具路径用发起对话，防切对话后查询到B的激活状态
   var action=args.action||'list';
 
   // ── query：语义搜索工具 ──
@@ -13846,10 +13982,12 @@ async function toolPdfGenerate(args){
 }
 
 // --- 自定义API调用 (支持{{VAR}}模板替换) ---
-async function toolCustomApiCall(args){
+async function toolCustomApiCall(args,extSignal){
   var envVars=settings.environment_variables||{};
   var endpoint=(args.endpoint||'').replace(/\{\{(\w+)\}\}/g,function(m,key){return envVars[key]||m;});
-  var fetchOpts={method:args.method||'GET',headers:Object.assign({'Accept':'application/json'},args.headers||{}),signal:AbortSignal.timeout(args.timeout||15000)};
+  var _tSig=AbortSignal.timeout(args.timeout||15000);
+  var _fSig=(extSignal&&typeof AbortSignal!=='undefined'&&typeof AbortSignal.any==='function')?AbortSignal.any([_tSig,extSignal]):_tSig; // ★ [FIX-2026-08-04-h] 外部取消信号与内部超时信号合并（工具超时→fetch立即中断）
+  var fetchOpts={method:args.method||'GET',headers:Object.assign({'Accept':'application/json'},args.headers||{}),signal:_fSig};
   if(args.body&&(args.method==='POST'||args.method==='PUT'||args.method==='PATCH')){
     var _body=args.body;
     if(typeof _body==='object'){
@@ -15319,7 +15457,7 @@ async function _subAgentLLM(systemPrompt,userPrompt,toolsWhitelist,temperature,t
 
      var resp=await fetch(req.baseUrl,{
       method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+req.apiKey},
-      body:JSON.stringify(req.body)
+      body:JSON.stringify(req.body),signal:AbortSignal.timeout(180000)
     });
     if(!resp.ok){var et=await resp.text();throw new Error('SubAgent API error('+resp.status+'): '+et.substring(0,300));}
     await budgetManager.recordCall('pipeline'); // 流水线独立计数
@@ -17100,7 +17238,7 @@ async function toolSkillManager(args){
       skillCache.activeSkillIds.push(found.id);
     }
     // 同步到当前对话状态 + 持久化
-    var cs=_ensureConvState(currentConversationId);
+    var cs=_ensureConvState(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04] 工具执行期间切对话，技能激活仍写发起对话
     if(cs)cs.activeSkillIds=skillCache.activeSkillIds.slice();
     await _persistActiveSkillIds();
     return ' 技能已激活: **'+(found.skill.name||found.id)+'** (ID: `'+found.id+'`)\n  触发词: '+(found.skill.trigger||'无')+'\n  当前激活技能: '+skillCache.activeSkillIds.map(function(x){return '`'+x+'`';}).join(', ');
@@ -17109,7 +17247,7 @@ async function toolSkillManager(args){
   if(action==='reset'){
     var prevCount=skillCache.activeSkillIds.length;
     skillCache.activeSkillIds=[];
-    var cs=_ensureConvState(currentConversationId);
+    var cs=_ensureConvState(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04] 同set分支：工具路径用发起对话
     if(cs)cs.activeSkillIds=[];
     await _persistActiveSkillIds();
     return ' 已卸载全部激活技能 (之前有 '+prevCount+' 个激活)。现在所有技能的prompt_fragment都不会注入system prompt。使用 `skill_manager action="set" id="技能ID"` 重新激活。';
@@ -17121,9 +17259,10 @@ async function toolSkillManager(args){
 // 持久化 activeSkillIds 到当前对话 IndexedDB 记录
 async function _persistActiveSkillIds(){
   try{
+    var _skPid=_streamTargetConvId||currentConversationId; // ★ [FIX-2026-08-04] 工具路径=发起对话，防切对话后技能状态写错对话
     // 持久化到当前对话的 IndexedDB 记录
-    if(!currentConversationId)return;
-    var conv=conversationDB.entries.find(function(e){return e.id===currentConversationId;});
+    if(!_skPid)return;
+    var conv=conversationDB.entries.find(function(e){return e.id===_skPid;});
     if(conv){
       conv.activeSkillIds=skillCache.activeSkillIds.slice();
       await saveConversationToDB(conv);
@@ -17131,7 +17270,7 @@ async function _persistActiveSkillIds(){
   }catch(e){debugLogger.warn('持久化activeSkillIds失败: '+e.message);}
 }
 var _searchCache=new Map();
-async function executeTaskWorkerTool(toolName,args){
+async function executeTaskWorkerTool(toolName,args,signal){
   switch(toolName){
     case 'search':{
       if(!settings.tavily_enabled)throw new Error('Tavily 联网搜索已在设置中关闭。如需使用请前往设置面板开启。');
@@ -17141,7 +17280,7 @@ async function executeTaskWorkerTool(toolName,args){
       var _cached=_searchCache.get(_cacheKey);
       if(_cached&&(Date.now()-_cached.ts<300000))return _cached.data;
       var apiKeys=(settings.tavily_api_keys&&settings.tavily_api_keys.length>0)?settings.tavily_api_keys:(settings.tavily_api_key?[settings.tavily_api_key]:[]);
-      var resp=await sendToTaskWorker('search',{query:query,max_results:args.max_results||5,search_depth:args.search_depth||'advanced',include_raw_content:args.include_raw_content||false,include_domains:args.include_domains||[],exclude_domains:args.exclude_domains||[],apiKeys:apiKeys});
+      var resp=await sendToTaskWorker('search',{query:query,max_results:args.max_results||5,search_depth:args.search_depth||'advanced',include_raw_content:args.include_raw_content||false,include_domains:args.include_domains||[],exclude_domains:args.exclude_domains||[],apiKeys:apiKeys},60000,signal); // ★ [FIX-2026-08-04-h] 挂外部取消 signal（工具超时→worker abort_task）
       if(!resp||!resp.success)throw new Error(resp?resp.error:'搜索执行失败');
       if(_searchCache.size>=50){var _ek=_searchCache.keys().next().value;_searchCache.delete(_ek);}
       _searchCache.set(_cacheKey,{ts:Date.now(),data:resp.data});
@@ -17213,7 +17352,7 @@ window.deleteSkill=async function(skillId){
 }
 
 
-async function refreshSkillCache(){
+async function refreshSkillCache(convId){ // ★ [FIX-2026-08-04] 支持指定对话：工具路径传发起对话，防切对话后技能状态写错
   try{
     var indexContent=await readFile('/skills/current_version.json');
     if(!indexContent){skillCache={skills:{},version:0,activeSkillIds:[]};return;}
@@ -17241,8 +17380,8 @@ async function refreshSkillCache(){
     }
     // 尝试从当前对话恢复 activeSkillIds；若无则从索引文件迁移（向后兼容），否则空数组
     var restoredIds=[];
-    if(currentConversationId){
-      var cs=_ensureConvState(currentConversationId);
+if(convId||currentConversationId){
+var cs=_ensureConvState(convId||currentConversationId);
       if(cs&&cs.activeSkillIds&&cs.activeSkillIds.length>0){
         restoredIds=cs.activeSkillIds.slice();
       }else{
@@ -17251,8 +17390,8 @@ async function refreshSkillCache(){
     }
     skillCache={skills:skills,version:index.version||0,activeSkillIds:restoredIds};
     // 同步到当前对话状态
-    if(currentConversationId){
-      var cs2=_ensureConvState(currentConversationId);
+    if(convId||currentConversationId){
+      var cs2=_ensureConvState(convId||currentConversationId);
       cs2.activeSkillIds=restoredIds.slice();
     }
     if(evoWorker){
@@ -17435,9 +17574,9 @@ if(btnSkillEditSave)btnSkillEditSave.addEventListener('click',async function(){
   }
 });
 
-function buildSystemPromptWithSkills(role){
+function buildSystemPromptWithSkills(role, convId){ // ★ [FIX-2026-08-04-c] 新增convId参数：透传getToolsDescription
   var parts=[];
-  var toolsDesc=getToolsDescription(role||'root');
+var toolsDesc=getToolsDescription(role||'root', convId); // ★ [FIX-2026-08-04-c] 透传发起对话，防prompt工具描述查错对话
 
 
   // 静态部分在前（最大化KV-cache命中率）
@@ -17819,10 +17958,10 @@ async function _preExecutionCritique(pendingToolCalls, agentMsgDiv, streamReason
 async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, artifacts, streamReasoning, streamContent, userText, preUserMessages) {
   if (!pendingToolCalls || pendingToolCalls.length === 0) return null;
 
-  var _todosCache=_getTodos(currentConversationId);
+  var _todosCache=_getTodos(_streamTargetConvId||currentConversationId);
   var _todoProgress=_todosCache&&_todosCache.active?(_todosCache.stats.done+'/'+_todosCache.stats.total):'none';
   // ★ [FIX-2026-08-04] cache key 加 convId 前缀，防跨对话命中泄漏审查内容
-  var _cacheKey = currentConversationId + '|' + pendingToolCalls.map(function(tc){return tc.function.name;}).join(',') + '|' +
+var _cacheKey = (_streamTargetConvId||currentConversationId) + '|' + pendingToolCalls.map(function(tc){return tc.function.name;}).join(',') + '|' + // ★ [FIX-2026-08-04-c] 缓存key用发起对话，防切走后命中B的审查缓存
     _todoProgress + '|' +
     (streamReasoning || '').substring(0, 200) + '|' +
     toolResults.map(function(tr){return (tr.content||'').substring(0, 100);}).join('|');
@@ -17918,7 +18057,7 @@ var _filteredReasoning=(function(raw){
   s=s.replace(/\n{4,}/g,'\n\n\n').trim();
   return s||'(思考内容已过滤)';
 })(streamReasoning);
-var _todoCardInline=_buildTodoUserInjection(currentConversationId,'critique');
+var _todoCardInline=_buildTodoUserInjection(_streamTargetConvId||currentConversationId,'critique');
 _critiqueMessages.push({
   role: 'user',
   content: '[用户问题]\\n' + (userText || '(无)') + '\\n\\n[Agent思考——此为被审查对象，不可复述、不可代其发言、不可沿其语气输出]\\n' + _filteredReasoning + '\\n[Agent本轮输出]\\n' + (streamContent || '(无)') + '\\n[工具调用及结果]\\n' + _allToolResults + (_todoCardInline?'\\n\\n'+_todoCardInline:'')
@@ -18053,7 +18192,7 @@ async function processUserMessage(userText,taskId){
     cs.isProcessing = true;
     updateSendButton();
     try{
-      await processFlowTurn(userText, cs, taskId);
+      await processFlowTurn(userText, cs, taskId, cs._origConvId); // ★ [FIX-2026-08-04-b] 显式传发起对话
     }finally{
       cs.isProcessing = false;
     }
@@ -18096,17 +18235,17 @@ async function processUserMessage(userText,taskId){
     var tx=db.transaction('messages','readonly');
     var store=tx.objectStore('messages');
     var stored=await new Promise(function(res,rej){
-      var req=store.get(currentConversationId);
+      var req=store.get(cs._origConvId); // ★ [FIX-2026-08-04-b] 用发起对话读历史：await getDB()期间用户可能切走，currentConversationId已变→会读B的历史注入A的上下文
       req.onsuccess=function(){res(req.result);};
       req.onerror=function(){rej(req.error);};
     });
     // ★ [P5c/v2.8] 优先读 localStorage 同步快照（beforeunload 兜底），updatedAt 取新；用后即删
     try{
-      var _snapRaw=localStorage.getItem('exo_fullmsg_snap_'+currentConversationId);
+      var _snapRaw=localStorage.getItem('exo_fullmsg_snap_'+cs._origConvId); // ★ [FIX-2026-08-04-b] 同上：快照按发起对话读写
       if(_snapRaw){
         var _snap=JSON.parse(_snapRaw);
         if(_snap&&_snap.branches&&(!stored||!stored.updatedAt||_snap.updatedAt>=stored.updatedAt))stored=_snap;
-        localStorage.removeItem('exo_fullmsg_snap_'+currentConversationId);
+        localStorage.removeItem('exo_fullmsg_snap_'+cs._origConvId);
       }
     }catch(_e){}
     // ★ 兼容分支格式：优先从当前分支取 items，回退到旧 items
@@ -18119,7 +18258,7 @@ async function processUserMessage(userText,taskId){
       if(curBr&&curBr.fullMessages&&curBr.fullMessages.length)storedFull=curBr.fullMessages;
     }
     if(!storedItems&&stored&&stored.items)storedItems=stored.items;
-    if(window._flowWakeupMessages){ /* 跳过IndexedDB合并（flow 唤醒轮，17259 已置 null，此分支为显式保护） */ }
+    if(window._flowWakeupMessages){ /* 跳过IndexedDB合并（flow唤醒轮上方18106已消费并置null，此分支为显式保护） */ }
     else if(storedFull){
       // ★ [P3/v2.8] 骨架优先：fullMessages 提供完整 API 上下文（token 级还原）
       //   规则：items 定"用户所见"（编辑/删除权威）；fullMessages 补 tool/tool_calls 结构
@@ -18362,7 +18501,7 @@ async function processUserMessage(userText,taskId){
   // 无需压缩 → 完全静默，无 DOM 操作
   var _preUserMessages = messages.slice();
 
-  var triggered = getTriggeredSkillFragments(userText||'');
+var triggered = getTriggeredSkillFragments(userText||'', cs._origConvId||currentConversationId); // ★ [FIX-2026-08-04-c] 技能/工具推荐按发起对话判激活态
   if(triggered.length > 0){
     messages.push({
       role: 'user',
@@ -18414,7 +18553,6 @@ async function processUserMessage(userText,taskId){
     messagesDiv.addEventListener('scroll',_onUserScroll,{passive:true});
     for(var round=0;;round++){ // 无限循环，由 pendingToolCalls 为空或 finishReason=stop 退出
       agentMsgDiv._currentRound = round;
-      agentMsgDiv._currentRound = round;
       var streamContent='';
       var streamReasoning='';
       var streamToolCalls={};
@@ -18429,9 +18567,11 @@ async function processUserMessage(userText,taskId){
           _renderPending=false;
           if(!_streamingActive)return;
           var body2=contentDiv.querySelector('.msg-body');
-          if(body2)body2.innerHTML=renderMarkdown(_latestAgentContent);
-          else contentDiv.innerHTML=renderMarkdown(_latestAgentContent);
-          _injectCodeCopyButtons(contentDiv);
+          if(body2){
+            if(_renderStreamContent(body2,_latestAgentContent))_injectCodeCopyButtons(contentDiv);
+          }else{
+            if(_renderStreamContent(contentDiv,_latestAgentContent))_injectCodeCopyButtons(contentDiv);
+          }
           if(contentDiv.classList.contains('streaming-cursor')){
             contentDiv.classList.remove('streaming-cursor');
           }
@@ -18459,6 +18599,9 @@ async function processUserMessage(userText,taskId){
       if(typeof window!=='undefined'){
         window.__lastMessages=messages.map(function(m){return {role:m.role,tokens:m._tokens,contentLen:(m.content||'').length,tool_calls:!!m.tool_calls,tool_call_id:m.tool_call_id};});
       }
+      // ★ [FIX-2026-08-04-h] 流式期间关闭 aria-live：FIX-e 降级后为 textContent 增量追加，仍逐 chunk 触发读屏播报
+      try{var _mlEl=document.getElementById('messagesList');if(_mlEl)_mlEl.setAttribute('aria-live','off');}catch(_eA){}
+
       var finishReason=await streamChatCompletion(messages, // 【修复】接收 finish_reason
         activeTools,
         async function(chunk){
@@ -18500,6 +18643,10 @@ async function processUserMessage(userText,taskId){
         },
         'user'
       );
+
+      // ★ [FIX-2026-08-04-h] 流式完成：恢复 aria-live（防读屏逐chunk播报）+ 冲刷最后一帧 thinking
+      try{var _mlEl=document.getElementById('messagesList');if(_mlEl)_mlEl.setAttribute('aria-live','polite');}catch(_eA){}
+      if(typeof _flushThinkingBlock==='function')_flushThinkingBlock();
 
       // ★ 流式完成 → _tagMessageTokens 已在 streamChatCompletion 内部调用完毕
       //    此时 messages 数组所有消息已有本轮增量 _tokens，同步到 DOM 元素
@@ -18657,12 +18804,12 @@ async function processUserMessage(userText,taskId){
       _convTokenAccumulator[cs._origConvId||currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0); // ★ [FIX-2026-08-04] 按发起对话累计，防切换后A的token覆盖B
       _updateToolbarTokenDisplay();
       _saveTokenCounts(cs._origConvId||currentConversationId);
-      var _todoCard=_buildTodoUserInjection(currentConversationId,'main');
+      var _todoCard=_buildTodoUserInjection(cs._origConvId||currentConversationId,'main');
       if(_todoCard){
         messages.push({role:'user',content:_todoCard,_injected:true});
       }
-      // 【心流强制放权】flow_mode启动后根Agent立即停止
-      if(flowSession()&&flowSession().active)break;
+      // 【心流强制放权】flow_mode启动后根Agent立即停止（★ [FIX-2026-08-04-b] 检查发起对话的flow会话，防切走后误判B）
+      if(_flowSessions[cs._origConvId||currentConversationId]&&_flowSessions[cs._origConvId||currentConversationId].active)break;
 
       // 【技能即时注入】如果本轮调用了 skill_manager set/reset，立即刷新系统提示
       // 下次循环迭代调用 API 时，agent 就能看到新的技能策略（messages[0] 已更新）
@@ -18686,7 +18833,7 @@ async function processUserMessage(userText,taskId){
           try{
             var _hArgs=parseToolCallArguments(pendingToolCalls[hpt]);
             if(_hArgs.action==='set'||_hArgs.action==='unset'){
-               activeTools=getActiveTools('root');
+              activeTools=getActiveTools('root');
               messages[0].content=_buildFullSystemPrompt(userText);
               debugLogger.info(' 工具集已刷新（help '+_hArgs.action+'），活跃工具数:'+activeTools.length);
             }
@@ -18765,8 +18912,8 @@ async function processUserMessage(userText,taskId){
         if (_m.role === 'tool') {
           for (var _ri2 = _mainToolCalls.length - 1; _ri2 >= 0; _ri2--) {
             if (_mainToolCalls[_ri2].result === null) {
-var _rc = typeof _m.content === 'string' ? _m.content : JSON.stringify(_m.content || '');
-_mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…' : _rc;
+              var _rc = typeof _m.content === 'string' ? _m.content : JSON.stringify(_m.content || '');
+              _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…' : _rc;
               break;
             }
           }
@@ -18877,7 +19024,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
           }];
           for(var _ci=1; _ci<_preUserMessages.length; _ci++){critiqueMessages.push(_preUserMessages[_ci]);}
           var _evalHistoryCtx = _evalHistory ? '\\n\\n[前序评估历史]\\n'+_evalHistory : '';
-          var _todoCardPost=_buildTodoUserInjection(currentConversationId,'evaluator');
+          var _todoCardPost=_buildTodoUserInjection(cs._origConvId||currentConversationId,'evaluator');
           critiqueMessages.push({
             role:'user',
             content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent+_toolCallSummary+_evalHistoryCtx+(_todoCardPost?'\\n\\n'+_todoCardPost:'')
@@ -18986,7 +19133,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
                 try{
                   var _hArgs=parseToolCallArguments(critPending[_hpt]);
                   if(_hArgs.action==='set'||_hArgs.action==='unset'){
-                     activeTools=getActiveTools('root');
+                    activeTools=getActiveTools('root');
                     debugLogger.info(' [审查] 工具集已刷新（help '+_hArgs.action+'），活跃工具数:'+activeTools.length);
                   }
                 }catch(e){}
@@ -19069,7 +19216,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
 
           }];
           for(var _ri=1; _ri<_preUserMessages.length; _ri++){revisionMessages.push(_preUserMessages[_ri]);}
-          var _todoCardRev=_buildTodoUserInjection(currentConversationId,'revision');
+          var _todoCardRev=_buildTodoUserInjection(cs._origConvId||currentConversationId,'revision');
           revisionMessages.push({
             role:'user',
             content:'[用户问题]\\n'+userText+'\\n\\n[草稿答案]\\n'+_currentContent+_toolCallSummary+'\\n\\n[审查报告]\\n'+evalReport+(_todoCardRev?'\\n\\n'+_todoCardRev:'')
@@ -19102,9 +19249,11 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
                 _revRenderPending=false;
                 if(!_streamingActive)return;
                 var bodyR=contentDiv.querySelector('.msg-body');
-                if(bodyR)bodyR.innerHTML=renderMarkdown(_revLatestContent);
-                else contentDiv.innerHTML=renderMarkdown(_revLatestContent);
-                _injectCodeCopyButtons(contentDiv);
+                if(bodyR){
+                  if(_renderStreamContent(bodyR,_revLatestContent))_injectCodeCopyButtons(contentDiv);
+                }else{
+                  if(_renderStreamContent(contentDiv,_revLatestContent))_injectCodeCopyButtons(contentDiv);
+                }
                 revision.block.textContent=' 修正中'+iterLabelSuffix+'...\n\n'+_revLatestContent.substring(0,2000)+(_revLatestContent.length>2000?'\n...(持续输出中)':'');
               });
             }
@@ -19298,29 +19447,42 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
         for(var _ui=0;_ui<_respImgUrls.length;_ui++){
           if(_uniqueImgUrls.indexOf(_respImgUrls[_ui])===-1) _uniqueImgUrls.push(_respImgUrls[_ui]);
         }
-        for(var _ui=0;_ui<_uniqueImgUrls.length;_ui++){
-          (function(_url,_seq){
-            fetch(_url)
-              .then(function(resp){
-                if(!resp.ok)throw new Error('HTTP '+resp.status);
-                return resp.blob();
-              })
-              .then(function(blob){
-                var _ext='png';
-                var _ct=blob.type;
-                if(_ct.indexOf('jpeg')!==-1)_ext='jpg';
-                else if(_ct.indexOf('gif')!==-1)_ext='gif';
-                else if(_ct.indexOf('webp')!==-1)_ext='webp';
-                else if(_ct.indexOf('svg')!==-1)_ext='svg';
-                var _fn='response_img_'+Date.now()+'_'+_seq+'.'+_ext;
-                registerGeneratedFile(blob,_fn,_ct);
-                debugLogger.info(' 已注册模型回复图片: '+_fn);
-              })
-              .catch(function(e){
-                debugLogger.warn(' 注册模型回复图片失败: '+_url.substring(0,60)+' - '+e.message);
-              });
-          })(_uniqueImgUrls[_ui],_ui);
-        }
+        // ★ [FIX-2026-08-04-d] 图片下载并发限制2 + 30s超时：原实现for循环同步并发全部请求(几十张图同时下载)+无超时(挂起图永久滞留)；catch原已有保留
+        var _dlIdx=0,_dlActive=0,MAX_DL_CONC=2;
+        (function _pumpImgDl(){
+          while(_dlActive<MAX_DL_CONC&&_dlIdx<_uniqueImgUrls.length){
+            _dlActive++;
+            (function(_url,_seq){
+              var _dlCtl=new AbortController();
+              var _dlTid=setTimeout(function(){_dlCtl.abort();},30000);
+              fetch(_url,{signal:_dlCtl.signal})
+                .then(function(resp){
+                  if(!resp.ok)throw new Error('HTTP '+resp.status);
+                  return resp.blob();
+                })
+                .then(function(blob){
+                  var _ext='png';
+                  var _ct=blob.type;
+                  if(_ct.indexOf('jpeg')!==-1)_ext='jpg';
+                  else if(_ct.indexOf('gif')!==-1)_ext='gif';
+                  else if(_ct.indexOf('webp')!==-1)_ext='webp';
+                  else if(_ct.indexOf('svg')!==-1)_ext='svg';
+                  var _fn='response_img_'+Date.now()+'_'+_seq+'.'+_ext;
+                  registerGeneratedFile(blob,_fn,_ct);
+                  debugLogger.info(' 已注册模型回复图片: '+_fn);
+                })
+                .catch(function(e){
+                  debugLogger.warn(' 注册模型回复图片失败: '+_url.substring(0,60)+' - '+e.message);
+                })
+                .finally(function(){
+                  clearTimeout(_dlTid);
+                  _dlActive--;
+                  _pumpImgDl();
+                });
+            })(_uniqueImgUrls[_dlIdx],_dlIdx);
+            _dlIdx++;
+          }
+        })();
       }
     }
 
@@ -19533,7 +19695,8 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
         _streamTargetConvId=null;
       }
     }
-    if(!(flowSession()&&flowSession().active)){var _targetCs=cs._origConvId?_ensureConvState(cs._origConvId):cs;if(_targetCs)_targetCs.isProcessing=false;}
+    var _finFlowSess=_flowSessions[cs._origConvId||currentConversationId]||null; // ★ [FIX-2026-08-04-b] 读发起对话的flow会话，防切走后误判B的flow状态
+    if(!(_finFlowSess&&_finFlowSess.active)){var _targetCs=cs._origConvId?_ensureConvState(cs._origConvId):cs;if(_targetCs)_targetCs.isProcessing=false;}
     cs.stopRequested=false;
     // ★★★【BUGFIX】finally 块中安全清理，防止死引用导致暂停按钮失效
     if(cs.llmController){
@@ -19614,15 +19777,18 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
       }
     }catch(_){}
     updateSendButton();
-    messagesDiv.scrollTop=messagesDiv.scrollHeight;
+    if(currentConversationId===cs._origConvId){messagesDiv.scrollTop=messagesDiv.scrollHeight;} // ★ [FIX-2026-08-04-b] 仅当前显示=发起对话时才滚动，防切走后误滚B的列表
     if(processingError){var _errBrief=processingError.message||'';if(processingError.stack){var _sl=processingError.stack.split('\n').filter(function(l){return l.trim();});if(_sl.length>1)_errBrief+=' | at '+_sl[1].trim();}debugLogger.warn('对话处理完成（有错误）: '+_errBrief);processingError=null;}
   }
-
+ 
   // ★ 心流模式自动启动——必须在 finally 之前、cs 仍在 processing 状态下触发
-  if(flowSession()&&flowSession().active&&flowSession().phase==='aligning'&&!flowSession().supervisorMessages){
+  // ★ [FIX-2026-08-04-b] 用发起对话的flow会话(cs._origConvId)，防处理中切对话后误读B的会话/误启B的flow
+  var _autoFlowConvId=cs._origConvId||currentConversationId;
+  var _autoFlowSess=_flowSessions[_autoFlowConvId]||null;
+  if(_autoFlowSess&&_autoFlowSess.active&&_autoFlowSess.phase==='aligning'&&!_autoFlowSess.supervisorMessages){
     cs.isProcessing = true;
     updateSendButton();
-    await processFlowTurn(flowSession().task, cs, taskId);
+    await processFlowTurn(_autoFlowSess.task, cs, taskId, _autoFlowConvId);
     cs.isProcessing = false;
   }
 }
@@ -19631,26 +19797,29 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
 // 心流模式
 // ================================================================
 
-async function processFlowTurn(userText, cs, taskId){
-  var session = flowSession();
+async function processFlowTurn(userText, cs, taskId, convId){
+  // ★ [FIX-2026-08-04-b] convId显式传发起对话：toolFlowMode同步阻塞执行期间用户可能切走，
+  //   flowSession()读的是当前对话(_flowSessions[currentConversationId])→拿到null或B的会话→心流静默中断/串扰。
+  //   统一改用 _flowSessions[发起对话]，与toolFlowMode的 _setFlowSession(sess, convId) 写入目标一致。
+  var _pfConvId = convId || (cs&&cs._origConvId) || currentConversationId;
+  var session = _flowSessions[_pfConvId]||null;
   if(!session||!session.active)return;
 
   setStatus('flow');
-  var convId = currentConversationId;
-  var messagesDiv = getConvMessagesList(convId);
+  var messagesDiv = getConvMessagesList(_pfConvId);
   if(!messagesDiv)return;
 
   try{
     // 兼容旧会话：phase='aligning' 自动切换为 'executing'
     if(session.phase==='aligning'){ session.phase='executing'; }
     if(session.phase==='executing'){
-      await flowExecuteLoop(session, cs, taskId, messagesDiv, convId);
+      await flowExecuteLoop(session, cs, taskId, messagesDiv, _pfConvId);
     }
   }catch(e){
     debugLogger.error('心流处理异常: '+e.message);
     if(e.message==='用户已中止'){
       // 清理会话状态，防止 active=true 残留导致卡死
-      if(session){session.active=false;session.phase='aborted';_setFlowSession(session);}
+      if(session){session.active=false;session.phase='aborted';_setFlowSession(session, _pfConvId);}
       cs.stopRequested=false;
     }
   }
@@ -19749,7 +19918,7 @@ async function flowExecuteLoop(session, cs, taskId, messagesDiv, convId){
     });
 
 
-    var supTools = getActiveTools('supervisor');
+var supTools = getActiveTools('supervisor', convId); // ★ [FIX-2026-08-04-c] 监工工具集按心流发起对话查激活集
     var supResult = await callLLMWithToolsLoopStreaming(session.supervisorMessages, supTools, cs, messagesDiv);
 
     if(session.delivered)break;
@@ -19764,7 +19933,7 @@ async function flowExecuteLoop(session, cs, taskId, messagesDiv, convId){
     mainCtx.lastMsgIdx = mainCtx.messages.length;
     mainCtx.messages.push({role:'user',content:feedbackText});
 
-    var workerTools = getActiveTools();
+var workerTools = getActiveTools(undefined, convId); // ★ [FIX-2026-08-04-c] 干活Agent工具集按心流发起对话查激活集
     // ★ 干活Agent独立技能：清空全局，让它自己激活
     var _savedSkillIds = skillCache.activeSkillIds.slice();
     skillCache.activeSkillIds = [];
@@ -19779,7 +19948,7 @@ async function flowExecuteLoop(session, cs, taskId, messagesDiv, convId){
 
     _updateFlowProgressDot(session);
     _saveFlowSession(convId);
-    saveCurrentMessages();
+      saveCurrentMessages({convId:cs._origConvId||currentConversationId});
 
     if(session.delivered)break;
   }
@@ -19817,9 +19986,11 @@ async function streamChatCompletionForFlow(messages, activeTools, cs, messagesDi
           _fwRenderPending=false;
           if(contentDiv){
             var body=contentDiv.querySelector('.msg-body');
-            if(body)body.innerHTML=renderMarkdown(_fwLatestContent);
-            else contentDiv.innerHTML=renderMarkdown(_fwLatestContent);
-            _injectCodeCopyButtons(contentDiv);
+            if(body){
+              if(_renderStreamContent(body,_fwLatestContent))_injectCodeCopyButtons(contentDiv);
+            }else{
+              if(_renderStreamContent(contentDiv,_fwLatestContent))_injectCodeCopyButtons(contentDiv);
+            }
             contentDiv.classList.remove('streaming-cursor');
           }
           if(!_fwScrollPending&&_fwIsNearBottom()){
@@ -19934,9 +20105,11 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
           _fsRenderPending=false;
           if(contentDiv){
             var body=contentDiv.querySelector('.msg-body');
-            if(body)body.innerHTML=renderMarkdown(_fsLatestContent);
-            else contentDiv.innerHTML=renderMarkdown(_fsLatestContent);
-            _injectCodeCopyButtons(contentDiv);
+            if(body){
+              if(_renderStreamContent(body,_fsLatestContent))_injectCodeCopyButtons(contentDiv);
+            }else{
+              if(_renderStreamContent(contentDiv,_fsLatestContent))_injectCodeCopyButtons(contentDiv);
+            }
             contentDiv.classList.remove('streaming-cursor');
           }
           if(!_fsScrollPending&&_fsIsNearBottom()){
@@ -20020,10 +20193,10 @@ async function callLLMWithToolsLoopStreaming(messages, activeTools, cs, messages
 
         if(toolName==='todo'){
           var tArgs=parseToolCallArguments(tc);
-          var tResult=_executeTodo(tArgs, currentConversationId);
+          var tResult=_executeTodo(tArgs, cs._origConvId||currentConversationId);
           var _fs5=flowSession();
           if(_fs5 && tResult && tResult.ok!==false){
-            var updatedTodos=_getTodos(currentConversationId);
+            var updatedTodos=_getTodos(cs._origConvId||currentConversationId);
             if(updatedTodos){
               _fs5.goals=updatedTodos.items.map(function(it,j){
                 return {
@@ -20154,7 +20327,7 @@ function buildSupervisorSystemPrompt(session, mainCtx, convId){
     if(injectedCount>0)parts.push(skillBlock);
   }
 
-  parts.push('\n# 工具\n'+getToolsDescription('supervisor'));
+parts.push('\n# 工具\n'+getToolsDescription('supervisor', convId)); // ★ [FIX-2026-08-04-c] 监工prompt工具描述按心流发起对话查激活集
 
   parts.push(buildSupervisorStatusCard(session, mainCtx, convId));
 
@@ -20569,7 +20742,7 @@ function _structurizeEvidence(evidence){
 
 async function flowDeliver(session, cs, messagesDiv){
   try{
-    var todos=_getTodos(currentConversationId);
+    var todos=_getTodos(cs._origConvId||currentConversationId);
     var devDoc='# 心流开发文档\n\n## 任务\n'+session.task+'\n\n## 最终指标\n';
     if(todos&&todos.items){
       for(var i=0;i<todos.items.length;i++){
@@ -20593,15 +20766,15 @@ async function flowDeliver(session, cs, messagesDiv){
     +(session.deliveryMessage||'');
   _addFlowCompletionBubble(summary, messagesDiv);
 
-  await _saveFlowSession(currentConversationId);
+  await _saveFlowSession(cs._origConvId||currentConversationId);
 
   session.active=false;
   session.phase='done';
-  _setFlowSession(session);
+  _setFlowSession(session, cs._origConvId||currentConversationId);
 }
 
 function _addFlowAgentBubble(message, subphase, messagesDiv){
-  if(!messagesDiv)messagesDiv=getConvMessagesList(currentConversationId);
+if(!messagesDiv)messagesDiv=getConvMessagesList(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04-c] 渲染fallback用发起对话，防切走后心流气泡写进B的DOM
   if(!messagesDiv)return;
 
   var msgDiv=document.createElement('div');
@@ -20617,7 +20790,7 @@ function _addFlowAgentBubble(message, subphase, messagesDiv){
 }
 
 function _addFlowSupervisorBubble(feedbackText, iteration, messagesDiv){
-  if(!messagesDiv)messagesDiv=getConvMessagesList(currentConversationId);
+if(!messagesDiv)messagesDiv=getConvMessagesList(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04-c] 渲染fallback用发起对话，防切走后心流气泡写进B的DOM
   if(!messagesDiv)return;
 
   var msgDiv=document.createElement('div');
@@ -20636,7 +20809,7 @@ function _addFlowSupervisorBubble(feedbackText, iteration, messagesDiv){
 }
 
 function _addFlowCompletionBubble(summary, messagesDiv){
-  if(!messagesDiv)messagesDiv=getConvMessagesList(currentConversationId);
+if(!messagesDiv)messagesDiv=getConvMessagesList(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04-c] 渲染fallback用发起对话，防切走后心流气泡写进B的DOM
   if(!messagesDiv)return;
 
   var msgDiv=document.createElement('div');
@@ -20680,7 +20853,7 @@ function _addUserMessageToFlow(userText, messagesDiv){
   messagesDiv.scrollTop=messagesDiv.scrollHeight;
 }
 
-function getTriggeredSkillFragments(userText){
+function getTriggeredSkillFragments(userText, convId){ // ★ [FIX-2026-08-04-c] 新增convId参数：工具推荐按发起对话判激活态
   var fragments=[];
   var skills=skillCache.skills||{};
   var keys=Object.keys(skills);
@@ -20731,7 +20904,7 @@ function getTriggeredSkillFragments(userText){
     'flow_mode':['深度工作','心流','自主迭代','无人值守','自动完成','长时间任务'],
     'vis_network':['关系图谱','网络图','知识图谱','节点图','拓扑图','关联图']
   };
-  var convId=currentConversationId;
+var convId=convId||(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04-c] 工具推荐按发起对话判激活态，防切走后推荐错配
   var toolRecs=[];
   var _ut=userText.toLowerCase(); // 小写化只做一次(内层循环复用)
   var allToolKeys=Object.keys(TOOL_KEYWORDS);
@@ -20764,9 +20937,9 @@ function getTriggeredSkillFragments(userText){
   return fragments;
 }
 
-function getActiveTools(role){
+function getActiveTools(role, convId){ // ★ [FIX-2026-08-04-c] 新增convId参数：工具集按发起对话过滤
   var tools=[];
-  var convId=currentConversationId;
+var convId=convId||(_streamTargetConvId||currentConversationId); // ★ [FIX-2026-08-04-c] 工具执行循环/审查/心流按发起对话查扩展工具激活集，防切走后按B的激活集过滤
   var keys=Object.keys(TOOL_REGISTRY);
   for(var i=0;i<keys.length;i++){
     var tool=TOOL_REGISTRY[keys[i]];
@@ -21005,7 +21178,19 @@ function branchDeleteBranch(branchId) {
 
 
 
-function updateThinkingBlock(msgDiv, thinkingText) {
+// ★ [FIX-2026-08-04-h] thinking 渲染节流：RAF 合并（chunk 密集时每帧最多一次 DOM 更新，消除布局抖动；流式结束由调用方 _flushThinkingBlock 冲刷）
+var _thPending=null,_thRAF=0;
+function _flushThinkingBlock(){
+  _thRAF=0;
+  if(!_thPending)return;
+  var p=_thPending;_thPending=null;
+  _applyThinkingBlock(p.msgDiv,p.text);
+}
+function updateThinkingBlock(msgDiv, thinkingText){
+  _thPending={msgDiv:msgDiv,text:thinkingText};
+  if(!_thRAF)_thRAF=requestAnimationFrame(_flushThinkingBlock);
+}
+function _applyThinkingBlock(msgDiv, thinkingText) {
   var round = (msgDiv._currentRound || 0);
   var blockId = 'thinking-' + msgDiv._msgId + '-r' + round;
   var wrapper = msgDiv;
@@ -23588,10 +23773,25 @@ function initEventBindings(){
             try{localStorage.removeItem(_lsKeys[_lk]);}catch(_eL2){}
           }
         }
-        localStorage.setItem('exo_fullmsg_snap_'+currentConversationId,JSON.stringify({
-          branches:_bdS._branches,currentBranchId:_bdS._currentBranchId,
-          branchOrder:_bdS._branchOrder,updatedAt:Date.now()
-        }));
+        // ★ [FIX-2026-08-04-d] 快照大小保护：JSON>3MB时裁剪各分支fullMessages(保留system+最近20条+_snapTrimmed标记)，
+        //   防大对话快照触发QuotaExceeded导致崩溃恢复静默失效；items(UI气泡)不受影响
+        var _snapData={branches:_bdS._branches,currentBranchId:_bdS._currentBranchId,branchOrder:_bdS._branchOrder,updatedAt:Date.now()};
+        var _snapJson=JSON.stringify(_snapData);
+        if(_snapJson.length>3145728){
+          try{
+            for(var _bkk in _bdS._branches){
+              var _brk=_bdS._branches[_bkk];
+              if(_brk&&Array.isArray(_brk.fullMessages)&&_brk.fullMessages.length>25){
+                var _sysK=_brk.fullMessages[0]&&_brk.fullMessages[0].role==='system'?_brk.fullMessages[0]:null;
+                var _tailK=_brk.fullMessages.slice(-20);
+                _brk.fullMessages=_sysK?[_sysK].concat(_tailK):_tailK;
+                _brk._snapTrimmed=true;
+              }
+            }
+            _snapJson=JSON.stringify(_snapData);
+          }catch(_eT){}
+        }
+        localStorage.setItem('exo_fullmsg_snap_'+currentConversationId,_snapJson);
       }
     }catch(_eS){}
   });
@@ -24258,13 +24458,16 @@ async function _saveBranchMessages(convId,msgList){
 // 保存当前消息 — 带脏标记增量优化
 async function saveCurrentMessages(options){
   options = options || {};
+  options = options || {};
+  var _targetConvId=options.convId||currentConversationId;
+  // ★ [FIX-2026-08-04] DOM永远属于当前显示对话：目标对话≠当前对话时跳过保存（流式完成切走后数据由messages数组落库兜底），防把B的DOM存进A分支
+  if(_targetConvId!==currentConversationId)return;
   var msgList = document.getElementById('messagesList');
-  if (!msgList || msgList.childNodes.length === 0) return;
 
   // 强制全量保存（编辑/删除/beforeunload/对话切换）
   if (options.forceFull) {
     try {
-      await _saveBranchMessages(currentConversationId, msgList);
+      await _saveBranchMessages(options.convId||currentConversationId, msgList); // ★ [FIX-2026-08-04] 支持指定convId：流式完成路径传_stConvId防切对话后存错分支
     } catch(e) {}
     _dirtyMsgIds.clear();
     return;
@@ -24333,9 +24536,10 @@ function renderConversationList(){
   var list=document.getElementById('conversationList');
   if(!list)return;
   if(!document.getElementById('convSearchInput')){
-    var _si=document.createElement('input');_si.id='convSearchInput';_si.placeholder='搜索对话...';
+    var _si=document.createElement('input');_si.id='convSearchInput';_si.placeholder='搜索对话(回车搜正文)...';_si.title='输入实时搜标题，回车全文搜索';
     _si.style.cssText='display:block;width:calc(100% - 24px);margin:8px 12px 4px;padding:6px 10px;border:1px solid var(--color-border);border-radius:6px;font-size:13px;outline:none';
-    _si.addEventListener('input',function(){_filterConversationList(this.value);});
+    _si.addEventListener('input',function(){_filterConversationList(this.value,'title');}); // ★ [FIX-2026-08-04-d] 输入=标题快速搜索(零IO)
+    _si.addEventListener('keydown',function(ev){if(ev.key==='Enter'){_filterConversationList(this.value,'full');}}); // ★ [FIX-2026-08-04-d] 回车=全文+语义搜索
     var _sb=document.getElementById('conversationSidebar');
     if(_sb){var _hdr=_sb.querySelector('.sidebar-header');if(_hdr&&_hdr.nextSibling)_sb.insertBefore(_si,_hdr.nextSibling);else _sb.appendChild(_si);}
   }
@@ -24345,7 +24549,9 @@ function renderConversationList(){
     list.innerHTML='<div style="text-align:center;color:var(--color-text-secondary);padding:20px;font-size:13px">暂无对话</div>';
     return;
   }
+  // ★ [FIX-2026-08-04-d] DocumentFragment批量构建+移除每条目/删除按钮独立监听(委托已挂conversationList)
   list.innerHTML='';
+  var _frag=document.createDocumentFragment();
   for(var ei=0;ei<entries.length;ei++){
     var e=entries[ei];
     var isActive=e.id===currentConversationId;
@@ -24355,16 +24561,9 @@ function renderConversationList(){
     var isBgProcessing=bgCs&&bgCs.isProcessing;
     div.className='conversation-item'+(isActive?' active':'')+(isBgProcessing?' bg-processing':'');
     div.innerHTML='<span class="conv-title">'+(e.title||'未命名对话').replace(/</g,'&lt;')+'</span><span class="conv-time">'+formatTime(e.createdAt)+'</span><button class="conv-delete-btn" data-id="'+e.id+'">删除</button>';
-    div.addEventListener('click',function(id){return function(ev){if(ev.target.classList.contains('conv-delete-btn'))return;if(id===currentConversationId){closeSidebar();return;}var _l=document.getElementById('conversationList');var _as=_l.querySelectorAll('.conversation-item.active');for(var _ai=0;_ai<_as.length;_ai++)_as[_ai].classList.remove('active');ev.currentTarget.classList.add('active');switchConversation(id).then(function(){closeSidebar();});};}(e.id));
-    list.appendChild(div);
+    _frag.appendChild(div);
   }
-  var delBtns=list.querySelectorAll('.conv-delete-btn');
-  for(var db=0;db<delBtns.length;db++){
-    delBtns[db].addEventListener('click',function(ev){
-      ev.stopPropagation();
-      deleteConversation(this.getAttribute('data-id'));
-    });
-  }
+  list.appendChild(_frag);
 }
 
 function _cosineSimilarity(a,b){
@@ -24375,12 +24574,18 @@ function _cosineSimilarity(a,b){
   return den?dot/den:0;
 }
 
-async function _filterConversationList(query){
+async function _filterConversationList(query, mode){
   if(_convSearchTimer)clearTimeout(_convSearchTimer);
   _convSearchTimer=setTimeout(async function(){
     var entries=conversationDB.entries||[];
     if(!query||!query.trim()){renderConversationList();return;}
     var q=query.trim().toLowerCase();
+    // ★ [FIX-2026-08-04-d] 标题快速路径：输入时只搜标题(内存数据零IO)，原实现每次输入全量getAll所有对话消息(卡顿)；回车/全量模式才扫正文+语义
+    if(mode==='title'){
+      var _tMatches=entries.filter(function(e){return (e.title||'').toLowerCase().indexOf(q)>=0;});
+      _renderFilteredConversations(_tMatches,q);
+      return;
+    }
     var _PLAIN=/<[^>]*>/g;
     // 从 IndexedDB 加载所有对话的消息正文
     var _msgMap={};
@@ -24441,7 +24646,8 @@ async function _filterConversationList(query){
 function _renderFilteredConversations(entries,q){
   var list=document.getElementById('conversationList');if(!list)return;
   if(entries.length===0){list.innerHTML='<div style="text-align:center;color:var(--color-text-secondary);padding:20px;font-size:13px">未找到匹配 «'+q.replace(/</g,'&lt;')+'» 的对话</div>';return;}
-  list.innerHTML='';
+  // ★ [FIX-2026-08-04-d] DocumentFragment批量构建+移除每条目/删除按钮独立监听(委托已挂conversationList)
+  var _frag=document.createDocumentFragment();
   for(var ei=0;ei<entries.length;ei++){
     var e=entries[ei],isActive=e.id===currentConversationId;
     var div=document.createElement('div');
@@ -24451,13 +24657,9 @@ function _renderFilteredConversations(entries,q){
     var title=(e.title||'未命名对话').replace(/</g,'&lt;');
     if(q){var regex=new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi');title=title.replace(regex,'<mark style="background:#fff3b0;padding:0 2px;border-radius:2px">$1</mark>');}
     div.innerHTML='<span class="conv-title">'+title+'</span><span class="conv-time">'+formatTime(e.createdAt)+'</span><button class="conv-delete-btn" data-id="'+e.id+'">删除</button>';
-    div.addEventListener('click',function(id){return function(ev){if(ev.target.classList.contains('conv-delete-btn'))return;if(id===currentConversationId){closeSidebar();return;}var _l=document.getElementById('conversationList');var _as=_l.querySelectorAll('.conversation-item.active');for(var _ai=0;_ai<_as.length;_ai++)_as[_ai].classList.remove('active');ev.currentTarget.classList.add('active');switchConversation(id).then(function(){closeSidebar();});};}(e.id));
-    list.appendChild(div);
+    _frag.appendChild(div);
   }
-  var delBtns=list.querySelectorAll('.conv-delete-btn');
-  for(var db=0;db<delBtns.length;db++){
-    delBtns[db].addEventListener('click',function(ev){ev.stopPropagation();deleteConversation(this.getAttribute('data-id'));});
-  }
+  list.appendChild(_frag);
 }
 
 
@@ -24513,6 +24715,7 @@ function newConversation(){
 }
 
 // 侧边栏事件绑定
+// 侧边栏事件绑定
 function initSidebarEvents(){
   var toggleBtn=document.getElementById('btnToggleSidebar');
   var overlay=document.getElementById('sidebarOverlay');
@@ -24522,6 +24725,26 @@ function initSidebarEvents(){
   if(overlay)overlay.addEventListener('click',function(){closeSidebar();});
   if(newConvBtn)newConvBtn.addEventListener('click',function(){newConversation();});
   if(deleteAllBtn)deleteAllBtn.addEventListener('click',deleteAllConversations);
+  // ★ [FIX-2026-08-04-d] 会话列表事件委托：原实现每条目+删除按钮各挂独立监听器(N对话=2N监听器)，现容器挂1个委托路由
+  var _convListEl=document.getElementById('conversationList');
+  if(_convListEl&&!_convListEl._delegated){
+    _convListEl._delegated=true;
+    _convListEl.addEventListener('click',function(ev){
+      var t=ev.target;
+      var delBtn=t.closest?t.closest('.conv-delete-btn'):null;
+      if(delBtn){ev.stopPropagation();deleteConversation(delBtn.getAttribute('data-id'));return;}
+      var item=t.closest?t.closest('.conversation-item'):null;
+      if(item){
+        var id=item.getAttribute('data-conv-id');
+        if(id===currentConversationId){closeSidebar();return;}
+        var _l=document.getElementById('conversationList');
+        var _as=_l.querySelectorAll('.conversation-item.active');
+        for(var _ai=0;_ai<_as.length;_ai++)_as[_ai].classList.remove('active');
+        item.classList.add('active');
+        switchConversation(id).then(function(){closeSidebar();});
+      }
+    });
+  }
 }
 
 async function deleteAllConversations(){
@@ -24531,14 +24754,15 @@ async function deleteAllConversations(){
   if(!confirmed)return;
   try{
     var d=await getDB();
+    // ★ [FIX-2026-08-04-d] 单事务批量删除：原实现每对话一个事务+await(串行N次)，N大时慢；现一个readwrite事务内删全部
+    var tx=d.transaction(['conversations','messages'],'readwrite');
     for(var i=0;i<entries.length;i++){
-      var tx=d.transaction(['conversations','messages'],'readwrite');
       tx.objectStore('conversations').delete(entries[i].id);
       tx.objectStore('messages').delete(entries[i].id);
-      await new Promise(function(res,rej){tx.oncomplete=res;tx.onerror=rej;});
       _deletedConvIds.add(entries[i].id);
       delete convStates[entries[i].id];
     }
+    await new Promise(function(res,rej){tx.oncomplete=res;tx.onerror=rej;});
     conversationDB.entries=[];
     currentConversationId=null;
     localStorage.removeItem('exo_last_conv');
