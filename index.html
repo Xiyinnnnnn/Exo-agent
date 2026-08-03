@@ -4366,19 +4366,20 @@ function _getCumulativeTokens(convId){
 /* ===== Token持久化 (按对话隔离) ===== */
 /* ★ 双存储：IndexedDB文件 + localStorage，确保关闭浏览器后不丢失 */
 var TOKEN_LOCAL_KEY = 'exo_token_counts';
-async function _saveTokenCounts(){
+async function _saveTokenCounts(convId){
+  convId=convId||currentConversationId;
   try{
     // ★ 同步写入localStorage FIRST → 确保 beforeunload 场景不丢失
     try{
       var _lsRaw=localStorage.getItem(TOKEN_LOCAL_KEY);
       var _lsData=_lsRaw?JSON.parse(_lsRaw):{};
-      _lsData[currentConversationId]=_getCumulativeTokens(currentConversationId);
+      _lsData[convId]=_getCumulativeTokens(convId);
       localStorage.setItem(TOKEN_LOCAL_KEY,JSON.stringify(_lsData));
     }catch(e){}
     // 异步写入IndexedDB（可能被beforeunload中断，但不影响localStorage已有最新值）
     var raw=await readFile('/config/token_counts.json');
     var data=raw?JSON.parse(raw):{};
-    data[currentConversationId]=_getCumulativeTokens(currentConversationId);
+    data[convId]=_getCumulativeTokens(convId);
     var meta=await getFileMeta('/config/token_counts.json');
     if(meta)await updateFile('/config/token_counts.json',JSON.stringify(data));
     else await createFile('/config/token_counts.json',JSON.stringify(data));
@@ -5051,12 +5052,53 @@ function _dropOldestByUserRound(messages){
 //           → 此处算增量(delta=本次prompt-上次锚点) 喂给标记机制
 //   仅主对话(source==='user')启用；压缩/子Agent/技能管理等不标记、不读写锚点
   function _utf8Len(str){if(typeof str!=='string')str=str?String(str):'';return (new TextEncoder().encode(str)).length;}
+  /* ★ 锚点持久化（2026-08-03）：内存+localStorage 双写，刷新后增量标记不中断 */
+  var TOKEN_ANCHOR_KEY='exo_token_anchors';
+  var _anchorMemCache=null;
+  function _loadAnchors(){try{if(_anchorMemCache)return _anchorMemCache;var raw=localStorage.getItem(TOKEN_ANCHOR_KEY);_anchorMemCache=raw?JSON.parse(raw):{};}catch(e){_anchorMemCache={};}return _anchorMemCache;}
+  function _getAnchor(convKey){try{var a=_loadAnchors();return a[convKey]||0;}catch(e){return 0;}}
+  function _setAnchor(convKey,val){try{var a=_loadAnchors();a[convKey]=val;localStorage.setItem(TOKEN_ANCHOR_KEY,JSON.stringify(a));}catch(e){}}
+  // ★ [2026-08-03] 估算token比例（替代UTF-8字节）：中文3字节/字 vs ~0.75 token/字，字节比例严重失真
+  function _msgEst(m){
+    if(!m)return 0;
+    var total=0;
+    var c=m.content;
+    if(typeof c==='string')total+=_estimateTokens(c);
+    else if(Array.isArray(c)){
+      for(var _pi=0;_pi<c.length;_pi++){
+        var _part=c[_pi];
+        if(_part&&_part.type==='text'&&typeof _part.text==='string')total+=_estimateTokens(_part.text);
+      }
+    }else if(c){total+=_estimateTokens(String(c));}
+    if(m.reasoning_content)total+=_estimateTokens(m.reasoning_content);
+    if(m.tool_calls){
+      for(var _tj=0;_tj<m.tool_calls.length;_tj++){
+        var _tc=m.tool_calls[_tj];
+        if(!_tc||!_tc.function)continue;
+        if(typeof _tc.function.name==='string')total+=_estimateTokens(_tc.function.name);
+        if(typeof _tc.function.arguments==='string')total+=_estimateTokens(_tc.function.arguments);
+      }
+    }
+    return total;
+  }
+  // ★ [2026-08-03] 估算兜底：无精确usage(流式无usage chunk)时，对untagged消息按估算token标记，防漏计
+  function _tagEstimatedFallback(messages){
+    for(var i=0;i<messages.length;i++){
+      var m=messages[i];
+      if(m._tokens!==undefined)continue;
+      m._tokens=Math.max(0,_msgEst(m));
+    }
+  }
   function _tagMessageTokens(messages, apiUsage, source){
   // ★ 仅主对话(source==='user')做增量标记；其他source直接跳过（防锚点污染）
   if(source!=='user')return;
-  if(!apiUsage||!Array.isArray(messages)||messages.length===0)return;
+  if(!Array.isArray(messages)||messages.length===0)return;
+  var _tagConvId=_streamTargetConvId||currentConversationId; // ★ [FIX-2026-08-04] 按发起对话(流式锁定目标)记锚点/usage，防切换后记错对话
+  if(!apiUsage||typeof apiUsage.prompt_tokens!=='number'||apiUsage.prompt_tokens<=0){
+    _tagEstimatedFallback(messages);
+    return;
+  }
   var promptTokens=apiUsage.prompt_tokens;
-  if(typeof promptTokens!=='number'||promptTokens<=0)return;
   // ★ 安全获取一条消息的 UTF-8 字节数，兼容：
   //    纯文本(string) / vision array / null / 非标准格式
   function _msgBytes(m){
@@ -5084,12 +5126,11 @@ function _dropOldestByUserRound(messages){
     return total;
   }
   // ★ 增量标记（2026-08-02）：一次 API 产出只标记新消息（untagged）
-  //   delta = 本次全量 prompt_tokens - 上次锚点 → 增量喂给新消息（user/tool按字节比例）
+  //   delta = 本次全量 prompt_tokens - 上次锚点 → 增量喂给新消息（user/tool按估算token比例）
   //   completion_tokens 归属本次生成的 assistant 回复（最后一条新消息）
-  //   ★ 锚点按 convId 隔离；source!=='user' 已在入口跳过（压缩/子Agent不污染锚点）
-  var convKey=currentConversationId||'__default__';
-  if(!window._lastApiPromptTokens)window._lastApiPromptTokens={};
-  var lastPrompt=window._lastApiPromptTokens[convKey]||0;
+  //   ★ 锚点按 convId 隔离 + localStorage 持久化（刷新不丢）；source!=='user' 已在入口跳过
+  var convKey=_tagConvId||'__default__';
+  var lastPrompt=_getAnchor(convKey);
   var deltaPrompt=Math.max(0,promptTokens-lastPrompt);
   // ★ 压缩/重建检测：本次prompt未增长(delta<=0) → 退化为全量分配
   //   压缩后messages变小但锚点仍是旧大值 → 新消息(压缩摘要/新提问)是当前上下文的新增内容，按全量分配合适
@@ -5107,19 +5148,19 @@ function _dropOldestByUserRound(messages){
   for(var i=0;i<messages.length;i++){
     if(messages[i]._tokens===undefined)untagged.push(i);
   }
-  // ★ delta 分配给新消息中的 prompt 部分（user/tool/system，按字节比例）
+  // ★ delta 分配给新消息中的 prompt 部分（user/tool/system，按估算token比例）
   if(basePrompt>0&&untagged.length>0){
     var totalBytes=0;
     for(var k=0;k<untagged.length;k++){
       var m=messages[untagged[k]];
-      if(m.role!=='assistant')totalBytes+=_msgBytes(m);
+      if(m.role!=='assistant')totalBytes+=_msgEst(m);
     }
     if(totalBytes>0){
       var ratio=basePrompt/totalBytes;
       for(var k2=0;k2<untagged.length;k2++){
         var m2=messages[untagged[k2]];
         if(m2.role==='assistant')continue;
-        var bytes=_msgBytes(m2);
+        var bytes=_msgEst(m2);
         if(bytes<=0){m2._tokens=0;continue;}
         m2._tokens=Math.max(1,Math.round(bytes*ratio));
       }
@@ -5135,11 +5176,11 @@ function _dropOldestByUserRound(messages){
       }
     }
   }
-  // ★ 更新锚点（即使delta=0/上下文压缩也要重置，避免下次虚高）
-  window._lastApiPromptTokens[convKey]=promptTokens;
+  // ★ 更新锚点（即使delta=0/上下文压缩也要重置，避免下次虚高）→ localStorage 持久化
+  _setAnchor(convKey,promptTokens);
   // ★ 记录本次 API 调用 usage 到日志
   if(typeof currentConversationId!=='undefined'&&currentConversationId){
-    _appendToApiUsageLog(currentConversationId,{
+    _appendToApiUsageLog(_tagConvId,{
       ts:Date.now(),
       prompt_tokens:apiUsage.prompt_tokens,
       completion_tokens:apiUsage.completion_tokens,
@@ -17780,7 +17821,8 @@ async function _inlineCritiqueBatch(pendingToolCalls, toolResults, agentMsgDiv, 
 
   var _todosCache=_getTodos(currentConversationId);
   var _todoProgress=_todosCache&&_todosCache.active?(_todosCache.stats.done+'/'+_todosCache.stats.total):'none';
-  var _cacheKey = pendingToolCalls.map(function(tc){return tc.function.name;}).join(',') + '|' +
+  // ★ [FIX-2026-08-04] cache key 加 convId 前缀，防跨对话命中泄漏审查内容
+  var _cacheKey = currentConversationId + '|' + pendingToolCalls.map(function(tc){return tc.function.name;}).join(',') + '|' +
     _todoProgress + '|' +
     (streamReasoning || '').substring(0, 200) + '|' +
     toolResults.map(function(tr){return (tr.content||'').substring(0, 100);}).join('|');
@@ -17991,6 +18033,7 @@ async function processUserMessage(userText,taskId){
   cs.stopRequested=false;
   cs.currentTaskId=taskId;
   cs._origConvId=currentConversationId; // 记录发起对话，finally用于判断是否切回
+  var _prevStreamTargetCid=_streamTargetConvId; // ★ [FIX-2026-08-04] 保存后台对话的流式目标，finally恢复防覆盖
   _streamTargetConvId=currentConversationId; // 锁定流式目标，防止切换后写错对话
   // ★ isProcessing/_stopRequested 已通过 window 属性代理自动路由到 cs，无需手动同步
   isProcessing=true;
@@ -18035,7 +18078,15 @@ async function processUserMessage(userText,taskId){
   var messages;
   if(window._flowWakeupMessages){
     messages = window._flowWakeupMessages.slice();
-    messages[0] = {role:'system',content:systemPrompt}; // 刷新系统提示
+    // ★ [2026-08-03] 替换 system 时迁移旧 _tokens（按估算token比例缩放），防 flow 唤醒后 system token 丢失
+    var _fwm0=messages[0];
+    var _fwmNew={role:'system',content:systemPrompt};
+    if(_fwm0&&_fwm0.role==='system'&&typeof _fwm0._tokens==='number'){
+      var _fOldEst=_estimateTokens(_fwm0.content)||1;
+      var _fNewEst=_estimateTokens(systemPrompt)||1;
+      _fwmNew._tokens=Math.max(1,Math.round(_fwm0._tokens*_fNewEst/_fOldEst));
+    }
+    messages[0]=_fwmNew;
     window._flowWakeupMessages = null;
   }else{
     messages=[{role:'system',content:systemPrompt}];
@@ -18089,7 +18140,17 @@ async function processUserMessage(userText,taskId){
       // system 处理：快照与当前动态 system 一致→用快照（固定）；不等→用当前（语义正确）
       if(skeleton.length&&skeleton[0]&&skeleton[0].role==='system'){
         if(skeleton[0].content===systemPrompt){messages=[skeleton[0]];}
-        else{messages=[{role:'system',content:systemPrompt}];}
+        else{
+          // ★ [2026-08-03] system 内容变化（跨天<TIME>/技能切换）→ 迁移旧 _tokens（估算token比例缩放），防"刷新后计数器掉"
+          var _oldSys=skeleton[0];
+          var _newSys={role:'system',content:systemPrompt};
+          if(typeof _oldSys._tokens==='number'){
+            var _oldEst=_estimateTokens(_oldSys.content)||1;
+            var _newEst=_estimateTokens(systemPrompt)||1;
+            _newSys._tokens=Math.max(1,Math.round(_oldSys._tokens*_newEst/_oldEst));
+          }
+          messages=[_newSys];
+        }
         skeleton.shift();
       }
 
@@ -18240,6 +18301,7 @@ async function processUserMessage(userText,taskId){
   } catch (e) {}
   
   if (_needCompress) {
+    var _compConvId=cs._origConvId||currentConversationId; // ★ [FIX-2026-08-04] 压缩await期间用户可能切换对话，捕获发起对话防上下文写错
     var _autoToast = document.createElement('div');
     _autoToast.className = 'toast info';
     _autoToast.textContent = '正在压缩上下文';
@@ -18275,11 +18337,11 @@ async function processUserMessage(userText,taskId){
         messages.length = 0;
         Array.prototype.push.apply(messages, _newMessages);
         // ★ [F3/v2.9] 压缩标记：恢复端据此跳过 items 比对（防"压缩+删除"绕过条数检测误入比对分支）
-        try{var _bdA=_getBranchData(currentConversationId);var _brA=_bdA._branches[_bdA._currentBranchId];if(_brA)_brA._lastCompressedAt=Date.now();}catch(_eA){}
+        try{var _bdA=_getBranchData(_compConvId);var _brA=_bdA._branches[_bdA._currentBranchId];if(_brA)_brA._lastCompressedAt=Date.now();}catch(_eA){}
         
 
-        _updateTokenAccumulator(currentConversationId, null, messages);
-        _saveTokenCounts();
+        _updateTokenAccumulator(_compConvId, null, messages);
+        _saveTokenCounts(_compConvId);
         _updateToolbarTokenDisplay();
         
       } else {
@@ -18592,9 +18654,9 @@ async function processUserMessage(userText,taskId){
 
 
       // ★ TODO 注入 — 累计token消耗>50K或dirty标记时注入当前进度
-      _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0); // 直接使用已标记 _tokens 的 messages，不依赖 _persistentMessages（防止工具调用后跳0）
+      _convTokenAccumulator[cs._origConvId||currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0); // ★ [FIX-2026-08-04] 按发起对话累计，防切换后A的token覆盖B
       _updateToolbarTokenDisplay();
-      _saveTokenCounts();
+      _saveTokenCounts(cs._origConvId||currentConversationId);
       var _todoCard=_buildTodoUserInjection(currentConversationId,'main');
       if(_todoCard){
         messages.push({role:'user',content:_todoCard,_injected:true});
@@ -19461,7 +19523,16 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
   }
   finally{
     // 【多对话并行】重置当前对话的处理状态
-    if(_streamTargetConvId===cs._origConvId)_streamTargetConvId=null;
+    // ★ [FIX-2026-08-04] 多对话并行：结束本对话流式时恢复切换前保存的后台流式目标
+    //    （prev对话仍在处理→恢复其目标，防B后续渲染写错容器；否则清空）
+    if(_streamTargetConvId===cs._origConvId){
+      if(_prevStreamTargetCid&&_prevStreamTargetCid!==cs._origConvId){
+        var _prevCs=_ensureConvState(_prevStreamTargetCid);
+        _streamTargetConvId=(_prevCs&&_prevCs.isProcessing)?_prevStreamTargetCid:null;
+      }else{
+        _streamTargetConvId=null;
+      }
+    }
     if(!(flowSession()&&flowSession().active)){var _targetCs=cs._origConvId?_ensureConvState(cs._origConvId):cs;if(_targetCs)_targetCs.isProcessing=false;}
     cs.stopRequested=false;
     // ★★★【BUGFIX】finally 块中安全清理，防止死引用导致暂停按钮失效
@@ -19474,22 +19545,29 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
       cs.streamReader=null;
     }
     // ★ 全局引用同步清理
-    if(typeof activeLLMController !== 'undefined' && activeLLMController){
-      try{activeLLMController.abort();}catch(e){}
-      activeLLMController=null;
-    }
-    if(typeof activeStreamReader !== 'undefined' && activeStreamReader){
-      try{activeStreamReader.cancel();}catch(e){}
-      activeStreamReader=null;
+    // ★ [FIX-2026-08-04] 多对话并行：activeLLMController/activeStreamReader 是 window 代理，
+    //    读取的是 convStates[currentConversationId]——处理中切到B后此处代理指向B的state，
+    //    直接abort会误杀后台对话B的进行中请求。仅当未切换（仍在发起对话）时才清理。
+    if(currentConversationId===cs._origConvId){
+      if(typeof activeLLMController !== 'undefined' && activeLLMController){
+        try{activeLLMController.abort();}catch(e){}
+        activeLLMController=null;
+      }
+      if(typeof activeStreamReader !== 'undefined' && activeStreamReader){
+        try{activeStreamReader.cancel();}catch(e){}
+        activeStreamReader=null;
+      }
     }
     cs.currentTaskId=null;
     currentTaskId=null;
     taskStartTime=null;
 
     // ★ 从当前消息数组累加 _tokens（此时所有消息已有最新API精确标记）
-    _updateTokenAccumulator(currentConversationId, null, messages);
+    // ★ [FIX-2026-08-04] 上下文按对话隔离：处理中若切换对话，收尾必须写回发起对话(cs._origConvId)，防止A的上下文数组误写入B
+    var _finConvId=cs._origConvId||currentConversationId;
+    _updateTokenAccumulator(_finConvId, null, messages);
     _updateToolbarTokenDisplay();
-    _saveTokenCounts();
+    _saveTokenCounts(_finConvId);
     // ★ 同步 messages 到 branch data（异步持久化，配合 beforeunload 增加 IndexedDB 落地概率）
     // ★ [P1/v2.8] 双轨持久化：items=UI渲染数据(气泡)；fullMessages=API上下文快照(含system/tool/tool_calls/_injected)，token级还原
     // ★ [FIX] 落库前防御：修复型校验（不完整对剥离tool_calls保留content），杜绝残缺序列入库
@@ -19503,7 +19581,9 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
     }catch(_fe){}
     // ★ 同步 messages 到 branch data（异步持久化，配合 beforeunload 增加 IndexedDB 落地概率）
     try{
-      var _bd2=_getBranchData(currentConversationId);
+      var _bd2=_getBranchData(_finConvId);
+      // ★ [FIX-2026-08-04] 发起对话已被删除 → 放弃回写（防已删对话复活、防孤儿state落库）
+      if(conversationDB.entries&&!conversationDB.entries.find(function(_e2){return _e2.id===_finConvId;}))_bd2=null;
       var _items2=messages.filter(function(m){return true;});
       if(_bd2&&_bd2._branches&&_bd2._currentBranchId&&_items2&&_items2.length){
         _bd2._branches[_bd2._currentBranchId].items=_items2.slice();
@@ -19527,7 +19607,7 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
           try{
             var _db2=await getDB();
             var _tx2=_db2.transaction('messages','readwrite');
-            _tx2.objectStore('messages').put({id:currentConversationId,branches:_bd2._branches,currentBranchId:_bd2._currentBranchId,branchOrder:_bd2._branchOrder,updatedAt:Date.now()});
+            _tx2.objectStore('messages').put({id:_finConvId,branches:_bd2._branches,currentBranchId:_bd2._currentBranchId,branchOrder:_bd2._branchOrder,updatedAt:Date.now()});
             await new Promise(function(res,rej){_tx2.oncomplete=res;_tx2.onerror=rej;});
           }catch(_){}
         })();
@@ -23852,8 +23932,10 @@ async function switchConversation(convId,forceSwitch){
   if(oldCid && oldCid !== convId){
     saveCurrentMessages({forceFull:true}); // 切换前持久化，防止异步窗口丢失
     var curState=_ensureConvState(oldCid);
-    // ★ 全局变量通过代理自动反映当前对话状态；切换前保持旧状态已由代理自动同步
     curState._scrollPos=msgList.scrollTop;
+    // ★ [FIX-2026-08-04] 短期记忆按对话隔离：切换前快照当前对话的上下文数组
+    curState._stmEntries=shortTermMemory.entries.slice();
+    curState._stmTaskId=shortTermMemory.currentTaskId;
     localStorage.setItem('exo_scroll_'+oldCid, msgList.scrollTop);
     if(!curState._container){
       curState._container=document.createElement('div');
@@ -23873,8 +23955,9 @@ async function switchConversation(convId,forceSwitch){
   var targetState=_ensureConvState(convId);
   // 恢复该对话的技能激活状态
   skillCache.activeSkillIds=targetState.activeSkillIds||[];
-  shortTermMemory.entries=[];
-  shortTermMemory.currentTaskId=null;
+  // ★ [FIX-2026-08-04] 短期记忆按对话隔离：恢复目标对话快照（无则空），不再全局清空
+  shortTermMemory.entries=(targetState._stmEntries||[]).slice();
+  shortTermMemory.currentTaskId=targetState._stmTaskId||null;
   _loadFlowSession(convId);
   _loadTodos(convId);
   
