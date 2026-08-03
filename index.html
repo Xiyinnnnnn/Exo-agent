@@ -4803,7 +4803,7 @@ function _getContentText(content){
   return '';
 }
 
-async function _compressOldMessages(messages,modelMaxTokens){
+async function _compressOldMessages(messages,modelMaxTokens,injectResume){
   // ★ 用每条消息上的 _tokens 标签（API精确分配），回退到字符估算
   var totalEst=0;
   var perMsg=[];
@@ -4958,6 +4958,7 @@ async function _compressOldMessages(messages,modelMaxTokens){
       if(toKeep[k].tool_calls)_clean.tool_calls=toKeep[k].tool_calls;
       if(toKeep[k]._tokens!==undefined)_clean._tokens=toKeep[k]._tokens;
       if(toKeep[k]._sentCount)_clean._sentCount=toKeep[k]._sentCount;
+      if(toKeep[k]._injected)_clean._injected=true; // ★ [FIX-2026-08-04-i] 保留注入标记，防[历史背景]/[继续]在次轮压缩被当真实user（污染轮次感知）
       compressed.push(_clean);
     }
     // ★ [F6/v2.9] 历史背景注入：标题由程序拼接（AI 仅生成正文），以 user 角色追加到保留消息之后（非当前指令，仅供查看）
@@ -4966,6 +4967,17 @@ async function _compressOldMessages(messages,modelMaxTokens){
       var _sumMsg={role:'user',content:'[历史背景] '+_sumText,_injected:true};
       if(_sumTokens!==null)_sumMsg._tokens=_sumTokens;
       compressed.push(_sumMsg);
+      // ★ [FIX-2026-08-04-i] 断点续跑：自动压缩(400重试)路径追加[继续]指令
+      //   病因：压缩后上下文末尾是[历史背景]摘要(user,无继续指令)→模型输出收尾文本而非tool_calls
+      //        →processUserMessage主循环pendingToolCalls为空→break→重型任务中断
+      //   修复：injectResume=true时追加[继续]user消息(_injected防轮次感知污染)，
+      //        模型以它为最新指令→从〈待办〉断点继续发起工具调用；手动/预检压缩不注入
+      if(injectResume){
+        var _resumeText='[继续] 上下文已自动压缩。基于以上[历史背景]摘要与保留的最近工作轮次，从断点处继续执行当前任务：先核对〈待办〉中未完成项，跳过已完成步骤，继续发起下一步工具调用。';
+        var _resumeMsg={role:'user',content:_resumeText,_injected:true};
+        _resumeMsg._tokens=_estimateTokens(_resumeText);
+        compressed.push(_resumeMsg);
+      }
     }
 
     // ★ 极端回退：摘要+保留仍超限 → 丢弃最旧消息直到安全
@@ -10951,7 +10963,7 @@ async function callLLM(messages,tools,stream,source){
       var _clSys=null;
       var _clMsgs=messages;
       if(messages.length>0&&messages[0].role==='system'){_clSys=messages[0];_clMsgs=messages.slice(1);}
-      var _clCompressed=await _compressOldMessages(_clMsgs,0);
+      var _clCompressed=await _compressOldMessages(_clMsgs,0,true); // ★ [FIX-2026-08-04-i] injectResume=true：压缩后注入[继续]，断点续跑
       if(_clCompressed){
         messages.length=0;
         if(_clSys)messages.push(_clSys);
@@ -11092,7 +11104,7 @@ async function streamChatCompletion(messages,tools,onChunk,source){
         var _stSys=null;
         var _stMsgs=messages;
         if(messages.length>0&&messages[0].role==='system'){_stSys=messages[0];_stMsgs=messages.slice(1);}
-        var _stCompressed=await _compressOldMessages(_stMsgs,0);
+        var _stCompressed=await _compressOldMessages(_stMsgs,0,true); // ★ [FIX-2026-08-04-i] injectResume=true：压缩后注入[继续]，断点续跑
         if(_stCompressed){
           messages.length=0;
           if(_stSys)messages.push(_stSys);

@@ -2,7 +2,7 @@
 
 > **用途**：仅凭本文档 + `index.html` 源码，下一个 agent 即可独立完成任何修改、调试与验证。**本手册自包含，不依赖任何附加文档**。
 > **源码版本**：`index.html` 24876 行（FIX-2026-08-04-h 后）。**行号随版本漂移，所有定位以 grep 函数名为准，行号仅参考**。
-。
+> **历史**：旧版教程归档于 `EXO_DEV_GUIDE.legacy.md`（非必需，仅考古用）；各轮 REVIEW 报告仅留第 6 章索引，不须另行阅读。
 
 ---
 
@@ -391,6 +391,7 @@ worker 源码是 `src+='...'` 字符串拼接，无法直接执行；用脚本 *
 | FIX-2026-08-04-f | （第 8 轮） | 本手册未收录详情，grep `FIX-2026-08-04-f` 确认内容后再扩展 |
 | FIX-2026-08-04-g | 渲染缓存 | `_mdHtmlCache`（key=katex状态前缀+原文，200条/8MB）/`_artSanCache`（50条/4MB）；DOMPurify 输出原样缓存；超限 clear() |
 | FIX-2026-08-04-h | 杂项优化 ×3 | P5 thinking RAF 节流（`_flushThinkingBlock`）；U1 流式 aria-live off/恢复；N3 取消链路（`_withTimeout` onTimeout→AbortController→`abort_task` 协议→custom_api_call `AbortSignal.any`） |
+| FIX-2026-08-04-i | 压缩断点续跑 | `_compressOldMessages` 增 `injectResume` 参数：自动压缩(400重试)路径注入 `[继续]` user 消息（`_injected:true`，`_tokens` 估算）重启断点任务；`_clean` 拷贝补保留 `_injected`（防[历史背景]/[继续]次轮压缩被当真实 user 污染轮次感知）；手动/预检压缩不注入 |
 
 **核心教训**：全部修复围绕"异步代码在对话切换后的写目标错位"（铁律）与"重复计算/不可取消的资源滞留"（性能）。
 
@@ -425,6 +426,8 @@ worker 源码是 `src+='...'` 字符串拼接，无法直接执行；用脚本 *
 - 行号漂移：插入/删除后整体偏移，每次定位重新 grep，禁止记忆行号。
 - 单测提取三纪律：async 前缀 / 顶层 var 绑定 / mock 匹配一致性（见 4.3）。
 - 评估先行：改前量化成本（改动量/风险/回归面）× 收益（频率/单次成本/可感知性）；收益<成本记录在案不实施（如 P4 列表增量、P3 倒排索引被否）。
+- 压缩断点续跑（FIX-i）：压缩后上下文末尾是 `[历史背景]` 摘要(user)消息，模型无继续指令→输出收尾文本而非 tool_calls→processUserMessage 循环 break→重型任务中断；自动压缩(400重试)路径必须注入 `[继续]` 指令（`_injected:true`）重启断点，手动/预检压缩不注入。
+
 
 ---
 
