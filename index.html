@@ -4541,9 +4541,9 @@ async function _triggerManualCompression(){
          _stC.put({id:convId,branches:_bdP._branches,currentBranchId:_bdP._currentBranchId,branchOrder:_bdP._branchOrder,updatedAt:Date.now()});
          await new Promise(function(res,rej){_txC.oncomplete=res;_txC.onerror=rej;});
        }catch(_eC){debugLogger.warn('手动压缩落库失败: '+_eC.message);}
-       _updateTokenAccumulator(convId, null, msgs);
+        _updateTokenAccumulator(convId, null, _newFull2);
        _updateToolbarTokenDisplay();
-       _saveTokenCounts();
+        _saveTokenCounts();
        toast.className='toast success';
        toast.textContent='上下文已成功压缩 → '+compressed.length+' 条活跃消息（UI 历史保留）';
     }else{
@@ -4926,7 +4926,21 @@ async function _compressOldMessages(messages,modelMaxTokens){
     });
     if(!fetchResp.ok){debugLogger.warn('压缩LLM请求失败: HTTP '+fetchResp.status);return null;}
     var data=await fetchResp.json();
-    var summary=(data.choices&&data.choices[0]&&(data.choices[0].message.content||data.choices[0].message.reasoning_content))||'';
+    var _msg0=data.choices&&data.choices[0]&&data.choices[0].message||null;
+    var summary=(_msg0&&(_msg0.content||_msg0.reasoning_content))||'';
+    // ★ [v3.1] 摘要真实token按来源区分（防thinking虚高）：
+    //   content→completion_tokens-reasoning_tokens；reasoning_content→用reasoning_tokens；无details兜底字符估算
+    // ★ [v3.2] FIX-1 回归修复：usage缺失时初始置 null（0 陷阱：_tagMessageTokens 以 _tokens===undefined 判 untagged，挂 0 永不被补标）
+    var _sumTokens=null;
+    if(data.usage&&typeof data.usage.completion_tokens==='number'){
+      var _det=data.usage.completion_tokens_details||null;
+      var _reasonTok=(_det&&typeof _det.reasoning_tokens==='number')?_det.reasoning_tokens:(typeof data.usage.reasoning_tokens==='number'?data.usage.reasoning_tokens:0);
+      if(_msg0&&_msg0.content){
+        _sumTokens=Math.max(0,data.usage.completion_tokens-_reasonTok);
+      }else{
+        _sumTokens=_reasonTok>0?_reasonTok:_estimateTokens(summary||'');
+      }
+    }
     recordDailyTokenUsage(msgs, summary||'', data.usage||null);
     if(!summary.trim()){debugLogger.warn('压缩LLM返回空摘要');return null;}
     var compressed=[];
@@ -4947,19 +4961,22 @@ async function _compressOldMessages(messages,modelMaxTokens){
     // ★ [F6/v2.9] 历史背景注入：标题由程序拼接（AI 仅生成正文），以 user 角色追加到保留消息之后（非当前指令，仅供查看）
     var _sumText=summary.trim();
     if(_sumText){
-      compressed.push({role:'user',content:'[历史背景] '+_sumText,_injected:true});
+      var _sumMsg={role:'user',content:'[历史背景] '+_sumText,_injected:true};
+      if(_sumTokens!==null)_sumMsg._tokens=_sumTokens;
+      compressed.push(_sumMsg);
     }
 
     // ★ 极端回退：摘要+保留仍超限 → 丢弃最旧消息直到安全
-    var _compEst=_estimateTokens(summary);
-    for(var k2=0;k2<toKeep.length;k2++){
-      _compEst+=(toKeep[k2]._tokens!==undefined&&toKeep[k2]._tokens!==null ? toKeep[k2]._tokens : _estimateTokens(_getContentText(toKeep[k2].content)));
+    //   [v3.1] A1/A2修复：_compEst 基于当前 compressed（构建期已跳过无caller tool），最终值在清理+validate后重算
+    var _compEst=0;
+    for(var k2=0;k2<compressed.length;k2++){
+      _compEst+=(compressed[k2]._tokens!==undefined&&compressed[k2]._tokens!==null?compressed[k2]._tokens:0);
     }
     if(_compEst>limit){
       var _dropCount=0;
       while(_compEst>limit&&compressed.length>2){
         var _dropped=compressed.splice(1,1)[0];
-        _compEst-=(_dropped._tokens!==undefined&&_dropped._tokens!==null ? _dropped._tokens : _estimateTokens(_getContentText(_dropped.content)));
+        _compEst-=(_dropped._tokens!==undefined&&_dropped._tokens!==null?_dropped._tokens:0);
         _dropCount++;
       }
       if(_dropCount>0)debugLogger.warn(' 极端回退: 压缩后仍超限，丢弃最旧'+_dropCount+'条 | est:'+_compEst+'/'+limit);
@@ -4976,7 +4993,15 @@ async function _compressOldMessages(messages,modelMaxTokens){
 
     // ★ 压缩结果校验：丢弃压缩中可能产生的不完整 tool_calls 对
     compressed=_validateMessageSequence(compressed);
-    debugLogger.info(' 智能压缩: '+messages.length+'条→'+compressed.length+'条 | est:'+totalEst+'→~'+_compEst+' | 触发:'+limit+' | 保留'+keepCount+'条');
+    // ★ [v3.1] 最终 _compEst 重算（清理+validate可能再删消息，日志/_estTokens 以最终值为准）
+    _compEst=0;
+    for(var k2b=0;k2b<compressed.length;k2b++){
+      _compEst+=(compressed[k2b]._tokens!==undefined&&compressed[k2b]._tokens!==null?compressed[k2b]._tokens:0);
+    }
+    // ★ [v3.1] 日志双值：真实累计(仅带_tokens的消息) + 触发估算(含字符估算兜底,用于阈值判断)
+    var _realTok=0;
+    for(var _rti=0;_rti<messages.length;_rti++){if(typeof messages[_rti]._tokens==='number')_realTok+=messages[_rti]._tokens;}
+    debugLogger.info(' 智能压缩: '+messages.length+'条→'+compressed.length+'条 | 真实累计:'+_realTok+' 触发估算:'+totalEst+'→'+_compEst+' | 触发:'+limit+' | 保留'+keepCount+'条');
     compressed._estTokens = _compEst;
     return compressed;
   }catch(e){debugLogger.warn('压缩失败: '+e.message);return null;}
@@ -5069,7 +5094,15 @@ function _dropOldestByUserRound(messages){
   // ★ 压缩/重建检测：本次prompt未增长(delta<=0) → 退化为全量分配
   //   压缩后messages变小但锚点仍是旧大值 → 新消息(压缩摘要/新提问)是当前上下文的新增内容，按全量分配合适
   var basePrompt=deltaPrompt>0?deltaPrompt:promptTokens;
-  // 收集 untagged 新消息（本次API产出的新消息）
+  // ★ [v3.1] D1修复：压缩/重建检测(delta<=0) → 重置非assistant旧_tokens（摘要_injected保持真实completion值）
+  //   防"旧tagged部分保留+全量重分"双重计算虚高：重置后 untagged 覆盖 system/保留/新提问，Σ分配=本次prompt_tokens
+  if(deltaPrompt<=0){
+    for(var _d1i=0;_d1i<messages.length;_d1i++){
+      var _d1m=messages[_d1i];
+      if(_d1m.role!=='assistant'&&!_d1m._injected)_d1m._tokens=undefined;
+    }
+  }
+  // 收集 untagged 新消息（本次API产出的新消息；delta<=0时含全部重置后的非assistant）
   var untagged=[];
   for(var i=0;i<messages.length;i++){
     if(messages[i]._tokens===undefined)untagged.push(i);
@@ -10731,10 +10764,19 @@ async function callLLM(messages,tools,stream,source){
       }
       // ★ 估算总token ≥ 上下文窗口，或回退max_token失败 → 走压缩流程
       debugLogger.warn('callLLM 400 context length exceeded，执行压缩上下文...');
-      var _clCompressed=await _compressOldMessages(messages,0);
+      // ★ [v3.0] system不进压缩路径：剥离压缩，完成后插回（防摘要化+累计语义含system一致）
+      var _clSys=null;
+      var _clMsgs=messages;
+      if(messages.length>0&&messages[0].role==='system'){_clSys=messages[0];_clMsgs=messages.slice(1);}
+      var _clCompressed=await _compressOldMessages(_clMsgs,0);
       if(_clCompressed){
         messages.length=0;
+        if(_clSys)messages.push(_clSys);
         Array.prototype.push.apply(messages,_clCompressed);
+        // ★ [v3.0] 压缩后立即同步累计器+刷新+持久化（摘要已带真实_tokens，reduce含system）
+        _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+        _updateToolbarTokenDisplay();
+        _saveTokenCounts();
       }else{
         // ★ 压缩失败 → 降级为按user轮次整体丢弃最旧消息（确定性成功，不依赖LLM）
         debugLogger.warn('callLLM 压缩失败，降级为丢弃最旧user轮次...');
@@ -10742,6 +10784,10 @@ async function callLLM(messages,tools,stream,source){
         if(!_clDropped){
           throw new Error('上下文压缩失败且无可丢弃的旧消息(400 context length exceeded)。请手动压缩上下文或新建对话。');
         }
+        // ★ [v3.0] 降级丢弃后同样同步累计器（被丢消息的_tokens不再计入；system在index0不受影响）
+        _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+        _updateToolbarTokenDisplay();
+        _saveTokenCounts();
       }
       var req3=_buildLLMRequest(messages,tools,stream,source);
       var response3=await fetch(req3.baseUrl,{
@@ -10861,11 +10907,20 @@ async function streamChatCompletion(messages,tools,onChunk,source){
         }
         // ★ 回退max_token失败或总token已达上限 → 压缩上下文后跳出内层循环，让外层while重新build
         debugLogger.warn('streamChatCompletion 400 context length exceeded，执行压缩上下文...');
-        var _stCompressed=await _compressOldMessages(messages,0);
+        // ★ [v3.0] system不进压缩路径：剥离压缩，完成后插回（防摘要化+累计语义含system一致）
+        var _stSys=null;
+        var _stMsgs=messages;
+        if(messages.length>0&&messages[0].role==='system'){_stSys=messages[0];_stMsgs=messages.slice(1);}
+        var _stCompressed=await _compressOldMessages(_stMsgs,0);
         if(_stCompressed){
           messages.length=0;
+          if(_stSys)messages.push(_stSys);
           Array.prototype.push.apply(messages,_stCompressed);
           _stCompressFailCount=0;
+          // ★ [v3.0] 压缩后立即同步累计器+刷新+持久化（摘要已带真实_tokens，reduce含system）
+          _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+          _updateToolbarTokenDisplay();
+          _saveTokenCounts();
         }else{
           // ★ 压缩失败（LLM摘要瞬时失败）→ 不throw，降级为按user轮次整体丢弃最旧消息（确定性成功）
           //   仅当无可丢弃时才抛错，防止无限重试死循环
@@ -10875,6 +10930,10 @@ async function streamChatCompletion(messages,tools,onChunk,source){
           if(!_stDropped){
             throw new Error('上下文压缩失败且无可丢弃的旧消息(400 context length exceeded)。请手动压缩上下文或新建对话。');
           }
+          // ★ [v3.0] 降级丢弃后同样同步累计器（被丢消息的_tokens不再计入；system在index0不受影响）
+          _convTokenAccumulator[currentConversationId]=messages.reduce(function(s,m){return s+(typeof m._tokens==='number'?m._tokens:0);},0);
+          _updateToolbarTokenDisplay();
+          _saveTokenCounts();
         }
         response=null;
         break;
@@ -18179,7 +18238,11 @@ async function processUserMessage(userText,taskId){
     }, 500);
     // ★ 内层 try-catch 确保异常时定时器+DOM 务必清理，杜绝 _autoTimer 泄漏
     try {
-      var compressed = await _compressOldMessages(messages, 1048565);
+      // ★ [v3.0] system不进压缩路径：剥离压缩（system由下方 _newMessages=[messages[0]] 保留）
+      var _autoSys=null;
+      var _autoMsgs=messages;
+      if(messages.length>0&&messages[0].role==='system'){_autoSys=messages[0];_autoMsgs=messages.slice(1);}
+      var compressed = await _compressOldMessages(_autoMsgs, 1048565);
       clearInterval(_autoTimer);
       if (compressed) {
         _autoToast.className = 'toast success';
