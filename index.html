@@ -10707,11 +10707,20 @@ function _validateMessageSequence(messages){
       if(_matchedCount<Object.keys(_tcMap).length){
         var _delEnd=ni+1;
         while(_delEnd<cleaned.length&&cleaned[_delEnd].role==='tool')_delEnd++;
-        debugLogger.warn(' [校验] tool_calls不完整('+_matchedCount+'/'+Object.keys(_tcMap).length+')，丢弃assistant#'+ni+'及'+(_delEnd-ni-1)+'条tool消息');
-        cleaned.splice(ni,_delEnd-ni);
-        ni--; // 重新检查当前位置
-      }
+        // ★ [FIX] 修复优先：不完整对不再整条删除
+        //   若 assistant 已有流式输出 content → 剥离 tool_calls 保留回答，仅删其后孤立 tool
+        //   无 content（纯工具轮）→ 才整条丢弃（含 tool），并回退游标重新检查
+        if(cleaned[ni].content){
+          delete cleaned[ni].tool_calls;
+          debugLogger.warn(' [校验] tool_calls不完整('+_matchedCount+'/'+Object.keys(_tcMap).length+')，剥离tool_calls保留content，删除'+(_delEnd-ni-1)+'条tool');
+          cleaned.splice(ni+1,_delEnd-ni-1);
+        }else{
+          debugLogger.warn(' [校验] tool_calls不完整('+_matchedCount+'/'+Object.keys(_tcMap).length+')，丢弃assistant#'+ni+'及'+(_delEnd-ni-1)+'条tool消息');
+          cleaned.splice(ni,_delEnd-ni);
+          ni--; // 重新检查当前位置
+        }
     }
+  }
   }
   return cleaned;
 }
@@ -18126,7 +18135,11 @@ async function processUserMessage(userText,taskId){
             }
             break;
           }
-          // !_matched → items 无对应条目（用户已删除）→ 骨架消息丢弃；其后孤立 tool 由 _validateMessageSequence 清理
+          // !_matched → items 无对应条目：
+          // ★ [FIX] 保留骨架：items(气泡版)采集不全(flow折叠/渲染差异) ≠ 用户删除
+          //   删除/编辑已由回调同步 fullMessages（骨架=权威删除后状态）
+          //   防止 assistant(tool_calls) 被误杀 → 其 tool 消息孤立 → 校验批量丢弃
+          if(!_matched){messages.push(_skm);debugLogger.info(' [恢复] 骨架无items对应(保留): '+_skm.role);}
         }
       }else{
         // 无 items（旧数据/分支未收集）或压缩后（items=完整历史）→ 骨架原样
@@ -19479,6 +19492,16 @@ _mainToolCalls[_ri2].result = _rc.length > 5000 ? _rc.substring(0, 5000) + '…'
     _saveTokenCounts();
     // ★ 同步 messages 到 branch data（异步持久化，配合 beforeunload 增加 IndexedDB 落地概率）
     // ★ [P1/v2.8] 双轨持久化：items=UI渲染数据(气泡)；fullMessages=API上下文快照(含system/tool/tool_calls/_injected)，token级还原
+    // ★ [FIX] 落库前防御：修复型校验（不完整对剥离tool_calls保留content），杜绝残缺序列入库
+    try{
+      var _fixMsgs=messages.slice();
+      var _fixV=_validateMessageSequence(_fixMsgs);
+      if(_fixV.length!==_fixMsgs.length){
+        debugLogger.warn(' [落库] 防御校验修复'+(_fixMsgs.length-_fixV.length)+'条残缺消息');
+        messages.length=0;Array.prototype.push.apply(messages,_fixV);
+      }
+    }catch(_fe){}
+    // ★ 同步 messages 到 branch data（异步持久化，配合 beforeunload 增加 IndexedDB 落地概率）
     try{
       var _bd2=_getBranchData(currentConversationId);
       var _items2=messages.filter(function(m){return true;});
