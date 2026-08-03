@@ -5374,24 +5374,7 @@ window._downloadRecentFile=async function(btn){
 async function _restoreArtifactRegistry(){
   try{
     var allFiles=await idbTransaction('files','readonly',function(store){return store.getAll();});
-    if(!allFiles)allFiles=[];
-    // ★ [共享空间] 补扫 OPFS 共享目录（/sandbox /uploads /downloads 的文件不在IDB）
-    if(_opfsAvailable){
-      try{
-        var opfsPaths=await listDir('/sandbox/');
-        opfsPaths=opfsPaths.concat(await listDir('/uploads/'));
-        opfsPaths=opfsPaths.concat(await listDir('/downloads/'));
-        for(var oi=0;oi<opfsPaths.length;oi++){
-          var op=opfsPaths[oi];
-          var om=await getFileMeta(op);
-          if(!om||om.isDir)continue;
-          var oc=await readFile(op);
-          if(oc===null||oc==='__DIR__')continue;
-          allFiles.push({path:op,content:oc,size:om.size||0,updated_at:om.updated_at||0,accessed_at:0,compressed:false});
-        }
-      }catch(e){}
-    }
-    if(!allFiles.length)return;
+    if(!allFiles||!allFiles.length)return;
     var registered=0;
     for(var i=0;i<allFiles.length;i++){
       var f=allFiles[i];
@@ -5836,152 +5819,6 @@ function idbTransaction(storeName,mode,callback,maxRetries){
 }
 
 // ================================================================
-// 第5.5部分：OPFS 共享文件系统（/sandbox /uploads /downloads 双后端路由）
-// ================================================================
-var _opfsRoot=null,_opfsDirHandles=null,_opfsAvailable=false,_opfsInitPromise=null;
-function _opfsIsShared(path){
-  var np=normalizePath(path);
-  return np==='/sandbox'||np==='/uploads'||np==='/downloads'||np.indexOf('/sandbox/')===0||np.indexOf('/uploads/')===0||np.indexOf('/downloads/')===0;
-}
-async function _opfsInit(){
-  if(_opfsInitPromise)return _opfsInitPromise;
-  _opfsInitPromise=(async function(){
-    try{
-      if(!navigator.storage||!navigator.storage.getDirectory){_opfsAvailable=false;return false;}
-      _opfsRoot=await navigator.storage.getDirectory();
-      _opfsDirHandles={sandbox:null,uploads:null,downloads:null};
-      try{_opfsDirHandles.sandbox=await _opfsRoot.getDirectoryHandle('sandbox',{create:true});}catch(e){}
-      try{_opfsDirHandles.uploads=await _opfsRoot.getDirectoryHandle('uploads',{create:true});}catch(e){}
-      try{_opfsDirHandles.downloads=await _opfsRoot.getDirectoryHandle('downloads',{create:true});}catch(e){}
-      _opfsAvailable=true;
-      // ★ 一次性迁移：IndexedDB 中 /sandbox /uploads /downloads 存量 → OPFS（幂等）
-      try{await _opfsMigrateFromIdb();}catch(e){}
-      return true;
-    }catch(e){
-      _opfsAvailable=false;
-      debugLogger.warn('OPFS不可用(需https/localhost): '+e.message);
-      return false;
-    }
-  })();
-  return _opfsInitPromise;
-}
-async function _opfsReady(){await _opfsInit();return _opfsAvailable;}
-function _opfsHandles(){return _opfsDirHandles;}
-// OPFS 路径 → {dir, rel}
-function _opfsResolve(np){
-  if(!_opfsDirHandles)return null;
-  if(np==='/sandbox'||np.indexOf('/sandbox/')===0)return {dir:_opfsDirHandles.sandbox,rel:np==='/sandbox'?'':np.substring(9)};
-  if(np==='/uploads'||np.indexOf('/uploads/')===0)return {dir:_opfsDirHandles.uploads,rel:np==='/uploads'?'':np.substring(9)};
-  if(np==='/downloads'||np.indexOf('/downloads/')===0)return {dir:_opfsDirHandles.downloads,rel:np==='/downloads'?'':np.substring(11)};
-  return null;
-}
-async function _opfsWriteFile(np,content){
-  var r=_opfsResolve(np);if(!r)throw new Error('非共享路径: '+np);
-  var segs=r.rel.split('/').filter(Boolean);
-  if(segs.length===0)return;
-  var cur=r.dir;
-  for(var i=0;i<segs.length-1;i++){cur=await cur.getDirectoryHandle(segs[i],{create:true});}
-  var fh=await cur.getFileHandle(segs[segs.length-1],{create:true});
-  var w=await fh.createWritable();
-  await w.write(content);await w.close();
-}
-async function _opfsReadFile(np){
-  var r=_opfsResolve(np);if(!r)return null;
-  var segs=r.rel.split('/').filter(Boolean);
-  if(segs.length===0)return null;
-  var cur=r.dir,fh=null;
-  try{
-    for(var i=0;i<segs.length-1;i++){cur=await cur.getDirectoryHandle(segs[i]);}
-    fh=await cur.getFileHandle(segs[segs.length-1]);
-  }catch(e){return null;}
-  var f=await fh.getFile();
-  var u8=new Uint8Array(await f.arrayBuffer());
-  var txt=null;try{txt=new TextDecoder('utf-8',{fatal:true}).decode(u8);}catch(e){}
-  return txt!==null?txt:(f.type?f:u8);
-}
-async function _opfsDeleteFile(np){
-  var r=_opfsResolve(np);if(!r)return;
-  var segs=r.rel.split('/').filter(Boolean);
-  if(segs.length===0)return;
-  var cur=r.dir;
-  try{
-    for(var i=0;i<segs.length-1;i++){cur=await cur.getDirectoryHandle(segs[i]);}
-    await cur.removeEntry(segs[segs.length-1]);
-  }catch(e){}
-}
-async function _opfsWalk(dir,rel,prefix,out){
-  for await (var ent of dir.values()){
-    var sub=rel?(rel+'/'+ent.name):ent.name;
-    if(ent.kind==='directory'){await _opfsWalk(ent,sub,prefix,out);}
-    else{out.push(prefix+sub);}
-  }
-}
-async function _opfsListDir(nd){
-  var r=_opfsResolve(nd);if(!r)return [];
-  var prefix=nd.endsWith('/')?nd:nd+'/';
-  var results=[];
-  try{
-    var cur=r.dir;
-    var rel=r.rel;
-    if(rel){
-      var segs=rel.split('/').filter(Boolean);
-      for(var i=0;i<segs.length;i++){cur=await cur.getDirectoryHandle(segs[i]);}
-    }
-    await _opfsWalk(cur,rel?rel.replace(/\/$/,''):'',prefix,results);
-  }catch(e){}
-  return results;
-}
-async function _opfsGetMeta(np){
-  var r=_opfsResolve(np);if(!r)return null;
-  var segs=r.rel.split('/').filter(Boolean);
-  var cur=r.dir;
-  try{
-    if(segs.length===0){return {path:np,size:0,isDir:true,updated_at:0};}
-    var d=cur;
-    for(var i=0;i<segs.length-1;i++){d=await d.getDirectoryHandle(segs[i]);}
-    try{await d.getDirectoryHandle(segs[segs.length-1]);return {path:np,size:0,isDir:true,updated_at:0};}catch(e){}
-    var fh=await d.getFileHandle(segs[segs.length-1]);
-    var f=await fh.getFile();
-    return {path:np,size:f.size,isDir:false,updated_at:f.lastModified||Date.now()};
-  }catch(e){return null;}
-}
-// ★ 一次性迁移：IDB 中三个共享目录的文件 → OPFS（幂等：只迁 IDB 有、OPFS 无的）
-async function _opfsMigrateFromIdb(){
-  if(!_opfsAvailable)return;
-  var allPaths=await listAllVfsPaths();
-  for(var i=0;i<allPaths.length;i++){
-    var fp=allPaths[i];
-    if(!_opfsIsShared(fp))continue;
-    if(/\.part\d+$/.test(fp)||/\.meta$/.test(fp))continue;
-    var r=_opfsResolve(fp);if(!r)continue;
-    var segs=r.rel.split('/').filter(Boolean);if(segs.length===0)continue;
-    var cur=r.dir,exists=false;
-    try{
-      for(var j=0;j<segs.length-1;j++){cur=await cur.getDirectoryHandle(segs[j]);}
-      await cur.getFileHandle(segs[segs.length-1]);exists=true;
-    }catch(e){}
-    if(exists)continue;
-    var record=await idbTransaction('files','readonly',function(store){return store.get(fp);});
-    if(!record||record.content==='__DIR__')continue;
-    await _opfsWriteFile(fp,record.content);
-    debugLogger.debug('OPFS迁移: '+fp);
-  }
-}
-// ★ [共享空间] uploads 只读快照（OPFS模式供Python沙箱注入；JS沙箱直接用共享Map）
-async function collectUploadsSnapshot(){
-  var snapshot={};
-  var paths=await listDir('/uploads/');
-  for(var i=0;i<paths.length;i++){
-    var content=await readFile(paths[i]);
-    if(content===null)continue;
-    snapshot[paths[i]]={content:content,permission:'read'};
-  }
-  return snapshot;
-}
-
-
-
-// ================================================================
 // 第6部分：文件系统
 // ================================================================
 
@@ -6010,7 +5847,6 @@ async function ensureDirectoryExists(dirPath){
 async function createFile(path,content){
   var np=normalizePath(path);
   var parentDir=getParentDir(np);
-  if(_opfsIsShared(np))return _opfsWriteFile(np,content);
   if(parentDir&&parentDir!=='/'){
     await ensureDirectoryExists(parentDir);
   }
@@ -6023,7 +5859,6 @@ var _accessedThrottle={};
 async function readFile(path){
   var np=normalizePath(path);
   var record=await idbTransaction('files','readonly',function(store){return store.get(np);});
-  if(_opfsIsShared(np))return _opfsReadFile(np);
   if(!record)return null;
   var now=Date.now();
   if(!_accessedThrottle[np]||now-_accessedThrottle[np]>60000){
@@ -6037,7 +5872,6 @@ async function readFile(path){
 async function updateFile(path,newContent){
   var np=normalizePath(path);
   var existing=await idbTransaction('files','readonly',function(store){return store.get(np);});
-  if(_opfsIsShared(np))return _opfsWriteFile(np,newContent);
   if(!existing)throw new Error('File not found: '+np);
   existing.content=newContent;
   existing.size=new Blob([newContent]).size;
@@ -6049,13 +5883,11 @@ async function updateFile(path,newContent){
 async function deleteFile(path){
   var np=normalizePath(path);
   await idbTransaction('files','readwrite',function(store){return store.delete(np);});
-  if(_opfsIsShared(np))return _opfsDeleteFile(np);
 }
 
 async function listDir(dirPath){
   var nd=normalizePath(dirPath);
   var prefix=nd.endsWith('/')?nd:nd+'/';
-  if(_opfsIsShared(nd))return _opfsListDir(nd);
   var d=await getDB();
   return new Promise(function(resolve,reject){
     var transaction=d.transaction('files','readonly');
@@ -6095,7 +5927,6 @@ async function listDirDirect(dirPath){
 
 async function getFileMeta(path){
   var np=normalizePath(path);
-  if(_opfsIsShared(np))return _opfsGetMeta(np);
   var record=await idbTransaction('files','readonly',function(store){return store.get(np);});
   if(!record){
     var prefix=np.endsWith('/')?np:np+'/';
@@ -8651,77 +8482,6 @@ function buildTaskWorkerSource(){
   src+='var pyodide=null;\n';
   src+='var embedder=null;\n';
   src+='var modelLoading=false;\n';
-  src+='var _opfsShared=null;var _opfsHandles=null;var _opfsPending=[];\n';
-  src+='// ★ [共享空间] 权限规则表（与主线程 CODE_RUN_FS_ACCESS 一致）\n';
-  src+='var _OPFS_RULES=[["/config/","none"],["/memory/","none"],["/pipelines/","none"],["/trash/","none"],["/uploads/","read"],["/downloads/","readwrite"],["/sandbox/","readwrite"],["/tmp/","readwrite"]];\n';
-  src+='function _checkPerm(path,op){\n';
-  src+='  if(typeof path!=="string")return false;\n';
-  src+='  var np=path.charAt(0)==="/"?path:"/"+path;if(np.charAt(np.length-1)!=="/")np+="/";\n';
-  src+='  var best="none",bestLen=0;\n';
-  src+='  for(var _ri=0;_ri<_OPFS_RULES.length;_ri++){var _rk=_OPFS_RULES[_ri][0];if(np.indexOf(_rk)===0&&_rk.length>bestLen){best=_OPFS_RULES[_ri][1];bestLen=_rk.length;}}\n';
-  src+='  if(best==="none")return false;\n';
-  src+='  if(op==="read")return true;\n';
-  src+='  return best==="readwrite";\n';
-  src+='}\n';
-  src+='function _opfsPathToHandle(path){\n';
-  src+='  if(!_opfsHandles)return null;\n';
-  src+='  if(path.indexOf("/sandbox/")===0)return {dir:_opfsHandles.sandbox,rel:path.substring(9)};\n';
-  src+='  if(path.indexOf("/uploads/")===0)return {dir:_opfsHandles.uploads,rel:path.substring(9)};\n';
-  src+='  if(path.indexOf("/downloads/")===0)return {dir:_opfsHandles.downloads,rel:path.substring(11)};\n';
-  src+='  if(path==="/sandbox")return {dir:_opfsHandles.sandbox,rel:""};\n';
-  src+='  if(path==="/uploads")return {dir:_opfsHandles.uploads,rel:""};\n';
-  src+='  if(path==="/downloads")return {dir:_opfsHandles.downloads,rel:""};\n';
-  src+='  return null;\n';
-  src+='}\n';
-  src+='async function _opfsLoadShared(handles){\n';
-  src+='  _opfsHandles=handles;_opfsShared=new Map();\n';
-  src+='  async function _walk(dir,prefix){\n';
-  src+='    try{\n';
-  src+='      for await (var _ent of dir.values()){\n';
-  src+='        if(_ent.kind==="directory"){\n';
-  src+='          _opfsShared.set(prefix+"/"+_ent.name,"__DIR__");\n';
-  src+='          await _walk(_ent,prefix+"/"+_ent.name);\n';
-  src+='        }else{\n';
-  src+='          var _fh=await dir.getFileHandle(_ent.name);\n';
-  src+='          var _f=await _fh.getFile();\n';
-  src+='          var _u8=new Uint8Array(await _f.arrayBuffer());\n';
-  src+='          var _txt=null;try{_txt=new TextDecoder("utf-8",{fatal:true}).decode(_u8);}catch(_e){}\n';
-  src+='          _opfsShared.set(prefix+"/"+_ent.name,_txt!==null?_txt:_u8);\n';
-  src+='        }\n';
-  src+='      }\n';
-  src+='    }catch(_e){}\n';
-  src+='  }\n';
-  src+='  if(handles.sandbox){await _walk(handles.sandbox,"/sandbox");}\n';
-  src+='  if(handles.uploads){await _walk(handles.uploads,"/uploads");}\n';
-  src+='  if(handles.downloads){await _walk(handles.downloads,"/downloads");}\n';
-  src+='}\n';
-  src+='function _opfsQueueWrite(path,data){\n';
-  src+='  _opfsShared.set(path,data);\n';
-  src+='  for(var _qi=0;_qi<_opfsPending.length;_qi++){if(_opfsPending[_qi].path===path){_opfsPending[_qi].data=data;_opfsPending[_qi].del=false;return;}}\n';
-  src+='  _opfsPending.push({path:path,data:data,del:false,mk:false});\n';
-  src+='}\n';
-  src+='function _opfsQueueDelete(path){_opfsShared.delete(path);for(var _qi2=0;_qi2<_opfsPending.length;_qi2++){if(_opfsPending[_qi2].path===path){_opfsPending[_qi2].del=true;return;}}_opfsPending.push({path:path,data:null,del:true,mk:false});}\n';
-  src+='function _opfsQueueMkdir(path){for(var _qi3=0;_qi3<_opfsPending.length;_qi3++){if(_opfsPending[_qi3].path===path){return;}}_opfsPending.push({path:path,data:null,del:false,mk:true});}\n';
-  src+='async function _opfsFlush(){\n';
-  src+='  if(!_opfsHandles||_opfsPending.length===0)return;\n';
-  src+='  var items=_opfsPending;_opfsPending=[];\n';
-  src+='  for(var _fi=0;_fi<items.length;_fi++){\n';
-  src+='    var it=items[_fi];var hp=_opfsPathToHandle(it.path);if(!hp)continue;\n';
-  src+='    try{\n';
-  src+='      if(it.del){try{await hp.dir.removeEntry(hp.rel);}catch(_e){}}\n';
-  src+='      else if(it.mk){try{await hp.dir.getDirectoryHandle(hp.rel,{create:true});}catch(_e){}}\n';
-  src+='      else{\n';
-  src+='        var segs=hp.rel.split("/").filter(Boolean);\n';
-  src+='        var cur=hp.dir;\n';
-  src+='        for(var _si=0;_si<segs.length-1;_si++){cur=await cur.getDirectoryHandle(segs[_si],{create:true});}\n';
-  src+='        var fh=await cur.getFileHandle(segs[segs.length-1],{create:true});\n';
-  src+='        var w=await fh.createWritable();\n';
-  src+='        await w.write(it.data);await w.close();\n';
-  src+='      }\n';
-  src+='    }catch(_e){self.postMessage({type:"log",payload:{level:"warn",message:"OPFS写入失败 "+it.path+": "+_e.message}});}\n';
-  src+='  }\n';
-  src+='}\n';
-
 	// === 网络层：fetch 自动CORS代理降级 + http 便捷API（js沙箱用）===
 	src+='var _workerFetch=async function(url,opts){\n';
 	src+='  opts=opts||{};\n';
@@ -8772,9 +8532,6 @@ function buildTaskWorkerSource(){
 	src+='  "    async def json(self):",\n';
 	src+='  "        if self._j is None: self._j = _json.loads(await self.text())",\n';
 	src+='  "        return self._j",\n';
-  src+='  "    async def bytes(self):",\n';
-  src+='  "        ab = await self._r.arrayBuffer()",\n';
-  src+='  "        return ab.to_bytes()",\n';
 	src+='  "    @property",\n';
 	src+='  "    def headers(self):",\n';
 	src+='  "        try: return dict(self._r.headers)",\n';
@@ -8831,9 +8588,6 @@ function buildTaskWorkerSource(){
   src+='  "    async def json(self):",\n';
   src+='  "        if self._jv is None: self._jv = _json.loads(await self.text())",\n';
   src+='  "        return self._jv",\n';
-  src+='  "    async def bytes(self):",\n';
-  src+='  "        ab = await self._j.arrayBuffer()",\n';
-  src+='  "        return ab.to_bytes()",\n';
   src+='  "    @property",\n';
   src+='  "    def headers(self):",\n';
   src+='  "        try: return dict(self._j.headers)",\n';
@@ -8843,8 +8597,8 @@ function buildTaskWorkerSource(){
   src+='  "async def http_download(url, file_path=None, **kw):",\n';
   src+='  "    r = await _net_req(url, method=\'GET\', **kw)",\n';
   src+='  "    data = None",\n';
-  src+='  "    if hasattr(r, \'bytes\'):",\n';
-  src+='  "        data = await r.bytes()",\n';
+  src+='  "    if hasattr(r, \'_r\') and hasattr(r._r, \'bytes\'):",\n';
+  src+='  "        data = await r._r.bytes()",\n';
   src+='  "    else:",\n';
   src+='  "        data = (await r.text()).encode(\'utf-8\')",\n';
   src+='  "    import base64 as _b64",\n';
@@ -9005,7 +8759,7 @@ function buildTaskWorkerSource(){
   src+='      _respFsChanges=result.fs_changes;\n';
   src+='    }\n';
   src+='    self.postMessage({id:id,success:true,data:_respData,fs_changes:_respFsChanges,duration:Date.now()-startTime});\n';
-  src+='  }catch(error){self.postMessage({id:id,success:false,error:error.message,fs_changes:(self._lastFsChanges||null),duration:Date.now()-startTime});}\n';
+  src+='  }catch(error){self.postMessage({id:id,success:false,error:error.message,duration:Date.now()-startTime});}\n';
   src+='};\n';
   src+='\n';
   
@@ -9014,19 +8768,14 @@ function buildTaskWorkerSource(){
   src+='  var language=params.language,code=params.code,timeout=params.timeout||10000;\n';
   src+='  var fsSnapshot=params.fs_snapshot||{};\n';
   src+='  var sandboxDir=params.sandbox_dir||"/sandbox/";\n';
-  src+='  // ★ [共享空间] OPFS模式：预加载共享区(sandbox/uploads/downloads)进内存Map\n';
-  src+='  if(params.opfs&&params.opfs.handles){try{await _opfsLoadShared(params.opfs.handles);}catch(_opfsE){self.postMessage({type:"log",payload:{level:"warn",message:"OPFS预加载失败，降级空共享: "+_opfsE.message}});}}\n';
   src+='\n';
   src+='  if(language==="javascript"){\n';
   src+='    var _vfs=new Map();\n';
-  src+='    // ★ [共享空间] OPFS模式：_vfs 直接用预加载的共享Map（主线程不再传快照）\n';
-  src+='    if(params.opfs&&_opfsShared){_vfs=_opfsShared;}\n';
   src+='    for(var _fp in fsSnapshot){\n';
   src+='      if(fsSnapshot[_fp].content!=="__DIR__"){\n';
   src+='        _vfs.set(_fp,fsSnapshot[_fp].content);\n';
   src+='      }\n';
   src+='    }\n';
-  src+='    var _stdout=[];\n';
   src+='    var _stdout=[];\n';
   src+='    // ★ Buffer增强：Uint8Array 挂 Node 风格 toString(enc) 方法\n';
   src+='    function _bufWrap(u8){u8.toString=function(enc){if(enc==="base64"){var bin="";for(var i=0;i<this.length;i++)bin+=String.fromCharCode(this[i]);return btoa(bin);}if(enc==="hex"){var h="";for(var i=0;i<this.length;i++)h+=this[i].toString(16).padStart(2,"0");return h;}return new TextDecoder().decode(this);};return u8;}\n';
@@ -9056,10 +8805,10 @@ function buildTaskWorkerSource(){
   src+='    var api={\n';
   src+='      fs:{\n';
   src+='        read:function(p){if(!_vfs.has(p))throw new Error("文件不存在: "+p);return _vfs.get(p);},\n';
-  src+='        write:function(p,content){if(!_checkPerm(p,"write"))throw new Error("[FS_PERMISSION_DENIED] 无写权限: "+p);_vfs.set(p,content);if(params.opfs&&_opfsShared){_opfsQueueWrite(p,content);}return true;},\n';
+  src+='        write:function(p,content){_vfs.set(p,content);return true;},\n';
   src+='        exists:function(p){return _vfs.has(p);},\n';
   src+='        list:function(dir){var r=[];_vfs.forEach(function(v,k){if(!dir||k.indexOf(dir)===0)r.push(k);});return r;},\n';
-  src+='        delete:function(p){if(!_checkPerm(p,"delete"))throw new Error("[FS_PERMISSION_DENIED] 无写权限: "+p);var _dr=_vfs.delete(p);if(params.opfs&&_opfsShared){_opfsQueueDelete(p);}return _dr;},\n';
+  src+='        delete:function(p){return _vfs.delete(p);},\n';
   src+='        readDownload:function(p){\n';
   src+='          if(!_vfs.has(p+".meta"))throw new Error("非分片下载文件: "+p+" (请用 http.download(url, path) 下载)");\n';
   src+='          var meta=JSON.parse(_vfs.get(p+".meta"));\n';
@@ -9074,7 +8823,7 @@ function buildTaskWorkerSource(){
   src+='      require:function(m){\n';
   src+='        var _rc=api._requireCache||(api._requireCache={});\n';
   src+='        if(_rc[m])return _rc[m];\n';
-  src+='        if(m==="fs")return _rc[m]={readFileSync:function(p){if(!_vfs.has(p)||_vfs.get(p)==="__DIR__")throw new Error("文件不存在: "+p);return _vfs.get(p)},writeFileSync:function(p,c){if(!_checkPerm(p,"write"))throw new Error("[FS_PERMISSION_DENIED] 无写权限: "+p);_vfs.set(p,c);if(params.opfs&&_opfsShared){_opfsQueueWrite(p,c);}return true},appendFileSync:function(p,c){if(!_checkPerm(p,"write"))throw new Error("[FS_PERMISSION_DENIED] 无写权限: "+p);var old=_vfs.has(p)&&_vfs.get(p)!=="__DIR__"?_vfs.get(p):"";_vfs.set(p,old+c);if(params.opfs&&_opfsShared){_opfsQueueWrite(p,old+c);}return true},existsSync:function(p){return _vfs.has(p)&&_vfs.get(p)!=="__DIR__"},readdirSync:function(p){var r=[];_vfs.forEach(function(v,k){if(v!=="__DIR__"&&(!p||k.indexOf(p)===0)){var _bn=k;if(p){_bn=k.slice(p.length);if(_bn.charAt(0)==="/")_bn=_bn.slice(1)}r.push(_bn)}});return r},unlinkSync:function(p){if(!_checkPerm(p,"delete"))throw new Error("[FS_PERMISSION_DENIED] 无写权限: "+p);if(!_vfs.has(p))throw new Error("文件不存在: "+p);_vfs.delete(p);if(params.opfs&&_opfsShared){_opfsQueueDelete(p);}return true},statSync:function(p){if(!_vfs.has(p))throw new Error("文件不存在: "+p);var _isDir=_vfs.get(p)==="__DIR__";return{size:_isDir?0:_vfs.get(p).length,isFile:function(){return!_isDir},isDirectory:function(){return _isDir}}},mkdirSync:function(p,opts){if(!_checkPerm(p,"write"))throw new Error("[FS_PERMISSION_DENIED] 无写权限: "+p);if(opts&&opts.recursive){var parts=p.split("/").filter(Boolean);var cur="";for(var i=0;i<parts.length;i++){cur+="/"+parts[i];if(!_vfs.has(cur))_vfs.set(cur,"__DIR__")}}else{_vfs.set(p,"__DIR__")}if(params.opfs&&_opfsShared){_opfsQueueMkdir(p);}return p}};\n';
+  src+='        if(m==="fs")return _rc[m]={readFileSync:function(p){if(!_vfs.has(p)||_vfs.get(p)==="__DIR__")throw new Error("文件不存在: "+p);return _vfs.get(p)},writeFileSync:function(p,c){_vfs.set(p,c);return true},appendFileSync:function(p,c){var old=_vfs.has(p)&&_vfs.get(p)!=="__DIR__"?_vfs.get(p):"";_vfs.set(p,old+c);return true},existsSync:function(p){return _vfs.has(p)&&_vfs.get(p)!=="__DIR__"},readdirSync:function(p){var r=[];_vfs.forEach(function(v,k){if(v!=="__DIR__"&&(!p||k.indexOf(p)===0)){var _bn=k;if(p){_bn=k.slice(p.length);if(_bn.charAt(0)==="/")_bn=_bn.slice(1)}r.push(_bn)}});return r},unlinkSync:function(p){if(!_vfs.has(p))throw new Error("文件不存在: "+p);_vfs.delete(p);return true},statSync:function(p){if(!_vfs.has(p))throw new Error("文件不存在: "+p);var _isDir=_vfs.get(p)==="__DIR__";return{size:_isDir?0:_vfs.get(p).length,isFile:function(){return!_isDir},isDirectory:function(){return _isDir}}},mkdirSync:function(p,opts){if(opts&&opts.recursive){var parts=p.split("/").filter(Boolean);var cur="";for(var i=0;i<parts.length;i++){cur+="/"+parts[i];if(!_vfs.has(cur))_vfs.set(cur,"__DIR__")}}else{_vfs.set(p,"__DIR__")}return p}};\n';
   src+='        if(m==="path")return _rc[m]={join:function(){var a=[];for(var i=0;i<arguments.length;i++){var s=String(arguments[i]);if(s)a.push(s)}return a.join("/").split("\\\\").join("/").replace(/\\/+/g,"/")},basename:function(p){return(p||"").split("/").filter(Boolean).pop()||""},dirname:function(p){var a=(p||"").split("/").filter(Boolean);a.pop();return a.length?a.join("/"):"/"},extname:function(p){var f=(p||"").split("/").filter(Boolean).pop()||"";var i=f.lastIndexOf(".");return i>0?f.slice(i):""},resolve:function(){var a=[];for(var i=0;i<arguments.length;i++){var s=String(arguments[i]);if(s)a.push(s)}return a.join("/").split("\\\\").join("/").replace(/\\/+/g,"/")}};\n';
   src+='        if(m==="os")return _rc[m]={type:function(){return"Browser"},platform:function(){return"browser"},homedir:function(){return"/home"},hostname:function(){return"localhost"},tmpdir:function(){return"/tmp"},arch:function(){return"wasm32"},cpus:function(){return[{model:"Browser Worker",speed:0,times:{}}]},freemem:function(){return 2*1024*1024*1024},totalmem:function(){return 4*1024*1024*1024},networkInterfaces:function(){return{}},uptime:function(){return 0},EOL:"\\n",constants:{signals:{},errno:{}}};\n';
   src+='        if(m==="util")return _rc[m]={format:function(){var a=[];for(var i=0;i<arguments.length;i++)a.push(String(arguments[i]));return a.join(" ")},inspect:function(v){return JSON.stringify(v,null,2)}};\n';
@@ -9103,8 +8852,6 @@ function buildTaskWorkerSource(){
       src+='      fetchText:async function(url,opts){var r=await _workerFetch(url,opts);return r.text();},\n';
       src+='      fetchJSON:async function(url,opts){var r=await _workerFetch(url,opts);return r.json();},\n';
       src+='      http:Object.assign(_workerHttp,{download:async function(url,filePath,opts){\n';
-      src+='        // ★ [共享空间] 落盘路径权限检查（/uploads只读拒绝，/config等none拒绝）\n';
-      src+='        if(filePath&&!_checkPerm(filePath,"write"))throw new Error("[FS_PERMISSION_DENIED] 无写权限: "+filePath);\n';
       src+='        var r=await _workerFetch(url,opts||{});\n';
       src+='        if(!r.ok)throw new Error("下载失败 HTTP "+r.status+" | "+url);\n';
       src+='        var mime="application/octet-stream";\n';
@@ -9118,7 +8865,7 @@ function buildTaskWorkerSource(){
       src+='          total+=blen;\n';
       src+='          if(filePath){\n';
       src+='            var bin="";for(var i=0;i<slice.length;i++)bin+=String.fromCharCode(slice[i]);\n';
-      src+='            if(params.opfs&&_opfsShared){_opfsQueueWrite(filePath+".part"+parts,btoa(bin));}else{_vfs.set(filePath+".part"+parts,btoa(bin));}\n';
+      src+='            _vfs.set(filePath+".part"+parts,btoa(bin));\n';
       src+='            parts++;\n';
       src+='          }else{rawChunks.push(slice);}\n';
       src+='          blen=0;\n';
@@ -9131,7 +8878,7 @@ function buildTaskWorkerSource(){
       src+='        if(blen>0)flushPart();\n';
       src+='        // 有 filePath → 落盘分片+.meta清单（空文件也写meta）\n';
       src+='        if(filePath&&(parts>0||total===0)){\n';
-      src+='          if(params.opfs&&_opfsShared){_opfsQueueWrite(filePath+".meta",JSON.stringify({mime:mime,size:total,parts:parts,name:(filePath.split("/").pop()||"download")}));}else{_vfs.set(filePath+".meta",JSON.stringify({mime:mime,size:total,parts:parts,name:(filePath.split("/").pop()||"download")}));}\n';
+      src+='          _vfs.set(filePath+".meta",JSON.stringify({mime:mime,size:total,parts:parts,name:(filePath.split("/").pop()||"download")}));\n';
       src+='          return {ok:true,status:r.status,size:total,mime:mime,viaProxy:!!r.viaProxy,path:filePath,saved:true,chunked:true,parts:parts};\n';
       src+='        }\n';
       src+='        // 无 filePath → 小响应直接拼 dataURL 返回\n';
@@ -9141,46 +8888,31 @@ function buildTaskWorkerSource(){
       src+='      }}),\n';
       src+='      net:_workerHttp,\n';
   src+='    };\n';
-  src+='    var _result=null,_execErr=null;\n';
-  src+='    try{\n';
-  src+='      _result=await Promise.race([\n';
-  src+='        (async function(){\n';
-  src+='          var fn=new Function("api","var require=api.require;var console=api.console;var fetch=api.fetch;var http=api.http;var net=api.net;var fs=api.fs;var process=api.process;var Buffer=api.Buffer;var setInterval=api.setInterval;var clearInterval=api.clearInterval;var queueMicrotask=api.queueMicrotask;var global=api;var window=api;return (async function(){"+code+"})()");\n';
-  src+='          var ret=await fn(api);\n';
-  src+='          await new Promise(function(r){setTimeout(r,0)});\n';
-  src+='          return ret;\n';
-  src+='        })(),\n';
-  src+='        new Promise(function(_,reject){setTimeout(function(){reject(new Error("执行超时"))},timeout);})\n';
-  src+='      ]);\n';
-  src+='    }catch(_e){_execErr=_e;}\n';
+  src+='    var _result=await Promise.race([\n';
+  src+='      (async function(){\n';
+  src+='        var fn=new Function("api","var require=api.require;var console=api.console;var fetch=api.fetch;var http=api.http;var net=api.net;var fs=api.fs;var process=api.process;var Buffer=api.Buffer;var setInterval=api.setInterval;var clearInterval=api.clearInterval;var queueMicrotask=api.queueMicrotask;var global=api;var window=api;return (async function(){"+code+"})()");\n';
+  src+='        var ret=await fn(api);\n';
+  src+='        await new Promise(function(r){setTimeout(r,0)});\n';
+  src+='        return ret;\n';
+  src+='      })(),\n';
+  src+='      new Promise(function(_,reject){setTimeout(function(){reject(new Error("执行超时"))},timeout);})\n';
+  src+='    ]);\n';
   src+='    var _fsChanges=[];\n';
-  src+='    if(params.opfs&&_opfsShared){\n';
-  src+='      // ★ [共享空间] OPFS模式：无diff回写，flush写队列（实时透传已在写时入队）\n';
-  src+='      await _opfsFlush();\n';
-  src+='    }else{\n';
-  src+='      _vfs.forEach(function(v,k){\n';
-  src+='        var orig=fsSnapshot[k];\n';
-  src+='        if(!orig||orig.content!==v)_fsChanges.push({type:"write",path:k,content:v});\n';
-  src+='      });\n';
-  src+='      for(var _op in fsSnapshot){\n';
-  src+='        if(fsSnapshot[_op].content!=="__DIR__"&&!_vfs.has(_op)){\n';
-  src+='          _fsChanges.push({type:"delete",path:_op});\n';
-  src+='        }\n';
+  src+='    _vfs.forEach(function(v,k){\n';
+  src+='      var orig=fsSnapshot[k];\n';
+  src+='      if(!orig||orig.content!==v)_fsChanges.push({type:"write",path:k,content:v});\n';
+  src+='    });\n';
+  src+='    for(var _op in fsSnapshot){\n';
+  src+='      if(fsSnapshot[_op].content!=="__DIR__"&&!_vfs.has(_op)){\n';
+  src+='        _fsChanges.push({type:"delete",path:_op});\n';
   src+='      }\n';
   src+='    }\n';
-  src+='    self._lastFsChanges=_fsChanges;\n';
-  src+='    if(_execErr){throw _execErr;}\n';
   src+='    var _out=_stdout.length>0?_stdout.join("\\n")+"\\n":"";\n';
   src+='    return {result:_out+(_result!==undefined&&_result!==null?String(_result):""),fs_changes:_fsChanges};\n';
   src+='  }else if(language==="python"){\n';
   src+='    if(!pyodide){\n';
   src+='      try{await loadScript("pyodide",["https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js","https://unpkg.com/pyodide@0.25.0/pyodide.js"],"loadPyodide");pyodide=await loadPyodide({indexURL:"https://cdn.jsdelivr.net/pyodide/v0.25.0/full/"})}catch(e){throw new Error("Python执行需要加载Pyodide，当前环境不支持。请使用JavaScript。")}\n';
   src+='    }\n';
-  src+='    // ★ [共享空间修复] 无条件创建用户目录：JS分片(.partN/.meta)不进快照→Pyodide FS无/downloads→open()必挂\n';
-  src+='    try{pyodide.FS.mkdirTree("/sandbox");}catch(_eM1){}\n';
-  src+='    try{pyodide.FS.mkdirTree("/downloads");}catch(_eM2){}\n';
-  src+='    try{pyodide.FS.mkdirTree("/tmp");}catch(_eM3){}\n';
-  src+='    try{pyodide.FS.mkdirTree(sandboxDir.replace(/\\/+$/,"")||"/sandbox");}catch(_eM4){}\n';
   src+='    for(var _fp2 in fsSnapshot){\n';
   src+='      var _entry=fsSnapshot[_fp2];\n';
   src+='      if(_entry.content==="__DIR__")continue;\n';
@@ -9214,11 +8946,7 @@ function buildTaskWorkerSource(){
 
   src+='    // ★ [强力] 执行前 chdir 到 sandboxDir：相对路径 open()/write 的文件落入扫描区，不再因默认cwd丢失\n';
   src+='    try{pyodide.FS.chdir(sandboxDir);}catch(_e6b){}\n';
-  src+='    // ★ [共享空间] 执行包try/catch：超时/异常也继续扫描回写，不静默丢弃\n';
-  src+='    var _pyExecError=null;\n';
-  src+='    try{\n';
-  src+='      var result=await Promise.race([pyodide.runPythonAsync(_pyNetPatch+"\\n"+code),new Promise(function(_,reject){return setTimeout(function(){reject(new Error("Python执行超时"))},timeout)})]);\n';
-  src+='    }catch(_pyE){_pyExecError=_pyE;}\n';
+  src+='    var result=await Promise.race([pyodide.runPythonAsync(_pyNetPatch+"\\n"+code),new Promise(function(_,reject){return setTimeout(function(){reject(new Error("Python执行超时"))},timeout)})]);\n';
   src+='    // ★ 收集Python写入的变更：chdir到sandboxDir + 扫描用户文件区(sandboxDir递归+快照目录+/tmp)，diff快照\n';
   src+='    var _pyChanges=[];\n';
   src+='    // ★ 归一化 sandboxDir（主线程传入带尾部斜杠，拼接会出双斜杠路径）\n';
@@ -9236,7 +8964,7 @@ function buildTaskWorkerSource(){
   src+='          try{\n';
   src+='            var _st=pyodide.FS.stat(_full);\n';
   src+='            if(pyodide.FS.isDir(_st.mode)){_pyScanDir(_full);}\n';
-  src+='            else if(pyodide.FS.isFile(_st.mode)){try{var _rawB=pyodide.FS.readFile(_full);var _txtB=new TextDecoder("utf-8",{fatal:true}).decode(_rawB);_pyNow[_full]=_txtB;}catch(_e7){try{_pyNow[_full]=pyodide.FS.readFile(_full);}catch(_e7b){}}}\n';
+  src+='            else if(pyodide.FS.isFile(_st.mode)){try{_pyNow[_full]=pyodide.FS.readFile(_full,{encoding:"utf8"});}catch(_e7){}}\n';
   src+='          }catch(_e8){}\n';
   src+='        }\n';
   src+='      }catch(_e9){}\n';
@@ -9259,23 +8987,21 @@ function buildTaskWorkerSource(){
   src+='          var _pf=_pd==="/"?("/"+_pe2):(_pd+"/"+_pe2);\n';
   src+='          try{\n';
   src+='            var _ps=pyodide.FS.stat(_pf);\n';
-  src+='            if(pyodide.FS.isFile(_ps.mode)){try{var _rawB2=pyodide.FS.readFile(_pf);var _txtB2=new TextDecoder("utf-8",{fatal:true}).decode(_rawB2);_pyNow[_pf]=_txtB2;}catch(_ea){try{_pyNow[_pf]=pyodide.FS.readFile(_pf);}catch(_eab){}}}\n';
+  src+='            if(pyodide.FS.isFile(_ps.mode)){try{_pyNow[_pf]=pyodide.FS.readFile(_pf,{encoding:"utf8"});}catch(_ea){}}\n';
   src+='          }catch(_eb){}\n';
   src+='        }\n';
   src+='      }catch(_ec){}\n';
   src+='    }\n';
-  src+='    // diff 快照：新建+修改 → write；快照有但已消失 → delete（二进制快照不diff，防乱码覆盖）\n';
+  src+='    // diff 快照：新建+修改 → write；快照有但已消失 → delete\n';
   src+='    for(var _pn in _pyNow){\n';
   src+='      var _po=fsSnapshot[_pn];\n';
   src+='      if(!_po){_pyChanges.push({type:"write",path:_pn,content:_pyNow[_pn]});}\n';
-  src+='      else if(_po.content!=="__DIR__"&&typeof _po.content==="string"&&_po.content!==_pyNow[_pn]){_pyChanges.push({type:"write",path:_pn,content:_pyNow[_pn]});}\n';
+  src+='      else if(_po.content!=="__DIR__"&&_po.content!==_pyNow[_pn]){_pyChanges.push({type:"write",path:_pn,content:_pyNow[_pn]});}\n';
   src+='    }\n';
   src+='    for(var _op2 in fsSnapshot){\n';
   src+='      if(fsSnapshot[_op2].content==="__DIR__")continue;\n';
   src+='      if(!(_op2 in _pyNow))_pyChanges.push({type:"delete",path:_op2});\n';
   src+='    }\n';
-  src+='    self._lastFsChanges=_pyChanges;\n';
-  src+='    if(_pyExecError){throw _pyExecError;}\n';
   src+='    return {result:pyOut+(result!==undefined&&result!==null?String(result):""),fs_changes:_pyChanges};\n';
   src+='  }\n';
   src+='  throw new Error("不支持的语言: "+language);\n';
@@ -11482,9 +11208,7 @@ async function toolCodeRunner(args){
   // ── 公共执行逻辑 ──
   var sandboxDir=args.sandbox_dir||('/sandbox/'+(currentConversationId||'default')+'/');
   if(!sandboxDir.endsWith('/'))sandboxDir+='/';
-  // ★ [共享空间] OPFS可用→零快照零回写；不可用→降级旧机制(快照注入+diff回写)
-  var useOpfs=await _opfsReady();
-  var vfsSnapshot=useOpfs?await collectUploadsSnapshot():await collectVfsSnapshot(sandboxDir);
+  var vfsSnapshot=await collectVfsSnapshot(sandboxDir);
 
   var isPython=(language==='python');
   var runTimeout=args.timeout||(isPython?120000:30000);
@@ -11494,15 +11218,14 @@ async function toolCodeRunner(args){
     timeout:runTimeout,
     context_files:args.context_files||{},
     fs_snapshot:vfsSnapshot,
-    sandbox_dir:sandboxDir,
-    opfs:useOpfs?_opfsHandles():undefined
+    sandbox_dir:sandboxDir
   });
-  var runFailed=!runResp||!runResp.success;
-  var output=runResp&&runResp.data;
-  var fsChanges=useOpfs?[]:((runResp&&runResp.fs_changes)||(output&&output.fs_changes)||[]);
+  if(!runResp||!runResp.success)throw new Error(runResp?runResp.error:'代码执行失败');
+
+  var output=runResp.data;
+  var fsChanges=runResp.fs_changes||(output&&output.fs_changes)||[];
   var resultText=(output&&output.result!==undefined&&output.result!==null)?output.result:(typeof output==='string'?output:JSON.stringify(output));
   var writeCount=0,skipCount=0,skippedPaths=[];
-  // ★ [共享空间] 失败也先处理已产生的fs_changes（Python超时/异常不静默丢弃）
   for(var ci=0;ci<fsChanges.length;ci++){
     var change=fsChanges[ci];
     var perm=getCodeRunPermission(change.path);
@@ -11525,14 +11248,12 @@ async function toolCodeRunner(args){
   if(path&&path.indexOf('/tmp/_snippet_')===0){try{await deleteFile(path);}catch(e){}}
 
   var metaNote='[文件: '+path+']';
-  if(useOpfs){metaNote+='\n[共享空间] OPFS直写：/sandbox /uploads(只读) /downloads';}
   if(writeCount>0)metaNote+='\n[文件系统回写: '+writeCount+'个文件]';
   if(skipCount>0){
     var permHint={none:'不可访问(系统目录)',read:'只读(仅可读)'};
     var deniedLines=skippedPaths.map(function(s,i){return '  '+(i+1)+'. '+s.path+' — 权限: '+(permHint[s.perm]||s.perm);});
     metaNote+='\n\n[ERR_CODE] FS_PERMISSION_DENIED\n[PARAM] path\n[COUNT] '+skipCount+'\n[MESSAGE] 沙箱代码尝试写入只读/无权限路径，已阻止：\n'+deniedLines.join('\n')+'\n[SUGGEST] 沙箱仅可写 /downloads/ /sandbox/ /tmp/；/uploads/ 只读，/config/ /memory/ /pipelines/ /trash/ 不可见。请修改代码写入可写目录(推荐 /downloads/)，再用 filesystem read 验证落盘。';
   }
-  if(runFailed)throw new Error(runResp?runResp.error:'代码执行失败');
   return resultText+'\n'+metaNote;
 }
 
@@ -21369,20 +21090,20 @@ async function renderFileManager(filterCat,searchQuery){
 }
 	// 挂到全局以便 onclick 调用（用 path 而非 id，因 IndexedDB keyPath='path'）
 	window.downloadFileByPath=async function(filePath){
-	  // ★ 分片下载合并：xxx.partN + xxx.meta → 自动合并为完整文件下载（走readFile路由，兼容OPFS共享区）
+	  // ★ 分片下载合并：xxx.partN + xxx.meta → 自动合并为完整文件下载
 	  try{
 	    var _mIdx=filePath.lastIndexOf('.part');
 	    if(_mIdx>0){
 	      var _base=filePath.substring(0,_mIdx);
-	      var _metaRaw=await readFile(_base+'.meta');
-	      if(_metaRaw){
+	      var _metaRaw=await idbTransaction('files','readonly',function(store){return store.get(_base+'.meta');});
+	      if(_metaRaw&&_metaRaw.content){
 	        try{
-	          var _meta=JSON.parse(_metaRaw);
+	          var _meta=JSON.parse(_metaRaw.content);
 	          var _b64='';
 	          for(var _pi=0;_pi<_meta.parts;_pi++){
-	            var _part=await readFile(_base+'.part'+_pi);
-	            if(_part===null||_part===undefined)break;
-	            _b64+=_part;
+	            var _part=await idbTransaction('files','readonly',function(store){return store.get(_base+'.part'+_pi);});
+	            if(!_part||!_part.content)break;
+	            _b64+=_part.content;
 	          }
 	          if(_b64.length>0){
 	            var _bin=atob(_b64);var _bytes=new Uint8Array(_bin.length);
