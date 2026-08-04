@@ -1998,6 +1998,8 @@ var TOOL_REGISTRY={
     parameters:{type:'object',properties:{endpoint:{type:'string'},method:{type:'string',enum:['GET','POST','PUT','DELETE','PATCH'],default:'GET'},headers:{type:'object'},body:{},body_type:{type:'string',enum:['json','form','text'],default:'json'},timeout:{type:'number',default:15000}},required:['endpoint']}},
   'mcp_connect':{name:'mcp_connect',description:'连接MCP服务器。id/url/args三选一。id="all"连全部。',executor:'main_thread',
     parameters:{type:'object',properties:{id:{type:'string'},url:{type:'string'},args:{type:'array',items:{type:'string'}},env:{type:'object'}},required:[]}},
+  'mcp_call':{name:'mcp_call',description:'调用已连接MCP服务器的工具。server_id/id:服务器ID,tool/name:工具名,arguments/params:参数对象。标准MCP(JSON-RPC)与旧REST自动适配。',executor:'main_thread',
+    parameters:{type:'object',properties:{server_id:{type:'string'},id:{type:'string'},server:{type:'string'},tool:{type:'string'},name:{type:'string'},arguments:{type:'object'},params:{type:'object'}},required:['server_id','tool']}},
   'user_function_call':{name:'user_function_call',description:'调浏览器内注册的JS函数。function_id从设置-外部工具获取。',executor:'main_thread',
     parameters:{type:'object',properties:{function_id:{type:'string'},params:{type:'object'}},required:['function_id']}},
   'convert_format':{name:'convert_format',description:'格式互转。json/csv/yaml/md/html/xlsx/base64。',executor:'main_thread',
@@ -8773,6 +8775,7 @@ function buildTaskWorkerSource(){
   
   src+=_WORKER_BIN_HELPERS;
   src+='var pyodide=null;\n';
+  src+='var _npmPkgCache={};\n'; // ★ [FIX-2026-08-05-a] taskWorker顶层声明npm包跨执行缓存：_loadNpmPkg引用但此前未定义→require('vm')等白名单外模块直接ReferenceError而非友好报错
   src+='var embedder=null;\n';
   src+='var modelLoading=false;\n';
 	// === 网络层：fetch 自动CORS代理降级 + http 便捷API（js沙箱用）===
@@ -13363,6 +13366,7 @@ async function executeMainThreadTool(toolName,args,signal){
     case 'skill_manager':return await toolSkillManager(args);
     case 'pdf_generate':return await toolPdfGenerate(args);
     case 'custom_api_call':return await toolCustomApiCall(args,signal);
+    case 'mcp_call':return await toolMcpCall(args);
     case 'mcp_connect':return await toolMcpConnect(args);
     case 'user_function_call':return await toolUserFunctionCall(args);
     case 'convert_format':return await toolConvertFormat(args);
@@ -14033,20 +14037,115 @@ async function toolCustomApiCall(args,extSignal){
 var _mcpTools={};
 var _mcpConnections=[];  // [{id,name,url,transport,enabled,tools:[]}]
 
+async function _mcpRpc(endpoint,method,params,sessionId){
+  // ★ [FIX-2026-08-05-a] 标准 MCP streamable HTTP JSON-RPC 客户端：会话头 + JSON/SSE 双格式解析
+  var headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'};
+  if(sessionId)headers['Mcp-Session-Id']=sessionId;
+  var resp=await fetch(endpoint,{method:'POST',headers:headers,body:JSON.stringify({jsonrpc:'2.0',id:(Date.now()%100000)+Math.floor(Math.random()*1000),method:method,params:params||{}}),signal:AbortSignal.timeout(15000)});
+  var newSid=resp.headers.get('Mcp-Session-Id');
+  var text=await resp.text();
+  var ct=resp.headers.get('Content-Type')||'';
+  var json=null;
+  if(ct.indexOf('text/event-stream')>=0){
+    var lines=text.split('\n');
+    for(var i=0;i<lines.length;i++){
+      var t=lines[i].trim();
+      if(t.indexOf('data:')===0){
+        var p=t.slice(5).trim();
+        if(p&&p!=='[DONE]'){try{json=JSON.parse(p);}catch(e){}}
+      }
+    }
+  }else{
+    try{json=JSON.parse(text);}catch(e){}
+  }
+  if(!json)throw new Error('MCP响应解析失败 HTTP '+resp.status);
+  if(json.error)throw new Error('MCP错误: '+(json.error.message||JSON.stringify(json.error)));
+  return {result:json.result,sessionId:newSid};
+}
+
+function _mcpContentToText(content){
+  var parts=[];
+  var arr=Array.isArray(content)?content:(content?[content]:[]);
+  for(var i=0;i<arr.length;i++){
+    var item=arr[i];
+    if(!item)continue;
+    if(item.type==='text')parts.push(item.text||'');
+    else if(item.type==='image')parts.push('[图片 '+(item.mimeType||'image/png')+' '+(item.data?Math.round(item.data.length*3/4):0)+'B：截图未内联，请让服务器保存文件后读取]');
+    else if(item.type==='resource')parts.push('[资源: '+((item.resource&&item.resource.uri)||'')+']');
+    else parts.push('[内容类型: '+item.type+']');
+  }
+  return parts.join('\n');
+}
+
+function _mcpResultText(result){
+  if(!result)return '(空结果)';
+  if(result.isError)return '[MCP_ERROR] '+_mcpContentToText(result.content);
+  var t=_mcpContentToText(result.content);
+  return t||JSON.stringify(result,null,2).slice(0,2000);
+}
+
 async function _connectSingleMcp(conn){
   if(!conn.url)return null;
   if(conn.transport==='stdio')return {error:'stdio 传输类型当前不支持。请使用 sse 或 http 类型的 MCP 服务器。'};
+  var base=conn.url.replace(/\/$/,'');
+  var stdMode=(conn.transport==='sse')||(conn.transport==='streamable_http')||(conn.transport==='mcp')||(/\/mcp$|\/sse$/.test(base));
+  var mcpEndpoint=(/\/mcp$/.test(base)?base:(base+'/mcp'));
+  var errStd=null;
+  // ★ [FIX-2026-08-05-a] 标准 MCP（JSON-RPC streamable HTTP）优先：initialize→initialized→tools/list
+  if(conn.transport!=='rest'&&conn.transport!=='http_simple'){
+    try{
+      var init=await _mcpRpc(mcpEndpoint,'initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'exo-agent',version:'1.0.0'}},null);
+      if(init.sessionId)conn.sessionId=init.sessionId;
+      try{await _mcpRpc(mcpEndpoint,'notifications/initialized',{},conn.sessionId);}catch(e){}
+      var tl=await _mcpRpc(mcpEndpoint,'tools/list',{},conn.sessionId);
+      var tools=tl.result&&tl.result.tools?tl.result.tools:[];
+      _mcpTools[conn.id]=tools;
+      if(!conn.tools)conn.tools=[];
+      conn.tools=tools;
+      conn._stdMode=true;
+      return {id:conn.id,name:conn.name,tools:tools.map(function(t){return t.name;}),protocol:'mcp'};
+    }catch(e){errStd=e.message;}
+  }
+  // 旧简化 REST 回退：{base}/tools/list
   try{
-    var base=conn.url.replace(/\/$/,'');
     var resp=await fetch(base+'/tools/list',{headers:{'Accept':'application/json'},signal:AbortSignal.timeout(8000)});
-    if(!resp.ok)return {error:'HTTP '+resp.status};
+    if(!resp.ok)return {error:'HTTP '+resp.status+(errStd?('；标准MCP尝试失败: '+errStd):'')};
     var data=await resp.json();
-    var tools=data.tools||[];
-    _mcpTools[conn.id]=tools;
+    var tools2=data.tools||[];
+    _mcpTools[conn.id]=tools2;
     if(!conn.tools)conn.tools=[];
-    conn.tools=tools;
-    return {id:conn.id,name:conn.name,tools:tools.map(function(t){return t.name;})};
-  }catch(e){return {error:e.message};}
+    conn.tools=tools2;
+    conn._stdMode=false;
+    return {id:conn.id,name:conn.name,tools:tools2.map(function(t){return t.name;}),protocol:'rest'};
+  }catch(e){return {error:e.message+(errStd?('；标准MCP尝试失败: '+errStd):'')};}
+}
+
+async function toolMcpCall(args){
+  if(!settings.mcp_enabled)return '[ERR_CODE] TOOL_DISABLED\n[MESSAGE] MCP 未启用\n[SUGGEST] 在设置→外部工具中开启';
+  var connections=settings.mcp_connections||[];
+  var serverId=args.server_id||args.id||args.server||'';
+  var conn=null;
+  for(var i=0;i<connections.length;i++){if(connections[i].id===serverId){conn=connections[i];break;}}
+  if(!conn)return '[ERR_CODE] NOT_FOUND\n[PARAM] server_id\n[VALUE] '+serverId+'\n[MESSAGE] 未找到 MCP 服务器\n[SUGGEST] 已注册: '+connections.map(function(c){return c.id;}).join(', ')+'。先用 mcp_connect 连接';
+  var toolName=args.tool||args.name||'';
+  if(!toolName)return '[ERR_CODE] MISSING_PARAM\n[PARAM] tool\n[MESSAGE] 请指定要调用的工具名\n[SUGGEST] 先用 mcp_connect 查看可用工具';
+  var toolArgs=args.arguments||args.params||{};
+  var base=conn.url.replace(/\/$/,'');
+  try{
+    if(conn._stdMode){
+      // ★ [FIX-2026-08-05-a] 标准 MCP tools/call（会话失效则自动重连）
+      if(!conn.sessionId){var _rc=await _connectSingleMcp(conn);if(_rc.error)return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] MCP 重连失败: '+_rc.error;}
+      var mcpEndpoint=(/\/mcp$/.test(base)?base:(base+'/mcp'));
+      var r=await _mcpRpc(mcpEndpoint,'tools/call',{name:toolName,arguments:toolArgs},conn.sessionId);
+      if(r.sessionId)conn.sessionId=r.sessionId;
+      return ' MCP工具调用成功 ('+serverId+'.'+toolName+'):\n'+_mcpResultText(r.result);
+    }
+    // 旧 REST tools/call
+    var resp=await fetch(base+'/tools/call',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json, text/plain'},body:JSON.stringify({name:toolName,arguments:toolArgs}),signal:AbortSignal.timeout(60000)});
+    var text=await resp.text();
+    if(!resp.ok)return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] MCP 调用失败 HTTP '+resp.status+'\n'+text.slice(0,500);
+    return ' MCP工具调用成功 ('+serverId+'.'+toolName+'):\n'+(text||'(空响应)');
+  }catch(e){return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] MCP 调用失败: '+e.message+'\n[SUGGEST] 检查服务器连接与工具名';}
 }
 
 async function toolMcpConnect(args){
@@ -14059,7 +14158,7 @@ async function toolMcpConnect(args){
     var tmpConn={id:'temp_'+Date.now(),name:'临时连接',url:args.url,transport:args.transport||'sse',enabled:true};
     var result=await _connectSingleMcp(tmpConn);
     if(result.error)return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] 临时 MCP 连接失败: '+result.error+'\n[SUGGEST] 检查 URL 是否正确';
-    return ' 临时MCP已连接 ('+args.url+')\n 发现工具: '+result.tools.join(', ')+'\n 通过 custom_api_call 调用，端点: '+args.url.replace(/\/$/,'')+'/tools/call';
+    return ' 临时MCP已连接 ('+args.url+')\n 发现工具: '+result.tools.join(', ')+'\n 调用方式: mcp_call({server_id:"'+tmpConn.id+'", tool:"工具名", arguments:{...}})';
   }
   
   if(args.id==='all'){
@@ -14092,7 +14191,7 @@ async function toolMcpConnect(args){
   var singleResult=await _connectSingleMcp(conn);
   if(singleResult.error)return '[ERR_CODE] EXECUTION_ERROR\n[MESSAGE] MCP 连接失败 ('+conn.name+'): '+singleResult.error+'\n[SUGGEST] 检查服务器地址和网络连接';
   // singleResult 已在上面定义并检查
-  return ' MCP已连接: '+conn.name+' ('+conn.url+')\n 发现工具: '+singleResult.tools.join(', ')+'\n 通过 custom_api_call 调用，端点: '+conn.url.replace(/\/$/,'')+'/tools/call';
+  return ' MCP已连接: '+conn.name+' ('+conn.url+')\n 发现工具: '+singleResult.tools.join(', ')+'\n 调用方式: mcp_call({server_id:"'+conn.id+'", tool:"工具名", arguments:{...}})\n 协议: '+(singleResult.protocol||'rest')+'（标准MCP JSON-RPC自动适配，旧REST自动回退）';
 }
 
 // --- 自定义函数调用 ---

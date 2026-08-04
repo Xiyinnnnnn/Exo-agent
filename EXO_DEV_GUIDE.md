@@ -398,6 +398,7 @@ worker 源码是 `src+='...'` 字符串拼接，无法直接执行；用脚本 *
 | FIX-2026-08-04-vf | 大树模型（虚拟父亲锚点，VF3 定稿） | 对话=一棵大树（grep `VF3-2026-08-04`）：①`_getBranchData` 建 `__root__` 锚点+惰性迁移 `parentId=null→'__root__'`（旧数据零成本升级）；②`_forkAtForkPoint` **`pid=curId` 恒等**——分叉点所在分支=新树枝父亲，任意树枝任意位置可长分叉（同父=兄弟，链式=嵌套，无位置规则）；③`_renderBubbleBranchNavs` 4 适配（入口去 fp>=0、siblings/父置前排除 `__root__`、挂载 `fp<0→0`）+ childList 组移除；④`branchDeleteBranch` 锚点保护+切换排除锚点+**最后一根树枝保护**（拒绝删空，提示删消息修剪=剪短）。FIX-j 截断 0 改动（与 pid 无关，截断核心段与 v14 逐字一致，无上下文泄漏）。验证：S1 0 错、S2 19/19、s8 树模型 16/16、S3 13 块全有意、S5 铁律点全等 |
 | FIX-2026-08-04-m | 分支导航右箭头点击无响应（事件委托） | 按钮"不灰但点了没反应"。仿真（真实函数+mock DOM/DB 点击全链）证明数据/切换逻辑无误，根因=动态 nav 按钮直接绑 onclick 的脆弱性（重绘重建丢绑定/被 stopPropagation 拦截）。修复（grep `FIX-2026-08-04-m`）：①按钮去 onclick 改 `data-nav-action/parent/fp/target` 属性；②新增 `window._initBranchNavDelegate()` 在 `#messagesList` **捕获阶段**委托一次（`_branchNavDelegateBound` 幂等），沿 parentNode 找带 `data-nav-action` 的 BUTTON → `_switchBubbleBranch`；③渲染函数每次调用幂等挂委托。验证：S1 0 错、S2 19/19、s8 16/16、s5 ✓、s11 委托仿真（SVG 内部点击+重绘后仍有效，A→B→C 连续切换）。**通用纪律：动态 UI 控件事件一律委托静态祖先容器（捕获阶段），控件只暴露 data-* 属性** |
 | FIX-2026-08-04-n | 右箭头永久点不动（伪元素遮挡） | **真根因**：`.message::after` hover 桥接层（`bottom:-2px;right:0;width:80px;height:36px;z-index:1;pointer-events:auto`）覆盖气泡右下角，右箭头恰在其内——点击被伪元素截获（`e.target`=气泡而非按钮），**委托/onclick 均收不到**（FIX-m 委托本身正确，但事件目标被伪元素层变成宿主元素）。修复（grep `FIX-2026-08-04-n`）：①CSS `.bubble-branch-nav{position:relative;z-index:2}`（高于 `::after` z-index:1）——**核心**；②按钮加回直接绑定 onclick 双保险（`_switchBubbleBranch` 幂等防双调）；③nav 加 `data-fix-ver="n1"` 版本标记+首次委托 console.log。验证：s12 伪元素 hit-test 仿真（修复前命中伪元素→未切换=复现；修复后命中按钮→A→B→C 全通）；s2 19/19、s8 16/16、s5 ✓。**通用纪律：伪元素/覆盖层会截获点击且仿真 mock 常漏，排查"点不动"先查 elementFromPoint 命中目标** |
+| FIX-2026-08-05-a | npm包缓存声明 + 标准MCP支持 | ①`_npmPkgCache` bug（grep `FIX-2026-08-05-a`）：buildTaskWorkerSource 的 `_loadNpmPkg`（原L9085/9099）引用 `_npmPkgCache` 但 taskWorker 源码**从未声明**（仅 evoWorker 函数内有）→ `require('vm')` 等白名单外模块直接 `ReferenceError` 而非友好报错。修复：taskWorker 顶层加 `var _npmPkgCache={};`（跨执行缓存语义）。②**标准 MCP 支持**（grep `FIX-2026-08-05-a`）：`mcp_connect` 原为简化 REST（GET `/tools/list`+POST `/tools/call`），官方 MCP server（JSON-RPC streamable HTTP POST `/mcp`）无法直连。改造：`_connectSingleMcp` 标准MCP优先（initialize→notifications/initialized→tools/list，会话头 `Mcp-Session-Id`，JSON/SSE 双格式解析）失败自动回退旧REST；新增 `_mcpRpc`/`_mcpContentToText`/`_mcpResultText`/`toolMcpCall`；新增 `mcp_call` 工具（registry+executeMainThreadTool case），提示语改指 `mcp_call({server_id,tool,arguments})`。conn 增 `_stdMode`/`sessionId`（会话失效自动重连）。验证：S1 0错、S2 21/21、S4 worker还原0错、S5 铁律点全等、S3 20块全有意 |
 
 
 
@@ -486,6 +487,15 @@ worker 源码是 `src+='...'` 字符串拼接，无法直接执行；用脚本 *
 - **修复**：`.bubble-branch-nav{position:relative;z-index:2}`（高于 `::after` 的 z-index:1）→ 点击命中按钮本身；按钮加回直接绑定 onclick 作双保险（切换函数幂等，委托捕获先触发后直接绑定再次调用即 return，无重复切换）；nav 加 `data-fix-ver="n1"` 版本标记便于用户确认加载修复版。
 - **排查纪律（点不动三查）**：①查监听（委托/onclick 是否在）②查 hit-test（DevTools `document.elementFromPoint(x,y)` 看点击坐标命中什么——**伪元素、覆盖层、z-index 低的兄弟节点都是真凶**）③查缓存（`data-fix-ver` 标记验证加载版本）。
 - **仿真盲区**：DOM mock 无 CSS 几何/伪元素，直接以按钮为 target 模拟点击 → 永远测不出遮挡；仿真必须补 hit-test 层（s12 已实现：伪元素矩形+z-index 比较）。
+
+
+### 7.11 npm 包缓存声明纪律 + 标准 MCP 协议支持（FIX-2026-08-05-a）
+
+- **跨 worker 的变量引用必须各自声明**：`_npmPkgCache` 只在 evoWorker 源码有定义，taskWorker 的 `_loadNpmPkg` 引用它 → require 白名单外模块时 ReferenceError（本应抛"模块加载失败"友好错误）。**worker 源码是独立作用域，`src+='var x=...'` 必须在每个使用它的 worker 里各自声明**；定义放 worker 顶层（非 executeCode 内）以保跨执行缓存语义。
+- **标准 MCP（JSON-RPC streamable HTTP）接入要点**：①端点 `POST {base}/mcp`（或 `/sse`），头 `Content-Type: application/json` + `Accept: application/json, text/event-stream`；②`initialize` 后必须收/存 `Mcp-Session-Id` 并在后续请求回传；③`notifications/initialized` 是通知（无 id、无响应）；④响应可能是 SSE（`data: {...}` 帧）或 JSON，解析必须双格式兼容；⑤`tools/call` 结果 content 数组：text 直接拼、image 不内联 base64（token 爆炸）改提示、resource 给 uri；⑥会话失效（无 sessionId）时 tools/call 前自动重连。
+- **兼容策略**：标准 MCP 优先、旧 REST（`/tools/list`+`/tools/call`）自动回退，`transport==='rest'` 可强制旧协议——升级不破坏存量配置。
+- **S2 单测三纪律再验证**（本次全部踩过）：①顶层 `var` 绑定 mock（`global.x=` 只挂属性不建绑定，eval 函数内解析不到 → 会静默调真实 fetch）；②mock 的 `headers.get` 必须模拟 Content-Type（影响 JSON/SSE 分支判定）；③断言 `indexOf(...)===0` 注意返回值前导空格（工具返回规范统一带 `' '` 前缀）；④path 模式不等待未持有的 async IIFE——测试用顶层 `await main()` 而非 `(async()=>{})()`。
+- **S4 worker 还原脚本陷阱**：`extractVar` 用 `\[...\];` 匹配数组会吞到首个 `];`（`].join('')` 结尾匹配失败 → 吞入后续代码+注释里的引号字符串）；应提取整个数组字面量 `\[...\]\s*\.join\(` 后 `new Function('return '+lit)()` 求值，避免引号级提取的脆弱性。
 
 
 
