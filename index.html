@@ -144,6 +144,9 @@ body{
 
 /* 气泡级分支导航 */
 .bubble-branch-nav {
+  /* ★ [FIX-2026-08-04-n] z-index:2 > .message::after hover桥接层(z-index:1,80x36px,右下角)——
+     否则右箭头恰在桥接层覆盖区，点击被伪元素截获(e.target=气泡)致右箭头永久点不动 */
+  position:relative;z-index:2;
   display: flex; align-items: center; gap: 4px;
   margin-top: 4px; padding: 2px 6px;
   font-size: 11px; color: var(--color-text-secondary);
@@ -21094,6 +21097,7 @@ function handleMessageDelete(msgDiv) {
 
 function branchDeleteBranch(branchId) {
   if (!currentConversationId) return;
+  if (branchId==='__root__') { showToast('虚拟锚点不可删除','error'); return; }   // ★ [VF-2026-08-04] 虚拟父亲保护
   var bd = _getBranchData(currentConversationId);
   if (!bd._branches[branchId]) { showToast('分支不存在','error'); return; }
   // 递归查找所有子分支
@@ -21118,16 +21122,23 @@ function branchDeleteBranch(branchId) {
   var needSwitch = (branchId === bd._currentBranchId);
   var switchTarget = null;
   if (needSwitch) {
-    if (br.parentId && bd._branches[br.parentId]) {
+    if (br.parentId && br.parentId!=='__root__' && bd._branches[br.parentId]) {   // ★ [VF] 父是虚拟锚点时跳过（items空→渲染空对话），落到首可用真实分支
       switchTarget = br.parentId;
     } else {
       for (var bid in bd._branches) {
         if (!bd._branches.hasOwnProperty(bid)) continue;
+        if (bid==='__root__') continue;   // ★ [VF3] 虚拟锚点不可作为切换目标
         if (toDelete.indexOf(bid) >= 0) continue;
         switchTarget = bid;
         break;
       }
     }
+  }
+  // ★ [VF3-2026-08-04] 最后一根树枝保护（用户语义：删除=修剪，剪到只剩一根树枝时最后删除=剪短=删气泡，不删空）：
+  //   删除当前分支且无任何可用真实分支可切 → 拒绝删除，提示删消息修剪
+  if (needSwitch && !switchTarget) {
+    showToast('只剩主分支，无法删除分支；可删除消息来修剪','error');
+    return;
   }
   // 从分支数据中删除
   for (var i1 = 0; i1 < toDelete.length; i1++) {
@@ -23413,7 +23424,34 @@ function initEventBindings(){
 
 
   // ★ 气泡级分支导航渲染：在forkPoint气泡上绘制 < 1/2 >
+  // ★ [FIX-2026-08-04-m] 分支导航事件委托：静态父容器 #messagesList 捕获阶段绑定一次（幂等）。
+  //   原 onclick 直接绑定在动态按钮上——nav 每次重绘整体移除重建，若消息流渲染替换气泡节点则绑定随旧节点丢失，
+  //   且部分按钮被其他元素 stopPropagation 拦截时 onclick 不触发。委托在容器层捕获，任何 nav 状态点击都可达。
+  window._initBranchNavDelegate=function(){
+    var msgList=document.getElementById('messagesList');
+    if(!msgList||msgList._branchNavDelegateBound)return;
+    msgList._branchNavDelegateBound=true;
+    try{console.log('[nav] branch-nav delegate bound (FIX-n)');}catch(_eN){}
+    msgList.addEventListener('click',function(e){
+      var t=e.target;
+      while(t&&t!==msgList){
+        if(t.tagName==='BUTTON'&&t.getAttribute&&t.getAttribute('data-nav-action')){
+          e.stopPropagation();
+          var action=t.getAttribute('data-nav-action');
+          var target=t.getAttribute('data-nav-target');
+          if(target&&typeof _switchBubbleBranch==='function'){
+            var parent=t.getAttribute('data-nav-parent');
+            var fp=parseInt(t.getAttribute('data-nav-fp')||'-1',10);
+            _switchBubbleBranch(parent,fp,target);
+          }
+          return;
+        }
+        t=t.parentNode;
+      }
+    },true);
+  };
   window._renderBubbleBranchNavs=function(){
+    _initBranchNavDelegate();
     if(!currentConversationId)return;
     var bd=_getBranchData(currentConversationId);
     var oldNavs=document.querySelectorAll('.bubble-branch-nav');
@@ -23425,29 +23463,42 @@ function initEventBindings(){
       var br=bd._branches[curId];
       if(!br)break;
       var fp=br.forkPoint,pid=br.parentId;
-      if(pid&&bd._branches[pid]&&fp>=0){
+      if(bd._currentBranchId===curId&&pid&&bd._branches[pid]){   // ★ [VF-2026-08-04] 入口去掉 fp>=0：根分支 fp=-1 也渲染导航（挂载点 fp<0→0）
         var siblings=[];
         for(var bid in bd._branches){
           if(!bd._branches.hasOwnProperty(bid))continue;
           var sb=bd._branches[bid];
-          if(sb.parentId===pid&&sb.forkPoint===fp)siblings.push(bid);
+          if(sb.parentId===pid&&bid!=='__root__')siblings.push(bid);   // ★ [FIX-2026-08-04-k] 同父分支全可见（forkPoint 漂移不再拆组）；[VF] 排除虚拟锚点
+          else if(sb.parentId===curId&&sb.forkPoint>=0&&bid!=='__root__'&&siblings.indexOf(bid)<0)siblings.push(bid);   // ★ [FIX-2026-08-04-l] 直接子分支并入导航条；[VF] 排除虚拟锚点
         }
-        if(siblings.indexOf(pid)<0)siblings.push(pid);
-        siblings.sort(function(a,b){return (bd._branchOrder.indexOf(a)||0)-(bd._branchOrder.indexOf(b)||0);});
+        if(pid!=='__root__'&&siblings.indexOf(pid)<0)siblings.push(pid);   // ★ [VF] 锚点不置前（永不出现在导航条）
+        siblings.sort(function(a,b){   // ★ [FIX-2026-08-04-l] 父分支永远最前，保证 [父,子...] 顺序（父在末位时父自身右箭头被禁用）
+          if(a===pid)return -1;
+          if(b===pid)return 1;
+          return (bd._branchOrder.indexOf(a)||0)-(bd._branchOrder.indexOf(b)||0);
+        });
         if(siblings.length>1){
           var bubbles=document.querySelectorAll('#messagesList>.message.user,#messagesList>.message.agent');
-          if(fp<bubbles.length){
-            var fb=bubbles[fp];
+          var _mtFp=fp>=0?fp:0;   // ★ [VF-2026-08-04] 根分支 fp=-1 → 挂载气泡0
+          if(_mtFp<bubbles.length){
+            var fb=bubbles[_mtFp];
             if(!fb.querySelector('.bubble-branch-nav')){
               var nav=document.createElement('div');
               nav.className='bubble-branch-nav';
+              nav.setAttribute('data-fix-ver','n1');   // ★ [FIX-2026-08-04-n] 版本标记：硬刷新后元素检查可见 n1 即修复版
               var si=siblings.indexOf(curId);
               nav.setAttribute('data-fork-point',fp);
               nav.setAttribute('data-parent-id',pid);
               var prevBtn=document.createElement('button');
               prevBtn.innerHTML='<svg width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"15 18 9 12 15 6\"/></svg>';
               prevBtn.disabled=(si<=0);
-              prevBtn.onclick=function(p,f,targetId){return function(e){e.stopPropagation();_switchBubbleBranch(p,f,targetId);};}(pid,fp,siblings[si-1]||null);
+              // ★ [FIX-2026-08-04-m] 事件委托：不直接绑 onclick（nav 重绘重建易丢），改 data 属性+messagesList 捕获委托
+              prevBtn.setAttribute('data-nav-action','prev');
+              prevBtn.setAttribute('data-nav-parent',pid);
+              prevBtn.setAttribute('data-nav-fp',fp);
+              prevBtn.setAttribute('data-nav-target',siblings[si-1]||'');
+              // ★ [FIX-2026-08-04-n] 双保险：按钮直接绑定+容器委托
+              prevBtn.onclick=(function(p,f,t){return function(e){e.stopPropagation();if(t&&typeof _switchBubbleBranch==='function')_switchBubbleBranch(p,f,t);};})(pid,fp,siblings[si-1]||null);
               nav.appendChild(prevBtn);
               var label=document.createElement('span');
               label.className='branch-label';
@@ -23456,58 +23507,21 @@ function initEventBindings(){
               var nextBtn=document.createElement('button');
               nextBtn.innerHTML='<svg width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"9 18 15 12 9 6\"/></svg>';
               nextBtn.disabled=(si>=siblings.length-1);
-              nextBtn.onclick=function(p,f,targetId){return function(e){e.stopPropagation();_switchBubbleBranch(p,f,targetId);};}(pid,fp,siblings[si+1]||null);
+              // ★ [FIX-2026-08-04-m] 同上：next 按钮走 data 属性+委托
+              nextBtn.setAttribute('data-nav-action','next');
+              nextBtn.setAttribute('data-nav-parent',pid);
+              nextBtn.setAttribute('data-nav-fp',fp);
+              nextBtn.setAttribute('data-nav-target',siblings[si+1]||'');
+              // ★ [FIX-2026-08-04-n] 双保险：按钮直接绑定+容器委托（捕获先触发，_switchBubbleBranch 幂等防双调）
+              nextBtn.onclick=(function(p,f,t){return function(e){e.stopPropagation();if(t&&typeof _switchBubbleBranch==='function')_switchBubbleBranch(p,f,t);};})(pid,fp,siblings[si+1]||null);
               nav.appendChild(nextBtn);
               fb.appendChild(nav);
             }
           }
         }
       }
-      var childGroups={};
-      for(var cid in bd._branches){
-        if(!bd._branches.hasOwnProperty(cid))continue;
-        var cb=bd._branches[cid];
-        if(cb.parentId===curId&&cb.forkPoint>=0){
-          var cfp=cb.forkPoint;
-          if(!childGroups[cfp])childGroups[cfp]=[];
-          if(childGroups[cfp].indexOf(cid)<0)childGroups[cfp].push(cid);
-        }
-      }
-      for(var cfp in childGroups){
-        if(!childGroups.hasOwnProperty(cfp))continue;
-        var childList=childGroups[cfp];
-        if(childList.indexOf(curId)<0)childList.push(curId);
-        childList.sort(function(a,b){return (bd._branchOrder.indexOf(a)||0)-(bd._branchOrder.indexOf(b)||0);});
-        if(childList.length>1){
-          var fpNum=parseInt(cfp);
-          var bubbles2=document.querySelectorAll('#messagesList>.message.user,#messagesList>.message.agent');
-          if(fpNum<bubbles2.length){
-            var fb2=bubbles2[fpNum];
-            if(!fb2.querySelector('.bubble-branch-nav')){
-              var nav2=document.createElement('div');
-              nav2.className='bubble-branch-nav';
-              var si2=childList.indexOf(curId);
-              nav2.setAttribute('data-fork-point',fpNum);
-              nav2.setAttribute('data-parent-id',curId);
-              var prevBtn2=document.createElement('button');
-              prevBtn2.innerHTML='<svg width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"15 18 9 12 15 6\"/></svg>';
-              prevBtn2.disabled=(si2<=0);
-              prevBtn2.onclick=function(p,f,targetId){return function(e){e.stopPropagation();_switchBubbleBranch(p,f,targetId);};}(curId,fpNum,childList[si2-1]||null);
-              nav2.appendChild(prevBtn2);
-              var label2=document.createElement('span');
-              label2.className='branch-label';
-              label2.textContent='<'+(si2+1)+'/'+childList.length+'>';
-              nav2.appendChild(label2);
-              var nextBtn2=document.createElement('button');
-              nextBtn2.innerHTML='<svg width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"9 18 15 12 9 6\"/></svg>';
-              nextBtn2.disabled=(si2>=childList.length-1);
-              nextBtn2.onclick=function(p,f,targetId){return function(e){e.stopPropagation();_switchBubbleBranch(p,f,targetId);};}(curId,fpNum,childList[si2+1]||null);
-              nav2.appendChild(nextBtn2);
-              fb2.appendChild(nav2);
-            }
-          }
-        }
-      }
+      // ★ [VF-2026-08-04] childList（父视角）组已移除：虚拟锚点模型下父分支导航由 siblings 直接子并入（L23434）覆盖，
+      //   且 childList 与 siblings 在嵌套场景争抢同一挂载点（先到先得、label 随机）——统一导航唯一来源=siblings 组
       curId=pid;
     }
   };
@@ -23519,15 +23533,23 @@ function initEventBindings(){
     var bd=_getBranchData(currentConversationId);
     if(!bd._branches[targetBranchId])return;
     if(targetBranchId===bd._currentBranchId)return;
-    bd._branches[bd._currentBranchId].items=_collectBubbles(msgList);
+    // ★ [FIX-2026-08-04-k] 分支切换改用 LCP 公共前缀删除：同父分支 forkPoint 可不同（共享父级分叉），
+    //   原"删除 forkPoint 之后"在目标分支更短时残留中间段（当前分支独有内容），目标更长时中间内容错位；
+    //   现保留 curItems/newItems 公共前缀，删除其后的气泡并重建目标分支剩余部分
+    var curItems=_collectBubbles(msgList);
+    bd._branches[bd._currentBranchId].items=curItems;
     bd._currentBranchId=targetBranchId;
+    var newItems=bd._branches[targetBranchId].items||[];
+    var lcp=0;
+    var _maxLcp=Math.min(curItems.length,newItems.length);
+    while(lcp<_maxLcp&&(curItems[lcp].content||'')===(newItems[lcp].content||''))lcp++;
     var bubbles=msgList.querySelectorAll('.message.user,.message.agent');
-    for(var bi=bubbles.length-1;bi>forkPoint;bi--){
+    for(var bi=bubbles.length-1;bi>=lcp;bi--){
       if(bubbles[bi].parentNode)bubbles[bi].parentNode.removeChild(bubbles[bi]);
     }
-    var newItems=bd._branches[targetBranchId].items||[];
-    for(var ni=forkPoint+1;ni<newItems.length;ni++){
+    for(var ni=lcp;ni<newItems.length;ni++){
       var nm=newItems[ni];
+      if(nm._injected)continue;   // ★ [FIX-k] 注入消息（压缩摘要等）不渲染为气泡
       if(nm.role==='user')addUserMessage(nm.content);
       else{
         var ndiv=document.createElement('div');ndiv.className='message agent';
@@ -23575,8 +23597,11 @@ function initEventBindings(){
       fp=bubbles.length-1;
       for(var fi=bubbles.length-1;fi>=0;fi--){if(bubbles[fi].classList.contains('user')){fp=fi;break;}}
     }
-    // ★ 同级分叉：新分支与当前分支共享父级，使分支间可左右导航（替代原嵌套分叉）
-    var pid=curBr.parentId||curId;
+    // ★ [VF3-2026-08-04] 大树模型（用户语义）：对话=一棵大树，__root__ 虚拟父亲标记树叉开始处（根）。
+    //   每条树枝地位平等——可在任意树枝的任意位置长出分叉：新分支父级=当前分支（自然嵌套，无位置规则）。
+    //   同父分叉=兄弟；链式分叉=嵌套；删除=修剪（递归删子树，最后一根树枝保护见 branchDeleteBranch）。
+    //   FIX-j 上下文截断逻辑在其下不变：prefixItems/fullMessages 均按当前分支计算，与 pid 无关，不引入上下文泄漏
+    var pid=curId;
     // 保存旧分支items并删除forkPoint之后的DOM气泡
     bd._branches[curId].items=_collectBubbles(msgList);
     for(var bi=bubbles.length-1;bi>fp;bi--){
@@ -23593,10 +23618,23 @@ function initEventBindings(){
     var prefixItems=bd._branches[curId].items.slice(0,autoSendText?fp:fp+1);
     // ★ [P2/v2.8] fork 时同步复制旧分支 fullMessages 前缀（按非 system/tool 消息数截断，与 prefixItems 语义一致），
     //   保证 fork 即发场景新分支 API 上下文含完整 tool 记录；逐字段浅拷贝避免分支间共享对象引用
+    // ★ [FIX-2026-08-04-j] 上下文泄露修复：截断语义对齐 R3 骨架定位（非注入计数+压缩偏移）
+    //   病因1：_injected 注入消息（技能推荐/gate拦截/压缩摘要[历史背景]）被计入 _keepCount → 截断点提前，
+    //          真实消息（prefixItems 尾部对应）丢失、注入内容泄露进新分支上下文
+    //   病因2：压缩后 fullMessages 真实条数(F) < items 条数(I) → 计数达不到 _keepCount → 整个 _srcFull
+    //          被复制，fork 点之后的真实消息（u10/a10）泄露进新分支
+    //   修复：截断目标 = 旧分支真实条数(F) - items条数(I) + prefixItems真实条数(P)，
+    //          与 R3 "骨架序号=气泡索引-(items数-骨架非注入数)" 同源
     var _srcFull=bd._branches[curId].fullMessages;
     var _newFull=null;
     if(_srcFull&&_srcFull.length){
-      var _keepCount=autoSendText?fp:fp+1;
+      // prefixItems 非注入 user/assistant 条数（防御：items 旧数据可能含 _injected 条目）
+      var _keepCount=0;
+      for(var _kp2=0;_kp2<prefixItems.length;_kp2++){
+        var _kr2=prefixItems[_kp2].role||'assistant';
+        if(_kr2==='agent')_kr2='assistant';
+        if((_kr2==='user'||_kr2==='assistant')&&!prefixItems[_kp2]._injected)_keepCount++;
+      }
       var _cnt2=0; _newFull=[];
       if(_keepCount<=0){
         // ★ [F5/v2.9] fp=0 边界：prefixItems=[] → fullMessages 仅保留 system（与 items 语义一致，避免保留首条历史）
@@ -23607,12 +23645,28 @@ function initEventBindings(){
           _newFull.push(_copy0);
         }
       }else{
+        // 旧分支 items 非注入条数(I) 与 _srcFull 非注入条数(F)：压缩偏移基准
+        var _cntItems=0,_cntFull=0;
+        var _oldItems=bd._branches[curId].items||[];
+        for(var _ciF=0;_ciF<_oldItems.length;_ciF++){
+          var _riF=_oldItems[_ciF].role||'assistant';
+          if(_riF==='agent')_riF='assistant';
+          if((_riF==='user'||_riF==='assistant')&&!_oldItems[_ciF]._injected)_cntItems++;
+        }
+        for(var _cfF=0;_cfF<_srcFull.length;_cfF++){
+          var _mfF=_srcFull[_cfF];
+          if((_mfF.role==='user'||_mfF.role==='assistant')&&!_mfF._injected)_cntFull++;
+        }
+        // 需保留的真实消息数 R = F - I + P（P<=I 时恒有 R<=F，防截断越过 fork 点）
+        var _keepReal=_cntFull-_cntItems+_keepCount;
         for(var _fk2=0;_fk2<_srcFull.length;_fk2++){
           var _srcM=_srcFull[_fk2];
+          // R<=0：真实消息全部已被压缩（fork 点前无未压缩消息）→ 仅保留 system+_injected（摘要维持记忆）
+          if(_srcM.role!=='system'&&_srcM.role!=='tool'&&!_srcM._injected&&_keepReal<=0)break;
           var _copy2={};
           for(var _ck2 in _srcM){if(_srcM.hasOwnProperty(_ck2))_copy2[_ck2]=_srcM[_ck2];}
           _newFull.push(_copy2);
-          if(_srcM.role!=='tool'&&_srcM.role!=='system'){_cnt2++;if(_cnt2>=_keepCount){
+          if(_srcM.role!=='tool'&&_srcM.role!=='system'&&!_srcM._injected){_cnt2++;if(_cnt2>=_keepReal){
             // ★ [F1/v2.9] 补推后续连续 tool 消息，防止截断切断 tool_calls 配对（校验器 Pass3 会删整条 assistant）
             //   [F1fix/v2.9] 仅补推 tool_call_id 属于当前 assistant.tool_calls 的响应，避免孤立 tool 混入新分支
             var _lastCalls={};
@@ -23624,6 +23678,15 @@ function initEventBindings(){
               var _copy3={};
               for(var _ck3 in _t3){if(_t3.hasOwnProperty(_ck3))_copy3[_ck3]=_t3[_ck3];}
               _newFull.push(_copy3);
+            }
+            // ★ [FIX-2026-08-04-j2] 截断前补推后续连续 _injected（压缩摘要=被压缩消息的替身，位于 fork 点前，随新分支保留防历史丢失）
+            for(var _fk4=_fk2+1;_fk4<_srcFull.length;_fk4++){
+              var _t4=_srcFull[_fk4];
+              if(_t4.role==='tool')continue;
+              if(!_t4._injected)break;
+              var _copy4={};
+              for(var _ck4 in _t4){if(_t4.hasOwnProperty(_ck4))_copy4[_ck4]=_t4[_ck4];}
+              _newFull.push(_copy4);
             }
             break;
           }}
@@ -24366,9 +24429,20 @@ function _collectBubbles(msgList){
 function _getBranchData(convId){
   var state=_ensureConvState(convId);
   if(!state._branches){state._branches={};state._currentBranchId=null;state._branchOrder=[];}
+  // ★ [VF-2026-08-04] 虚拟父亲锚点：所有真实分支的统一父级（items空/fullMessages无→永不进UI与API上下文，天然无害）
+  if(!state._branches['__root__']){
+    state._branches['__root__']={items:[],parentId:null,forkPoint:-1,virtual:true};
+  }
+  // ★ [VF-2026-08-04] 旧数据惰性迁移：parentId=null 的主分支 → '__root__'（无损，旧对话自动升级为锚点模型）
+  for(var _bkVF in state._branches){
+    if(!state._branches.hasOwnProperty(_bkVF))continue;
+    if(_bkVF==='__root__')continue;
+    var _brVF=state._branches[_bkVF];
+    if(!_brVF.parentId)_brVF.parentId='__root__';
+  }
   if(!state._currentBranchId){
     var bid='b_'+Date.now();
-    state._branches[bid]={items:[],parentId:null,forkPoint:-1};
+    state._branches[bid]={items:[],parentId:'__root__',forkPoint:-1};
     state._currentBranchId=bid;
     state._branchOrder=[bid];
   }
